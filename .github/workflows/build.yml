@@ -17,7 +17,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install build tools
-        run: apt-get update && apt-get install -y --no-install-recommends cmake g++ ninja-build
+        run: >-
+          apt-get update && apt-get install -y --no-install-recommends
+          cmake g++ ninja-build libglfw3-dev libgl1-mesa-dev
       - name: Configure
         run: >-
           cmake -S . -B build -G Ninja
@@ -48,4 +50,4 @@ jobs:
           fi
           while IFS= read -r source; do
             head -n 3 "$source" | grep -q 'SPDX-License-Identifier: MIT'
-          done < <(find include src tests examples benchmarks -type f \( -name '*.hpp' -o -name '*.cpp' -o -name '*.cu' -o -name '*.py' \))
+          done < <(find include src tests examples benchmarks apps -type f \( -name '*.hpp' -o -name '*.cpp' -o -name '*.cu' -o -name '*.py' \))

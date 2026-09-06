@@ -5,6 +5,7 @@
 *.ncu-repz
 *.nsys-rep
 meshprep-nsys.sqlite
+*-nsys.sqlite
 *.so
 *.dll
 *.dylib

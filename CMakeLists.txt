@@ -8,6 +8,7 @@ include(CMakePackageConfigHelpers)
 option(MESHPREP_BUILD_TESTS "Build GPU correctness tests" ON)
 option(MESHPREP_BUILD_EXAMPLES "Build examples" ON)
 option(MESHPREP_BUILD_BENCHMARKS "Build benchmarks" ON)
+option(MESHPREP_BUILD_WATER_LAB "Build the native CUDA/OpenGL water lab when dependencies exist" ON)
 option(MESHPREP_ENABLE_NVTX "Annotate public operations with NVTX ranges" ON)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -65,6 +66,29 @@ if(MESHPREP_BUILD_TESTS)
     add_executable(meshprep-tests tests/meshprep_tests.cu)
     target_link_libraries(meshprep-tests PRIVATE meshprep::meshprep-cuda)
     add_test(NAME meshprep-tests COMMAND meshprep-tests)
+endif()
+
+if(MESHPREP_BUILD_WATER_LAB)
+    find_package(OpenGL QUIET)
+    find_package(glfw3 3.3 QUIET)
+    if(OpenGL_FOUND AND TARGET glfw)
+        add_executable(
+            meshprep-water-lab
+            apps/water_lab/main.cpp
+            apps/water_lab/geodesic_sphere.cpp
+            apps/water_lab/water_kernels.cu)
+        target_link_libraries(
+            meshprep-water-lab PRIVATE meshprep::meshprep-cuda glfw OpenGL::GL)
+        target_compile_options(
+            meshprep-water-lab
+            PRIVATE
+                $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic>
+                $<$<COMPILE_LANGUAGE:CUDA>:-O3;--generate-line-info;--expt-relaxed-constexpr>)
+        set_target_properties(
+            meshprep-water-lab PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
+    else()
+        message(STATUS "meshprep-water-lab disabled: OpenGL and glfw3 3.3 are required")
+    endif()
 endif()
 
 install(TARGETS meshprep-cuda EXPORT meshprep-cuda-targets)

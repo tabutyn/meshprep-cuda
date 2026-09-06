@@ -4,6 +4,8 @@ Deterministic CUDA C++ mesh preprocessing: face/vertex normals and eight-way AAB
 
 `meshprep-cuda` is a small C++20 library for pipelines that already keep indexed triangle meshes on the GPU. It turns caller-owned device buffers into reusable, device-resident normal and hierarchy outputs. Stable CUB sorting replaces atomic scatter order, so topology, primitive permutation, and corner-normal indices are repeatable on the same supported environment.
 
+The repository also includes a [native CUDA/OpenGL water lab](apps/water_lab/README.md): a clickable, zero-gravity 40,500-triangle droplet with graph-based surface physics, a hierarchy rebuild every frame, and two-surface refractive ray tracing.
+
 ## Why this project exists
 
 The implementation began as working production geometry code with two concrete defects: identical builds emitted different topology, and a two-dimensional launch failed on the 9,963,191-triangle San Miguel scene. The current design makes ordering part of the API contract and uses flattened launches throughout. The refactor is intentionally preserved in Git history.
