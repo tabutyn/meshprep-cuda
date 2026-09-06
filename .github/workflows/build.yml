@@ -1,0 +1,51 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  cuda-build:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        container:
+          - nvidia/cuda:12.6.3-devel-ubuntu24.04
+          - nvidia/cuda:13.1.2-devel-ubuntu24.04
+    container: ${{ matrix.container }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: apt-get update && apt-get install -y --no-install-recommends cmake g++ ninja-build
+      - name: Configure
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CUDA_ARCHITECTURES=86
+          -DMESHPREP_BUILD_BENCHMARKS=ON
+      - name: Build
+        run: cmake --build build
+      - name: Install
+        run: cmake --install build --prefix "$RUNNER_TEMP/meshprep-install"
+      - name: Build installed-package consumer
+        run: >-
+          cmake -S tests/package-consumer -B consumer-build -G Ninja
+          -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/meshprep-install"
+          -DCMAKE_CUDA_ARCHITECTURES=86
+      - run: cmake --build consumer-build
+
+  source-policy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject release artifacts and require SPDX on compiled sources
+        shell: bash
+        run: |
+          if find . -type f \( -name '*.so' -o -name '*.pyc' -o -name '*.nsys-rep' -o -name '*.ncu-rep' \) -print -quit | grep -q .; then
+            echo 'Generated or binary release artifact found' >&2
+            exit 1
+          fi
+          while IFS= read -r source; do
+            head -n 3 "$source" | grep -q 'SPDX-License-Identifier: MIT'
+          done < <(find include src tests examples benchmarks -type f \( -name '*.hpp' -o -name '*.cpp' -o -name '*.cu' -o -name '*.py' \))

@@ -1,0 +1,15 @@
+/build/
+/profiles/
+/results*.csv
+*.ncu-rep
+*.ncu-repz
+*.nsys-rep
+meshprep-nsys.sqlite
+*.so
+*.dll
+*.dylib
+*.pyc
+__pycache__/
+.cache/
+.vscode/
+.idea/
