@@ -15,7 +15,7 @@ jobs:
           - nvidia/cuda:13.1.2-devel-ubuntu24.04
     container: ${{ matrix.container }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install build tools
         run: apt-get update && apt-get install -y --no-install-recommends cmake g++ ninja-build
       - name: Configure
@@ -38,7 +38,7 @@ jobs:
   source-policy:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Reject release artifacts and require SPDX on compiled sources
         shell: bash
         run: |
