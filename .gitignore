@@ -1,5 +1,8 @@
 /build/
 /profiles/
+/debug_snapshots/
+*.mpstate
+*.mpstate.txt
 /results*.csv
 *.ncu-rep
 *.ncu-repz

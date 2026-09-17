@@ -1,44 +1,301 @@
-# CUDA water lab
+# CUDA water tilt course
 
-A native, clickable zero-gravity water-droplet experiment built directly on `meshprep-cuda`.
+The native CUDA/OpenGL app now opens as a playable peg course. A 3,000-particle
+fluid droplet inside a spring-connected skin rests on a long board. Tilt gravity
+with the keyboard, roll the droplet through eight rigid orange posts,
+and reach the goal near the far end.
 
-The mesh is a frequency-45 geodesic icosphere with exactly 40,500 triangles and 20,252 approximately equidistant vertices. Its 60,750 undirected edges are welded once on the CPU and uploaded as a CSR neighbor graph. Each physics substep launches one thread per vertex; threads gather adjacent positions and velocities without write conflicts. Edge springs provide surface tension, edge-relative damping controls ringing, and a device-resident volume estimate supplies pressure.
+Water is visible by default as a continuous particle-derived surface, with
+reflection/refraction and independent, advected foam patches. Each patch plays
+a short 3D bubble growth/spread/pop sequence instead of drawing one white bead.
+See [implementation and tests](../../docs/WATER_VISUAL_EFFECTS.md).
 
-Every frame performs this pipeline:
+The simulation advances exactly one fixed `1/60 s` tick per displayed frame. If
+rendering is slow, simulated time lags. It does not launch catch-up ticks. The
+course starts at 4×: gravity magnitude `7.2`, particle/skin speed caps `12`/`8`,
+and four physics iterations. Steering reaches at most 20 degrees and smoothly
+returns to level. Bracket controls change acceleration, particle/skin speed
+caps, load-bearing material forces, and the substep floor together without
+changing the fixed physical time. Matching the force/gravity ratio prevents the
+extra gravity at 8x from simply compacting the fluid more than at 1x.
 
-```text
-8 × surface substep → rebuild eight-way hierarchy and bounds → refractive ray trace → OpenGL display
-```
+## Course
 
-The ray tracer traverses `meshprep::Hierarchy` iteratively. Primary rays find the water entry surface, refract at an index of refraction of 1.333, traverse the hierarchy again to find the exit surface, and refract back into a procedural star field. Beer–Lambert absorption gives the droplet its blue-green depth.
+The board extends from `z=1.8` to `z=-10.8`, with containment rails at
+`x=+/-3.4`. Eight capped, rigid cylinders form the slalom. The circular goal is
+centered at `z=-9.4` with radius `0.85`. Floor, rails, and posts share one
+analytic collision description; the ray tracer uses the same post centers,
+radii, and heights. Context 1 therefore has no voxel lattice, fracture pass,
+soft-body hierarchy, or water-to-soft-body gather. Soft-body development
+continues independently in contexts 4, 6, and 7.
 
-## Build and launch
+The low visible rails mark full-height containment planes. Context 1 resets to
+3,000 particles, physical/render skin frequency `10`/`10`, and particle
+repulsion `20`; the live repel range is `0`–`120`. Course-only material settings
+start with particle–skin stiffness `8000`, skin
+spring stiffness `560`, and particle/skin force caps `960`. Bracket motion scales
+these forces with gravity so equilibrium compression is approximately consistent
+between multipliers. Historical 4× testing found that fewer than four iterations
+failed the water geometry gates, so course mode retains four as its minimum. See
+[course measurements](../../docs/TILT_COURSE.md),
+[fluid-physics optimization results](../../docs/FLUID_PHYSICS_OPTIMIZATION.md),
+[foam-query optimization results](../../docs/WATER_FOAM_OPTIMIZATION.md), and
+[puddle/foam research](../../docs/WATER_COHESION_AND_FOAM.md).
 
-Requirements beyond the library are OpenGL and GLFW 3.3.
+The camera begins behind and above the droplet. It follows the droplet while
+preserving orbit and pan changes. The compact on-screen panel contains only
+state plus the `Z/X/C/V/B/R/T/P/L/M/[ ]` shortcuts; course progress, tilt text,
+the old title, and verbose mouse instructions were removed.
 
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=86
-cmake --build build -j --target meshprep-water-lab
-./build/meshprep-water-lab
-```
+## Numbered API gallery
+
+Keys `1` through `7` switch at a frame boundary between composable integration
+fixtures. They use the same public recipe catalog as
+`<meshprep/simulation.hpp>`:
+
+| Key | Fixture |
+| --- | --- |
+| `1` | Current water-skin obstacle course |
+| `2` | 15,000 particles and a heavy sphere settling among four inward capped-cylinder pegs in a widened bowl under 2× gravity |
+| `3` | A stationary heavy sphere that the user tilts through floor-aligned cloth in a closed box |
+| `4` | Rigid sphere striking the free bottom of a ceiling-hung breakable column; normal rendering composites a polished translucent crust over cream structural members |
+| `5` | Half-size adjustable-mass sphere and 2,500 particles caught by a doubled 3×3 cloth grid with invisible containment |
+| `6` | High inlet, eight one-way barrier fins, circular guide, axle-driven volume crosses, and separate inertial outer rims |
+| `7` | Gravity-driven 1,000-voxel soft sphere rolling over cloth suspended above a finite pit and into hanging cloth |
+| `8` | Finite-mass rigid sphere tethered by a procedural spring rope to a central rigid post |
+
+Contexts 2, 5, and 6 have no invisible membrane force. Contexts 2 and 5 use
+deterministically reduced particle reactions to move their finite-mass rigid
+spheres. Context 5 keeps one cloth perfectly horizontal and pins every node
+along four support lines per direction, producing nine flexible cells in a
+visible square beam grid. Its close
+perimeter is collision-only and reaches the room ceiling, so it contains
+particles without hiding the cloth. Particles already below its unilateral surface are not teleported
+back to the visible side. Contexts 5 and 6 use direct
+particle-to-cloth/soft-cross contact with deterministic vertex gathering. The current
+`HybridDroplet` owner still carries a hidden adapter skin allocation and a
+small hierarchy/normal cost even where it is not a declared component. The
+timing table exposes that cost. Only context 1 uses course tilt gravity
+`(0,-7.2,0)`; context 2 uses `(0,-19.62,0)` and contexts 3–8 use Earth gravity
+`(0,-9.81,0)`, all with four
+iterations. No gallery recipe inherits invisible course rails.
+Contexts 1–8 accept camera-relative arrow-key gravity tilt. Context 7 starts
+from rest under vertical gravity; its default friction is `10`, the live range
+is `0`–`50`, and friction is applied after graph projection so it remains active
+while steering supplies a horizontal gravity component. Ground cloth provides
+a visible deformable rolling surface before the two-sided hanging barrier. Its
+pinned perimeter rests on the room floor while the free interior spans a
+2.6 m square opening and can droop 1.25 m into a finite rendered pit.
+Context 8 uses one pinned centerline endpoint, structural and bend links, a
+watertight six-sided render tube, and a mass-weighted bilateral attachment at
+the sphere. `L` changes rope node count from 8 to 512 and resets the scene;
+`P` exposes solver iterations, bond strength, spring stiffness/damping, drag,
+speed, gravity, ground friction, and rigid-sphere mass.
+Context 2 starts at 15,000
+particles with repulsion `20`; its regression records free-surface height in
+two unobstructed annuli,
+rim escape, finite state, and sphere motion rather than assuming the added
+rigid body preserves the earlier particle-only equilibrium.
+Context 6 replaces the retired horizontal cylinder gate with an upper feed
+whose endpoint is exactly 2.5 m above the lower collector, a vertical outlet,
+and a lower-left shell extended above the axle. Fins are rectangular, but
+contact is one-sided: water loads a finite barrier shell on the trailing face
+while the descending leading face is permeable. Existing paddle-volume overlap
+is still cleared after relative speed reaches zero, so a rising fin leaves a
+visible evacuated slot rather than carrying particles inside it. The barrier changes particle
+momentum before overlap and contributes its equal-and-opposite signed torque to
+the finite-inertia axle/fin rotor. Rigid radial spokes were removed. Each of the two
+1,155-node, three-layer crosses has a pinned 3x3x3 axle volume and 36 pinned tip
+voxels that follow a separate outer-rim rotor. Measured cross spring reactions
+apply equal-and-opposite torque to axle and rim; rim inertia and drag therefore
+push back through the soft cross. Particle IDs still recycle at the downhill sink.
+Context 5 centers the cloth under its emitter *after* rotating the authored
+vertical grid. Its 616-node graph is one continuous sheet at twice the former
+linear spacing, with a
+3×3 grid of panels bounded by 184 pinned support-line nodes. The contact uses the uppermost live cloth triangle under
+each particle's X/Z point, rather than the closest triangle in 3-D, plus the
+triangle's actual normal for the side-wall response. The contact transfers
+reactions into cloth voxels. A swept-side guard prevents particles already
+below the cloth from being projected through it. The sustained regression now
+also includes the dynamic sphere and closed box, so earlier particle-only
+counts are not presented as results for this scene.
+The standalone column fixture (4) starts at 8× bond strength and spring stiffness
+`80,000`. Its top cap is fixed just below the ceiling and its bottom is free;
+lower the
+strength in `P` or with `,` when testing fracture. The wheel crosses use a 16×
+break threshold and prescribed axle/rim anchors with dynamic interior nodes.
+The hanging-cloth fixtures pin every node of the top hanger row. Context 3 also
+pins its bottom row one spacing below the floor, so the sheet crosses the floor
+without exposing the anchors as an invisible collision bar. Its heavy sphere
+transfers equal-and-opposite reactions to the cloth rather than moving as a
+prescribed obstacle.
+Context 4 aims the ball through the lower, unsupported part of the hanging
+column. The graph uses 16 Jacobi constraint iterations per substep. This is not
+a validated fracture-material model.
+Context 3 samples impact fracture before spring projection, so raising solve
+iterations cannot erase the tear signal. Broken graph edges no longer hide
+surface triangles. Context 3 expands its render surface to private triangle
+vertices; after a structural side breaks, the face preserves its authored size
+and hangs from a surviving edge, or from one vertex when no edge survives.
+
+Cloth and soft bodies start with filled checker surfaces in every context.
+`V` switches to one combined view: water particles, green foam particles,
+water-skin wires, soft-body surface wires, and the internal lattice. Context 5
+uses a faint triangle wire instead of its dense spring lattice so water remains
+visible. Green points are interior
+voxels, yellow points are surface voxels, and blue points are pinned. Broken
+bonds turn red in the lattice view, while every authored surface triangle
+remains visible so a tear cannot make cloth material disappear.
+Live internal bonds are projected as shaded thin four-sided boxes. Members that
+touch an interior voxel are bright green; surface-only members are orange.
+All contexts open in their normal filled view; `V` enters the shared diagnostic
+wire/particle/lattice view.
+The `T` table shows only stages actually run by the selected recipe; it also
+labels residual particle-only adapter work. `GPU TOTAL` sums its non-overlapping
+CUDA/render stages. `FRAME WALL` covers the update, ray trace, and diagnostic
+downloads up to the OpenGL draw; texture upload, overlay drawing, compositor
+presentation, and any vsync wait are not included. These live samples are not
+a median FPS benchmark.
 
 Controls:
 
-- left click: ray-pick the current mesh and push a localized impulse into the surface;
-- `Space`: pause physics;
-- `R`: restore the sphere;
-- `+` / `-`: increase or decrease physics substeps;
+- `WASD` or arrow keys in contexts 1–8: tilt gravity relative to the camera. When the physics panel is
+  open, use `WASD` for steering because arrows edit its selected value.
+- `[` / `]` in context 1: decrease / increase acceleration, particle/skin speed caps, and
+  their load-bearing material forces together by 1× from 1× to 8×, starting
+  at 4× in the water course. Other gallery contexts use their own gravity
+  control in `P` and ignore these keys. The
+  iteration floor follows
+  `max(4, multiplier)` to retain bounded travel per substep; manually selected
+  extra iterations are preserved. The HUD shows both values. Works while paused
+  and with the parameter panel open. Reset retains the selected multiplier;
+  playback does not accept these keys. The fixed `1/60 s` physical tick is
+  unchanged.
+- `,` / `.` in soft-body contexts: divide / multiply fracture strength by
+  `1.25` per key event, clamped to
+  `0.0625×` through `64×`. This scales the bond-break strain threshold;
+  the surface remains attached to its existing vertex bindings after a bond
+  breaks. It does not make the spring solver stiffer. Reset repairs broken
+  bonds while retaining the selected multiplier.
+- Left-drag: orbit.
+- `Ctrl` + left-drag: pan.
+- Wheel: zoom.
+- `R`: reset the droplet, course progress, camera follow, and tilt.
+- `Space`: pause.
+- `T`: toggle timings.
+- `V`: toggle filled surfaces and the combined particle/lattice view in the
+  current context. Context 1 shows water particles and its skin wireframe;
+  soft-body contexts additionally show simulated voxels and live bonds.
+- `1` through `7`: select the seven API gallery examples listed above.
+- `F`: toggle surface foam.
+- `P`: toggle context-relevant live material and force parameters, including
+  gravity, solver iterations, soft-body stiffness/damping/drag/speed, rigid mass,
+  bond strength, context-7 ground friction (`0`–`50`), and foam emission,
+  size, and lifetime. Water physics supports 1–16 iterations; particle repel
+  supports `0`–`120`, and course boundary force supports up to `64,000`.
+- `L`: toggle reset-on-change simulation quantities. Particle contexts allow up
+  to 100,000 particles, water skins expose physical and render frequencies, and
+  deformables expose up to 256 spring solves. Every accepted change rebuilds the
+  authored scene so high-resolution stress tests do not inherit stale state.
+  Soft spring stiffness maps monotonically across `100`–`160,000`; `40,000` is
+  the exact full-response point, while higher values perform proportionally
+  more Jacobi passes instead of disappearing into a stiffness clamp.
+- `M`: pause and save the preceding six seconds under
+  `/tmp/meshprep-hybrid-captures/`. Capture v6 includes foam history and the
+  active soft bodies' voxel positions, velocities, strength, bond activity,
+  pending per-bond fracture damage, and render-triangle activity. Context 1
+  has no soft-body payload.
+- `Z`, `X`, `C`, `B`: toggle skin normals, obstacle forces,
+  particle-to-skin forces, and spring forces.
 - `Esc`: quit.
 
-## Profile
+## Lab scene
 
-Headless mode uses ten warmups, reports median/p5/p95 CUDA-event times for physics, hierarchy construction, and ray tracing, and records end-to-end wall time:
+The rectangle experiment remains available as:
 
 ```bash
-./build/meshprep-water-lab --profile 120 --width 960 --height 720 --substeps 8
-./scripts/profile_water_lab.sh build/meshprep-water-lab
+./build/meshprep-water-lab --scene lab
 ```
 
-The physics solver is a deliberately compact interactive model, not a validated CFD solver. Its pressure direction assumes the droplet remains star-shaped around its center of mass. Self-collision, topology changes, and viscosity fields are outside the current lab.
+Lab controls retain Shift + left-drag for the dynamic rectangle target and
+`Q`/`E` for rectangle torque. The rectangle has finite mass and receives the
+equal-and-opposite reactions from skin contact. It is rendered as a wireframe,
+while collision uses its complete oriented-box volume.
 
-Measured results and the Nsight kernel breakdown are in [`docs/WATER_LAB_PERFORMANCE.md`](../../docs/WATER_LAB_PERFORMANCE.md).
+Both scenes use the same force model:
+
+1. Fluid particles find nearby particles through the rebuilt hierarchy and
+   apply bounded short-range repulsion and radial damping.
+2. Particles near the boundary exchange equal-and-opposite forces with the
+   closest physical skin triangle.
+3. The fixed skin graph supplies one-ring springs and damping. A barycentric
+   embedding drives the render surface from the physical skin; context 1 now
+   defaults both meshes to frequency 10 (2,000 triangles each), while `L` can
+   independently raise render detail.
+4. Particles and skin use finite masses, force and speed caps, exponential drag,
+   and semi-implicit Euler integration.
+5. Course mode adds rotation-aware soft shape matching so gravity does not
+   collapse the gas-and-spring droplet. A CUB center/covariance reduction finds
+   the current best-fit rotation, then a local kernel gently pulls the skin
+   toward that rotated shape. The droplet can roll and dent without being tied
+   to a world-space orientation. This is a gameplay constraint rather than
+   water incompressibility or validated fluid dynamics, and its work is charged
+   to `SKIN PHYSICS`.
+6. Soft-body contexts separately use fixed spring graphs, fracture state,
+   bound render surfaces, and hierarchy refits. None of that work is active in
+   the rigid context-1 course.
+
+Press `P` to change the iteration count, particle repulsion and damping,
+particle-boundary force, skin springs and damping, force caps, and the lab
+rectangle coefficients. Course mode hides the rectangle-only rows. Runtime
+changes apply on the next tick without a reset.
+
+## Build and run
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=86
+cmake --build build -j --target meshprep-water-lab meshprep-hybrid-tests
+ctest --test-dir build --output-on-failure
+
+./scripts/generate_softbody_assets.sh
+
+./build/meshprep-water-lab
+./build/meshprep-water-lab --context 7
+./build/meshprep-water-lab --scene lab
+./build/meshprep-water-lab --scene course --profile 120 --warmups 10
+./build/meshprep-water-lab --scene lab --profile 180 --warmups 10 --drive-box
+```
+
+The timing HUD reports fluid and skin hierarchy work, fluid physics, skin
+physics, normals, render preparation, ray tracing, GPU total, and frame wall
+time. Soft-body contexts additionally report `SOFT PHYSICS`, `SOFT HIERARCHY`,
+`SOFT CONTACT`, and `SOFT RENDER`, plus live fracture strength and broken-bond
+count. `GPU TOTAL` includes ray tracing. The lab also shows rectangle physics;
+course mode hides inactive rows.
+
+## Capture and replay
+
+Press `M` immediately after an interesting event. Replay the resulting capture
+without advancing physics:
+
+```bash
+./build/meshprep-water-lab --replay /tmp/meshprep-hybrid-captures/capture-TIMESTAMP-frame-N
+```
+
+Replay uses `Space` to play or pause recorded frames, Left/Right to step one
+frame, Shift + Left/Right to step 60 frames, and `R` to return to the first frame.
+Capture v6 stores the scene and gravity plus any active soft-body state. Older
+context-1 captures still replay their water, camera, and control history; their
+retired deformable-post payload is ignored. Captures written before the course
+was added load as lab recordings; their shorter options prefix is read into the
+current defaults.
+
+The headless rectangle contact experiment remains available for stability work:
+
+```bash
+./build/meshprep-contact-experiment --runs 5 --iterations 1 \
+  --material default --output /tmp/meshprep-contact-experiment
+```
+
+Its metrics and interpretation are documented in
+[`docs/CONTACT_STABILITY.md`](../../docs/CONTACT_STABILITY.md).

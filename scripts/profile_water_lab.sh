@@ -7,7 +7,7 @@ if [[ $# -ne 1 ]]; then
     exit 2
 fi
 
-"$1" --profile 120 --width 960 --height 720 --substeps 8
-nsys profile --trace=cuda,nvtx,osrt --sample=none --force-overwrite=true \
-    --output=water-lab-nsys "$1" --profile 1 --width 960 --height 720 --substeps 8
-nsys stats --report cuda_gpu_kern_sum,cuda_api_sum,nvtx_sum water-lab-nsys.nsys-rep
+"$1" --profile 120 --warmups 10 --width 960 --height 720
+"$1" --profile 180 --warmups 10 --width 960 --height 720 --drive-box
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+"$script_dir/profile_hybrid_nsys.sh" "$1" water-lab-nsys

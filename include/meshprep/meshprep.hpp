@@ -6,6 +6,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <utility>
+#include <vector>
 
 namespace meshprep {
 
@@ -33,6 +35,16 @@ struct DeviceMeshView {
     std::uint64_t vertex_count{};
     const uint3* triangles{};
     std::uint64_t triangle_count{};
+};
+
+struct Aabb {
+    float3 minimum{};
+    float3 maximum{};
+};
+
+struct DeviceAabbView {
+    const Aabb* bounds{};
+    std::uint64_t primitive_count{};
 };
 
 struct SharpEdgeView {
@@ -87,6 +99,8 @@ private:
         DeviceMeshView, SharpEdgeView, Workspace&, class NormalOutput&, cudaStream_t);
     friend Status build_hierarchy(
         DeviceMeshView, HierarchyOptions, Workspace&, class Hierarchy&, cudaStream_t);
+    friend Status build_hierarchy(
+        DeviceAabbView, HierarchyOptions, Workspace&, class Hierarchy&, cudaStream_t);
 };
 
 class NormalOutput {
@@ -136,22 +150,43 @@ public:
     [[nodiscard]] const std::uint32_t* primitive_indices() const noexcept {
         return primitive_indices_;
     }
+    [[nodiscard]] std::uint32_t primitive_count() const noexcept {
+        return primitive_count_;
+    }
     [[nodiscard]] HierarchyStatistics statistics() const noexcept { return statistics_; }
     [[nodiscard]] std::size_t allocated_bytes() const noexcept
     {
         return node_capacity_ * sizeof(HierarchyNode) +
-            primitive_capacity_ * sizeof(std::uint32_t);
+            primitive_capacity_ * sizeof(std::uint32_t) +
+            branch_node_capacity_ * sizeof(std::uint32_t) +
+            proxy_position_capacity_ * sizeof(float3) +
+            proxy_triangle_capacity_ * sizeof(uint3) +
+            (proxy_validation_ != nullptr ? sizeof(std::uint32_t) : 0U);
     }
 
 private:
     HierarchyNode* nodes_{};
     std::uint32_t* primitive_indices_{};
+    std::uint32_t* branch_node_ids_{};
     std::size_t node_capacity_{};
     std::size_t primitive_capacity_{};
+    std::size_t branch_node_capacity_{};
+    std::uint32_t primitive_count_{};
+    float3* proxy_positions_{};
+    uint3* proxy_triangles_{};
+    std::uint32_t* proxy_validation_{};
+    std::size_t proxy_position_capacity_{};
+    std::size_t proxy_triangle_capacity_{};
     HierarchyStatistics statistics_{};
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> branch_levels_;
 
     friend Status build_hierarchy(
         DeviceMeshView, HierarchyOptions, Workspace&, Hierarchy&, cudaStream_t);
+    friend Status build_hierarchy(
+        DeviceAabbView, HierarchyOptions, Workspace&, Hierarchy&, cudaStream_t);
+    friend Status refit_hierarchy(DeviceAabbView, Hierarchy&, cudaStream_t);
+    friend Status refit_hierarchy_unchecked_async(
+        DeviceAabbView, Hierarchy&, cudaStream_t);
 };
 
 [[nodiscard]] Status compute_normals(
@@ -163,6 +198,28 @@ private:
 
 [[nodiscard]] Status build_hierarchy(
     DeviceMeshView mesh,
+    HierarchyOptions options,
+    Workspace& workspace,
+    Hierarchy& output,
+    cudaStream_t stream = nullptr);
+
+// Recomputes bounds without changing topology or primitive order. The input
+// count must match the hierarchy's original primitive count.
+[[nodiscard]] Status refit_hierarchy(
+    DeviceAabbView primitives,
+    Hierarchy& hierarchy,
+    cudaStream_t stream = nullptr);
+
+// Advanced enqueue-only variant for finite, ordered bounds produced by a
+// preceding kernel on the same stream. The caller supplies the completion
+// boundary and observes asynchronous CUDA failures there.
+[[nodiscard]] Status refit_hierarchy_unchecked_async(
+    DeviceAabbView primitives,
+    Hierarchy& hierarchy,
+    cudaStream_t stream = nullptr);
+
+[[nodiscard]] Status build_hierarchy(
+    DeviceAabbView primitives,
     HierarchyOptions options,
     Workspace& workspace,
     Hierarchy& output,

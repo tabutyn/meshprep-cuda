@@ -48,18 +48,21 @@ QuantizedPoint quantize(float3 point)
     };
 }
 
-float signed_volume(const std::vector<float3>& positions, const std::vector<uint3>& triangles)
+float3 barycentric_coordinates(float3 point, float3 a, float3 b, float3 c)
 {
-    double volume = 0.0;
-    for (const uint3 triangle : triangles) {
-        const float3 a = positions[triangle.x];
-        const float3 b = positions[triangle.y];
-        const float3 c = positions[triangle.z];
-        volume += static_cast<double>(a.x) * (static_cast<double>(b.y) * c.z - static_cast<double>(b.z) * c.y) +
-            static_cast<double>(a.y) * (static_cast<double>(b.z) * c.x - static_cast<double>(b.x) * c.z) +
-            static_cast<double>(a.z) * (static_cast<double>(b.x) * c.y - static_cast<double>(b.y) * c.x);
-    }
-    return static_cast<float>(std::fabs(volume) / 6.0);
+    const float3 v0 = make_float3(b.x - a.x, b.y - a.y, b.z - a.z);
+    const float3 v1 = make_float3(c.x - a.x, c.y - a.y, c.z - a.z);
+    const float3 v2 = make_float3(point.x - a.x, point.y - a.y, point.z - a.z);
+    const float d00 = v0.x * v0.x + v0.y * v0.y + v0.z * v0.z;
+    const float d01 = v0.x * v1.x + v0.y * v1.y + v0.z * v1.z;
+    const float d11 = v1.x * v1.x + v1.y * v1.y + v1.z * v1.z;
+    const float d20 = v2.x * v0.x + v2.y * v0.y + v2.z * v0.z;
+    const float d21 = v2.x * v1.x + v2.y * v1.y + v2.z * v1.z;
+    const float denominator = d00 * d11 - d01 * d01;
+    if (!(denominator > 0.0F)) return make_float3(-1.0F, -1.0F, -1.0F);
+    const float v = (d11 * d20 - d01 * d21) / denominator;
+    const float w = (d00 * d21 - d01 * d20) / denominator;
+    return make_float3(1.0F - v - w, v, w);
 }
 
 } // namespace
@@ -180,8 +183,6 @@ HostSurfaceMesh make_geodesic_sphere(std::uint32_t frequency, float radius)
             mesh.rest_lengths[i] = local[i - begin].second;
         }
     }
-    mesh.rest_volume = signed_volume(mesh.positions, mesh.triangles);
-
     const std::size_t expected_vertices = static_cast<std::size_t>(10U) * frequency * frequency + 2U;
     const std::size_t expected_triangles = static_cast<std::size_t>(20U) * frequency * frequency;
     const std::size_t expected_edges = static_cast<std::size_t>(30U) * frequency * frequency;
@@ -205,6 +206,66 @@ HostSurfaceMesh make_geodesic_sphere(std::uint32_t frequency, float radius)
         }
     }
     return mesh;
+}
+
+std::vector<SurfaceVertexEmbedding> make_surface_embedding(
+    const HostSurfaceMesh& source,
+    const std::vector<float3>& target_positions)
+{
+    if (source.positions.empty() || source.triangles.empty()) {
+        throw std::invalid_argument("surface embedding source is empty");
+    }
+    std::vector<SurfaceVertexEmbedding> embedding;
+    embedding.reserve(target_positions.size());
+    constexpr float inside_tolerance = 2.0e-4F;
+    for (const float3 target : target_positions) {
+        const float direction_length = std::sqrt(
+            target.x * target.x + target.y * target.y + target.z * target.z);
+        if (!(direction_length > 0.0F)) {
+            throw std::invalid_argument("surface embedding target is at the origin");
+        }
+        const float3 direction = make_float3(
+            target.x / direction_length, target.y / direction_length, target.z / direction_length);
+        bool found = false;
+        SurfaceVertexEmbedding selected{};
+        for (const uint3 triangle : source.triangles) {
+            const float3 a = source.positions[triangle.x];
+            const float3 b = source.positions[triangle.y];
+            const float3 c = source.positions[triangle.z];
+            const float3 ab = make_float3(b.x - a.x, b.y - a.y, b.z - a.z);
+            const float3 ac = make_float3(c.x - a.x, c.y - a.y, c.z - a.z);
+            const float3 normal = make_float3(
+                ab.y * ac.z - ab.z * ac.y,
+                ab.z * ac.x - ab.x * ac.z,
+                ab.x * ac.y - ab.y * ac.x);
+            const float denominator =
+                normal.x * direction.x + normal.y * direction.y + normal.z * direction.z;
+            if (std::fabs(denominator) <= 1.0e-12F) continue;
+            const float distance =
+                (normal.x * a.x + normal.y * a.y + normal.z * a.z) / denominator;
+            if (!(distance > 0.0F)) continue;
+            const float3 intersection = make_float3(
+                direction.x * distance, direction.y * distance, direction.z * distance);
+            float3 weights = barycentric_coordinates(intersection, a, b, c);
+            if (weights.x < -inside_tolerance || weights.y < -inside_tolerance ||
+                weights.z < -inside_tolerance) continue;
+            weights.x = std::max(0.0F, weights.x);
+            weights.y = std::max(0.0F, weights.y);
+            weights.z = std::max(0.0F, weights.z);
+            const float sum = weights.x + weights.y + weights.z;
+            if (!(sum > 0.0F)) continue;
+            selected.source_vertices = triangle;
+            selected.barycentric = make_float3(
+                weights.x / sum, weights.y / sum, weights.z / sum);
+            found = true;
+            break;
+        }
+        if (!found) {
+            throw std::runtime_error("surface embedding could not locate a source triangle");
+        }
+        embedding.push_back(selected);
+    }
+    return embedding;
 }
 
 } // namespace waterlab

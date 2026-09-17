@@ -4,4 +4,4 @@ project(meshprep-package-consumer LANGUAGES CXX CUDA)
 
 find_package(meshprep-cuda CONFIG REQUIRED)
 add_executable(package-consumer main.cu)
-target_link_libraries(package-consumer PRIVATE meshprep::meshprep-cuda)
+target_link_libraries(package-consumer PRIVATE meshprep::meshprep-simulation)

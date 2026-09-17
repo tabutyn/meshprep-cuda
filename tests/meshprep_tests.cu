@@ -153,7 +153,10 @@ void test_empty_input()
         meshprep::compute_normals({}, {}, workspace, normals).code ==
         meshprep::StatusCode::invalid_argument);
     CHECK(
-        meshprep::build_hierarchy({}, {}, workspace, hierarchy).code ==
+        meshprep::build_hierarchy(meshprep::DeviceMeshView{}, {}, workspace, hierarchy).code ==
+        meshprep::StatusCode::invalid_argument);
+    CHECK(
+        meshprep::build_hierarchy(meshprep::DeviceAabbView{}, {}, workspace, hierarchy).code ==
         meshprep::StatusCode::invalid_argument);
 }
 
@@ -437,6 +440,95 @@ void test_hierarchy_and_determinism()
     }
 }
 
+void test_aabb_hierarchy()
+{
+    std::vector<meshprep::Aabb> host_bounds;
+    HostMesh proxy_mesh;
+    for (std::uint32_t index = 0; index < 257U; ++index) {
+        const float x = static_cast<float>(index % 17U) * 0.25F;
+        const float y = static_cast<float>((index / 17U) % 17U) * 0.2F;
+        const float z = static_cast<float>(index / 289U) * 0.3F;
+        const float3 minimum = make_float3(x - 0.03F, y - 0.04F, z - 0.05F);
+        const float3 maximum = make_float3(x + 0.03F, y + 0.04F, z + 0.05F);
+        host_bounds.push_back({minimum, maximum});
+        const std::uint32_t base = static_cast<std::uint32_t>(proxy_mesh.positions.size());
+        proxy_mesh.positions.push_back(minimum);
+        proxy_mesh.positions.push_back(maximum);
+        proxy_mesh.positions.push_back(make_float3(x, y, z));
+        proxy_mesh.triangles.push_back(make_uint3(base, base + 1U, base + 2U));
+    }
+    DeviceArray<meshprep::Aabb> device_bounds(host_bounds);
+    meshprep::Workspace workspace;
+    meshprep::Hierarchy hierarchy;
+    const meshprep::HierarchyOptions options{4};
+    meshprep::Status status = meshprep::build_hierarchy(
+        meshprep::DeviceAabbView{device_bounds.data(), host_bounds.size()},
+        options,
+        workspace,
+        hierarchy);
+    CHECK(status.ok());
+    const auto reference_nodes = download(hierarchy.nodes(), hierarchy.statistics().node_count);
+    const auto reference_permutation = download(
+        hierarchy.primitive_indices(), host_bounds.size());
+    validate_hierarchy(proxy_mesh, reference_nodes, reference_permutation, options.max_leaf_size);
+    for (int iteration = 0; iteration < 20; ++iteration) {
+        status = meshprep::build_hierarchy(
+            meshprep::DeviceAabbView{device_bounds.data(), host_bounds.size()},
+            options,
+            workspace,
+            hierarchy);
+        CHECK(status.ok());
+        CHECK(download(hierarchy.primitive_indices(), host_bounds.size()) == reference_permutation);
+        const auto nodes = download(hierarchy.nodes(), hierarchy.statistics().node_count);
+        CHECK(nodes.size() == reference_nodes.size());
+        for (std::size_t node = 0; node < nodes.size() && node < reference_nodes.size(); ++node) {
+            CHECK(same_node(nodes[node], reference_nodes[node]));
+        }
+    }
+
+    for (auto& bounds : host_bounds) {
+        bounds.minimum.x += 10.0F;
+        bounds.maximum.x += 10.0F;
+    }
+    device_bounds.upload(host_bounds);
+    status = meshprep::refit_hierarchy(
+        meshprep::DeviceAabbView{device_bounds.data(), host_bounds.size()}, hierarchy);
+    CHECK(status.ok());
+    CHECK(download(hierarchy.primitive_indices(), host_bounds.size()) == reference_permutation);
+    const auto refitted_nodes = download(
+        hierarchy.nodes(), hierarchy.statistics().node_count);
+    CHECK(refitted_nodes.size() == reference_nodes.size());
+    for (std::size_t node = 0; node < refitted_nodes.size(); ++node) {
+        CHECK(refitted_nodes[node].first_child == reference_nodes[node].first_child);
+        CHECK(refitted_nodes[node].child_count == reference_nodes[node].child_count);
+        CHECK(refitted_nodes[node].first_primitive == reference_nodes[node].first_primitive);
+        CHECK(refitted_nodes[node].primitive_count == reference_nodes[node].primitive_count);
+    }
+    CHECK(std::abs(refitted_nodes[0].bounds_min.x - 9.97F) < 1.0e-6F);
+    CHECK(std::abs(refitted_nodes[0].bounds_max.x - 14.03F) < 1.0e-6F);
+    CHECK(
+        meshprep::refit_hierarchy(
+            meshprep::DeviceAabbView{device_bounds.data(), host_bounds.size() - 1U}, hierarchy).code ==
+        meshprep::StatusCode::invalid_argument);
+
+    host_bounds[0] = {make_float3(1.0F, 0.0F, 0.0F), make_float3(-1.0F, 0.0F, 0.0F)};
+    device_bounds.upload(host_bounds);
+    status = meshprep::refit_hierarchy(
+        meshprep::DeviceAabbView{device_bounds.data(), host_bounds.size()}, hierarchy);
+    CHECK(status.code == meshprep::StatusCode::invalid_mesh);
+    const auto nodes_after_failed_refit = download(
+        hierarchy.nodes(), hierarchy.statistics().node_count);
+    for (std::size_t node = 0; node < refitted_nodes.size(); ++node) {
+        CHECK(same_node(nodes_after_failed_refit[node], refitted_nodes[node]));
+    }
+    status = meshprep::build_hierarchy(
+        meshprep::DeviceAabbView{device_bounds.data(), host_bounds.size()},
+        options,
+        workspace,
+        hierarchy);
+    CHECK(status.code == meshprep::StatusCode::invalid_mesh);
+}
+
 void test_root_leaf()
 {
     const HostMesh host = quad_mesh();
@@ -497,6 +589,7 @@ int main()
     test_invalid_meshes();
     test_root_leaf();
     test_hierarchy_and_determinism();
+    test_aabb_hierarchy();
     test_seeded_triangle_soup_against_cpu();
     if (failures != 0) {
         std::fprintf(stderr, "%d test assertions failed\n", failures);

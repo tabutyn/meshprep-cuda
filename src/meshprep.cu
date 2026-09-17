@@ -521,6 +521,35 @@ __global__ void hierarchy_geometry_kernel(
     };
 }
 
+__global__ void aabb_proxy_kernel(
+    const Aabb* bounds,
+    float3* positions,
+    uint3* triangles,
+    std::uint32_t count,
+    std::uint32_t* invalid)
+{
+    const std::uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index >= count) return;
+    const Aabb box = bounds[index];
+    const bool valid = isfinite(box.minimum.x) && isfinite(box.minimum.y) &&
+        isfinite(box.minimum.z) && isfinite(box.maximum.x) &&
+        isfinite(box.maximum.y) && isfinite(box.maximum.z) &&
+        box.minimum.x <= box.maximum.x && box.minimum.y <= box.maximum.y &&
+        box.minimum.z <= box.maximum.z;
+    if (!valid) {
+        atomicExch(invalid, 1U);
+        return;
+    }
+    const std::uint32_t base = index * 3U;
+    positions[base] = box.minimum;
+    positions[base + 1U] = box.maximum;
+    positions[base + 2U] = make_float3(
+        0.5F * (box.minimum.x + box.maximum.x),
+        0.5F * (box.minimum.y + box.maximum.y),
+        0.5F * (box.minimum.z + box.maximum.z));
+    triangles[index] = make_uint3(base, base + 1U, base + 2U);
+}
+
 __global__ void iota_kernel(std::uint32_t* values, std::uint32_t count)
 {
     const std::uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -789,6 +818,46 @@ __global__ void branch_bounds_kernel(
     node.bounds_max = to_float3(maximum);
 }
 
+__global__ void validate_aabb_kernel(
+    const Aabb* bounds,
+    std::uint32_t count,
+    std::uint32_t* invalid_count)
+{
+    const std::uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index >= count) return;
+    const Aabb box = bounds[index];
+    const bool finite = isfinite(box.minimum.x) && isfinite(box.minimum.y) &&
+        isfinite(box.minimum.z) && isfinite(box.maximum.x) &&
+        isfinite(box.maximum.y) && isfinite(box.maximum.z);
+    const bool ordered = box.minimum.x <= box.maximum.x &&
+        box.minimum.y <= box.maximum.y && box.minimum.z <= box.maximum.z;
+    if (!finite || !ordered) atomicAdd(invalid_count, 1U);
+}
+
+__global__ void refit_leaf_bounds_kernel(
+    const Aabb* primitive_bounds,
+    const std::uint32_t* primitive_indices,
+    HierarchyNode* nodes,
+    std::uint32_t node_count)
+{
+    const std::uint32_t node_index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (node_index >= node_count || !nodes[node_index].is_leaf()) return;
+    HierarchyNode& node = nodes[node_index];
+    float3 minimum = make_float3(INFINITY, INFINITY, INFINITY);
+    float3 maximum = make_float3(-INFINITY, -INFINITY, -INFINITY);
+    for (std::uint32_t item = 0U; item < node.primitive_count; ++item) {
+        const Aabb box = primitive_bounds[primitive_indices[node.first_primitive + item]];
+        minimum.x = fminf(minimum.x, box.minimum.x);
+        minimum.y = fminf(minimum.y, box.minimum.y);
+        minimum.z = fminf(minimum.z, box.minimum.z);
+        maximum.x = fmaxf(maximum.x, box.maximum.x);
+        maximum.y = fmaxf(maximum.y, box.maximum.y);
+        maximum.z = fmaxf(maximum.z, box.maximum.z);
+    }
+    node.bounds_min = minimum;
+    node.bounds_max = maximum;
+}
+
 template <typename Function>
 [[nodiscard]] Status cub_query(std::size_t& maximum, Function&& function, const char* message)
 {
@@ -871,14 +940,27 @@ Hierarchy::~Hierarchy()
 {
     release(nodes_);
     release(primitive_indices_);
+    release(branch_node_ids_);
+    release(proxy_positions_);
+    release(proxy_triangles_);
+    release(proxy_validation_);
 }
 
 Hierarchy::Hierarchy(Hierarchy&& other) noexcept
     : nodes_(std::exchange(other.nodes_, nullptr)),
       primitive_indices_(std::exchange(other.primitive_indices_, nullptr)),
+      branch_node_ids_(std::exchange(other.branch_node_ids_, nullptr)),
       node_capacity_(std::exchange(other.node_capacity_, 0)),
       primitive_capacity_(std::exchange(other.primitive_capacity_, 0)),
-      statistics_(std::exchange(other.statistics_, {}))
+      branch_node_capacity_(std::exchange(other.branch_node_capacity_, 0)),
+      primitive_count_(std::exchange(other.primitive_count_, 0)),
+      proxy_positions_(std::exchange(other.proxy_positions_, nullptr)),
+      proxy_triangles_(std::exchange(other.proxy_triangles_, nullptr)),
+      proxy_validation_(std::exchange(other.proxy_validation_, nullptr)),
+      proxy_position_capacity_(std::exchange(other.proxy_position_capacity_, 0)),
+      proxy_triangle_capacity_(std::exchange(other.proxy_triangle_capacity_, 0)),
+      statistics_(std::exchange(other.statistics_, {})),
+      branch_levels_(std::move(other.branch_levels_))
 {
 }
 
@@ -887,11 +969,24 @@ Hierarchy& Hierarchy::operator=(Hierarchy&& other) noexcept
     if (this == &other) return *this;
     release(nodes_);
     release(primitive_indices_);
+    release(branch_node_ids_);
+    release(proxy_positions_);
+    release(proxy_triangles_);
+    release(proxy_validation_);
     nodes_ = std::exchange(other.nodes_, nullptr);
     primitive_indices_ = std::exchange(other.primitive_indices_, nullptr);
+    branch_node_ids_ = std::exchange(other.branch_node_ids_, nullptr);
     node_capacity_ = std::exchange(other.node_capacity_, 0);
     primitive_capacity_ = std::exchange(other.primitive_capacity_, 0);
+    branch_node_capacity_ = std::exchange(other.branch_node_capacity_, 0);
+    primitive_count_ = std::exchange(other.primitive_count_, 0);
+    proxy_positions_ = std::exchange(other.proxy_positions_, nullptr);
+    proxy_triangles_ = std::exchange(other.proxy_triangles_, nullptr);
+    proxy_validation_ = std::exchange(other.proxy_validation_, nullptr);
+    proxy_position_capacity_ = std::exchange(other.proxy_position_capacity_, 0);
+    proxy_triangle_capacity_ = std::exchange(other.proxy_triangle_capacity_, 0);
     statistics_ = std::exchange(other.statistics_, {});
+    branch_levels_ = std::move(other.branch_levels_);
     return *this;
 }
 
@@ -1194,6 +1289,8 @@ Status build_hierarchy(
     }
     const auto triangle_count = static_cast<std::uint32_t>(mesh.triangle_count);
     const std::size_t maximum_nodes = static_cast<std::size_t>(triangle_count) * 2U;
+    output.primitive_count_ = triangle_count;
+    output.branch_levels_.clear();
     status = ensure_allocation(output.nodes_, output.node_capacity_, maximum_nodes);
     if (!status) return status;
     status = ensure_allocation(
@@ -1595,6 +1692,16 @@ Status build_hierarchy(
     if (leaf_primitive_cursor != triangle_count) {
         return {StatusCode::internal_error, cudaSuccess, "hierarchy lost primitives"};
     }
+    status = ensure_allocation(
+        output.branch_node_ids_, output.branch_node_capacity_, branch_count_total);
+    if (!status) return status;
+    error = cudaMemcpyAsync(
+        output.branch_node_ids_, all_branch_node_ids,
+        static_cast<std::size_t>(branch_count_total) * sizeof(std::uint32_t),
+        cudaMemcpyDeviceToDevice, stream);
+    if (error != cudaSuccess) {
+        return cuda_status(error, "failed to retain hierarchy branch levels");
+    }
     {
         StageRange range{"meshprep/bounds_propagation"};
         for (auto level = branch_levels.rbegin(); level != branch_levels.rend(); ++level) {
@@ -1606,7 +1713,166 @@ Status build_hierarchy(
         }
     }
     output.statistics_ = {node_count, leaf_count, branch_count_total, depth};
+    output.branch_levels_ = std::move(branch_levels);
     return success();
+}
+
+Status refit_hierarchy(
+    DeviceAabbView primitives,
+    Hierarchy& hierarchy,
+    cudaStream_t stream)
+{
+#if MESHPREP_ENABLE_NVTX
+    nvtx3::scoped_range function_range{"meshprep::refit_hierarchy"};
+#endif
+    if (primitives.bounds == nullptr || primitives.primitive_count == 0U) {
+        return invalid("refit AABB view must contain bounds");
+    }
+    if (primitives.primitive_count != hierarchy.primitive_count_ ||
+        hierarchy.nodes_ == nullptr || hierarchy.primitive_indices_ == nullptr ||
+        hierarchy.statistics_.node_count == 0U) {
+        return invalid("refit primitive count must match a built hierarchy");
+    }
+    if (hierarchy.proxy_validation_ == nullptr) {
+        const cudaError_t allocation = cudaMalloc(
+            &hierarchy.proxy_validation_, sizeof(std::uint32_t));
+        if (allocation != cudaSuccess) {
+            return cuda_status(allocation, "refit validation allocation failed");
+        }
+    }
+    cudaError_t error = cudaMemsetAsync(
+        hierarchy.proxy_validation_, 0, sizeof(std::uint32_t), stream);
+    if (error != cudaSuccess) return cuda_status(error, "failed to clear refit validation");
+    const auto primitive_count = static_cast<std::uint32_t>(primitives.primitive_count);
+    validate_aabb_kernel<<<
+        (primitive_count + block_size - 1U) / block_size, block_size, 0, stream>>>(
+        primitives.bounds, primitive_count, hierarchy.proxy_validation_);
+    std::uint32_t invalid_bounds = 0U;
+    error = cudaMemcpyAsync(
+        &invalid_bounds, hierarchy.proxy_validation_, sizeof(invalid_bounds),
+        cudaMemcpyDeviceToHost, stream);
+    if (error != cudaSuccess) return cuda_status(error, "failed to read refit validation");
+    Status status = synchronize(stream, "hierarchy refit validation failed");
+    if (!status) return status;
+    if (invalid_bounds != 0U) {
+        return invalid_mesh("AABB bounds must be finite and ordered");
+    }
+    refit_leaf_bounds_kernel<<<
+        (hierarchy.statistics_.node_count + block_size - 1U) / block_size,
+        block_size, 0, stream>>>(
+        primitives.bounds, hierarchy.primitive_indices_, hierarchy.nodes_,
+        hierarchy.statistics_.node_count);
+    for (auto level = hierarchy.branch_levels_.rbegin();
+         level != hierarchy.branch_levels_.rend(); ++level) {
+        branch_bounds_kernel<<<
+            (level->second + block_size - 1U) / block_size, block_size, 0, stream>>>(
+            hierarchy.branch_node_ids_ + level->first,
+            hierarchy.nodes_, level->second);
+    }
+    status = synchronize(stream, "hierarchy refit failed");
+    if (!status) return status;
+    return success();
+}
+
+Status refit_hierarchy_unchecked_async(
+    DeviceAabbView primitives,
+    Hierarchy& hierarchy,
+    cudaStream_t stream)
+{
+#if MESHPREP_ENABLE_NVTX
+    nvtx3::scoped_range function_range{"meshprep::refit_hierarchy_async"};
+#endif
+    if (primitives.bounds == nullptr || primitives.primitive_count == 0U) {
+        return invalid("refit AABB view must contain bounds");
+    }
+    if (primitives.primitive_count != hierarchy.primitive_count_ ||
+        hierarchy.nodes_ == nullptr || hierarchy.primitive_indices_ == nullptr ||
+        hierarchy.statistics_.node_count == 0U) {
+        return invalid("refit primitive count must match a built hierarchy");
+    }
+    refit_leaf_bounds_kernel<<<
+        (hierarchy.statistics_.node_count + block_size - 1U) / block_size,
+        block_size, 0, stream>>>(
+        primitives.bounds, hierarchy.primitive_indices_, hierarchy.nodes_,
+        hierarchy.statistics_.node_count);
+    for (auto level = hierarchy.branch_levels_.rbegin();
+         level != hierarchy.branch_levels_.rend(); ++level) {
+        branch_bounds_kernel<<<
+            (level->second + block_size - 1U) / block_size, block_size, 0, stream>>>(
+            hierarchy.branch_node_ids_ + level->first,
+            hierarchy.nodes_, level->second);
+    }
+    const cudaError_t launch_error = cudaPeekAtLastError();
+    if (launch_error != cudaSuccess) {
+        return cuda_status(launch_error, "failed to enqueue hierarchy refit");
+    }
+    return success();
+}
+
+Status build_hierarchy(
+    DeviceAabbView primitives,
+    HierarchyOptions options,
+    Workspace& workspace,
+    Hierarchy& output,
+    cudaStream_t stream)
+{
+#if MESHPREP_ENABLE_NVTX
+    nvtx3::scoped_range function_range{"meshprep::build_aabb_hierarchy"};
+#endif
+    if (primitives.bounds == nullptr || primitives.primitive_count == 0) {
+        return invalid("AABB view must contain bounds");
+    }
+    if (primitives.primitive_count >= (std::uint64_t{1} << 32) ||
+        primitives.primitive_count > std::numeric_limits<std::uint32_t>::max() / 3U) {
+        return unsupported("AABB proxy count exceeds 32-bit indexing");
+    }
+    const auto primitive_count = static_cast<std::uint32_t>(primitives.primitive_count);
+    Status status = ensure_allocation(
+        output.proxy_positions_, output.proxy_position_capacity_,
+        static_cast<std::size_t>(primitive_count) * 3U);
+    if (!status) return status;
+    status = ensure_allocation(
+        output.proxy_triangles_, output.proxy_triangle_capacity_, primitive_count);
+    if (!status) return status;
+    if (output.proxy_validation_ == nullptr) {
+        const cudaError_t allocation = cudaMalloc(&output.proxy_validation_, sizeof(std::uint32_t));
+        if (allocation != cudaSuccess) {
+            return cuda_status(allocation, "AABB validation allocation failed");
+        }
+    }
+    cudaError_t error = cudaMemsetAsync(
+        output.proxy_validation_, 0, sizeof(std::uint32_t), stream);
+    if (error != cudaSuccess) return cuda_status(error, "failed to clear AABB validation");
+    aabb_proxy_kernel<<<
+        (primitive_count + block_size - 1U) / block_size, block_size, 0, stream>>>(
+        primitives.bounds,
+        output.proxy_positions_,
+        output.proxy_triangles_,
+        primitive_count,
+        output.proxy_validation_);
+    std::uint32_t invalid_bounds = 0;
+    error = cudaMemcpyAsync(
+        &invalid_bounds,
+        output.proxy_validation_,
+        sizeof(invalid_bounds),
+        cudaMemcpyDeviceToHost,
+        stream);
+    if (error != cudaSuccess) return cuda_status(error, "failed to read AABB validation");
+    status = synchronize(stream, "AABB proxy generation failed");
+    if (!status) return status;
+    if (invalid_bounds != 0U) {
+        return invalid_mesh("AABB bounds must be finite and ordered");
+    }
+    return build_hierarchy(
+        DeviceMeshView{
+            output.proxy_positions_,
+            static_cast<std::uint64_t>(primitive_count) * 3U,
+            output.proxy_triangles_,
+            primitive_count},
+        options,
+        workspace,
+        output,
+        stream);
 }
 
 } // namespace meshprep

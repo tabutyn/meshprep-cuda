@@ -61,4 +61,4 @@ One profiled Sibenik warmup plus one recorded build issued 502 kernels, or 251 p
 
 The current evidence points to repeated per-level global sort/reduction and host-visible level control as the hierarchy cost. The next controlled experiments are persistent or batched level scheduling, narrower carried state, dynamic output growth instead of worst-case node capacity, and high-valence normal grouping using segmented graph primitives. Results should be reported even when an experiment regresses.
 
-No Nsight Compute metrics are claimed in v0.1.0 because `ncu` was not installed on the validation host. The capture script and target-kernel workflow are included for reproduction.
+Nsight Compute 2025.4 is installed on the validation host, but GPU performance counters require administrator authorization. The focused water-lab workflow is documented in `docs/NSIGHT_GUIDE.md`; no Compute-counter claim is published until that password-authorized capture is reviewed.

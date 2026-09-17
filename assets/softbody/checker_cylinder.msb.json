@@ -1,0 +1,29 @@
+{
+  "binary": "checker_cylinder.msb",
+  "binarySha256": "874166763cf1aa4bd510468ee04094d446d6c87b967f4cd97bda9731f868e7da",
+  "bounds": {
+    "maximum": [
+      0.30000001192092896,
+      0.8250000476837158,
+      0.30000001192092896
+    ],
+    "minimum": [
+      -0.30000001192092896,
+      -0.8250000476837158,
+      -0.30000001192092896
+    ]
+  },
+  "coordinates": "right-handed +Y up; Blender (x,y,z) maps to runtime (x,z,-y)",
+  "directedNeighborCount": 15408,
+  "edgeCount": 7704,
+  "nominalSpacing": 0.07128523998464949,
+  "pinnedVoxelCount": 70,
+  "relaxIterations": 24,
+  "renderTriangleCount": 1632,
+  "renderVertexCount": 931,
+  "schema": "meshprep.softbody-asset.v1",
+  "source": "checker_cylinder.glb",
+  "sourceSha256": "6dfd5de51eea8d95f3e17fabbcbb0c5a77b989c5bc6cbc0d5326360994db46c0",
+  "surfaceVoxelCount": 500,
+  "voxelCount": 1000
+}

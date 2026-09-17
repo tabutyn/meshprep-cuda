@@ -2,9 +2,31 @@
 
 Deterministic CUDA C++ mesh preprocessing: face/vertex normals and eight-way AABB hierarchy construction.
 
-`meshprep-cuda` is a small C++20 library for pipelines that already keep indexed triangle meshes on the GPU. It turns caller-owned device buffers into reusable, device-resident normal and hierarchy outputs. Stable CUB sorting replaces atomic scatter order, so topology, primitive permutation, and corner-normal indices are repeatable on the same supported environment.
+`meshprep-cuda` is a small C++20 library for pipelines that already keep geometry on the GPU. It turns caller-owned indexed triangle meshes or primitive AABBs into reusable, device-resident normal and hierarchy outputs. Stable CUB sorting replaces atomic scatter order, so topology, primitive permutation, and corner-normal indices are repeatable on the same supported environment.
 
-The repository also includes a [native CUDA/OpenGL water lab](apps/water_lab/README.md): a clickable, zero-gravity 40,500-triangle droplet with graph-based surface physics, a hierarchy rebuild every frame, and two-surface refractive ray tracing.
+The repository also includes a [native CUDA/OpenGL water lab](apps/water_lab/README.md).
+It now opens as a tilt-controlled peg course: steer a 3,000-particle soft water
+ball with WASD or arrows. Its physical and smooth render skins both use the
+frequency-10, 2,000-triangle sphere by default. One fixed tick runs per displayed frame, rebuilding
+both hierarchies. The original dynamic-rectangle experiment remains under
+`--scene lab`. See the [course notes and measurements](docs/TILT_COURSE.md).
+
+Rectangle-edge contact is covered by a deterministic 1,980-frame headless
+experiment. The retained smooth contact shell reduced measured corner vibration
+by 83.6% without increasing penetration or skin-physics time; methodology,
+failed candidates, limitations, and reproduction commands are in
+[`docs/CONTACT_STABILITY.md`](docs/CONTACT_STABILITY.md).
+
+Soft-body fracture is also capture-driven. The saved 245-frame failure now
+replays from authored rest and gates supported triangle area, edge length,
+retained surface, orientation, and finiteness. The current solver reduces
+broken bonds from 4,230 to 483 and keeps structurally supported triangles within
+0.6039–1.3759× rest area, with a 1.2780× maximum edge and no supported
+inversions, while retaining at least 94.75% of the surface. Fractured bonds no
+longer hide their adjacent material triangles; the headless audit still
+measures supported and detached geometry separately. The combined `V` view
+shows internal voxels and colors broken lattice connections red. See
+[`docs/SOFT_BODY_STABILITY.md`](docs/SOFT_BODY_STABILITY.md).
 
 ## Why this project exists
 
@@ -16,10 +38,40 @@ The implementation began as working production geometry code with two concrete d
 - caller-provided sharp-edge splitting, including duplicate and non-manifold inputs;
 - stable `(vertex, triangle, corner)` adjacency and `(parent, octant)` partitioning with CUB;
 - breadth-first eight-way hierarchy with contiguous child and primitive ranges;
+- generic device-AABB hierarchy input for particles and non-triangle primitives;
 - reusable movable RAII workspace and outputs, with no exceptions across the API;
 - validation for non-finite coordinates, indices, sharp-edge endpoints, and 32-bit limits;
 - seeded CPU-reference tests, 100-run determinism checks, Compute Sanitizer gates, and a 10M-triangle scale test;
 - CMake install/export for `find_package(meshprep-cuda CONFIG REQUIRED)`.
+
+## Experimental simulation/render contract
+
+The installable `<meshprep/simulation.hpp>` header defines borrowed CUDA render
+views, a validated fixed-step descriptor, composable component flags, and the
+eight numbered gallery recipes used by the native app. The separately exported
+`meshprep::meshprep-simulation` target owns and steps those recipes headlessly;
+it has no GLFW, OpenGL, ray-tracer, or HUD dependency. Native and headless
+recipes share one preset factory; optional gravity and solver-iteration
+overrides are explicit, and `resolved_physics()` reports what was selected.
+The gallery now has a widened 15,000-particle hemispherical bowl with a dynamic sphere,
+closed-box rigid-sphere/cloth and rigid-sphere/soft-body examples, a combined
+sphere/particle/catching-cloth scene, a torque-driven water wheel with compliant
+axle-to-rim soft crosses, a load-bearing procedural soft sphere rolling over
+ground cloth into hanging cloth, and a rigid sphere tethered to a central post
+by a procedural rope. The native `P`
+panel exposes active particle count and physical water-skin detail where
+applicable. These simulation examples remain experimental; the core geometry
+library's contracts are separate.
+
+```bash
+./build/meshprep-simulation-contexts
+./build/meshprep-water-lab --context 6
+```
+
+See [`examples/simulation_contexts.cu`](examples/simulation_contexts.cu) for
+consumer code and
+[`docs/SIMULATION_API_ARCHITECTURE.md`](docs/SIMULATION_API_ARCHITECTURE.md)
+for the extraction boundary and current experimental limitations.
 
 ## Requirements
 
@@ -54,6 +106,10 @@ meshprep::Status normal_status = meshprep::compute_normals(
     mesh, sharp_edges, workspace, normals, stream);
 meshprep::Status hierarchy_status = meshprep::build_hierarchy(
     mesh, {.max_leaf_size = 8}, workspace, hierarchy, stream);
+
+meshprep::Status particle_hierarchy_status = meshprep::build_hierarchy(
+    meshprep::DeviceAabbView{device_bounds, particle_count},
+    {.max_leaf_size = 8}, workspace, hierarchy, stream);
 ```
 
 See [`examples/basic.cu`](examples/basic.cu) for a complete upload/use example and [`docs/API.md`](docs/API.md) for ownership and synchronization contracts.
@@ -88,7 +144,7 @@ The deterministic implementation is slower than the legacy code and the pinned `
 
 ## Scope
 
-v0.1.0 does not provide a C ABI, Python binding, CPU fallback, Windows support, traversal API, dynamic mesh updates, or bundled third-party scenes. Vertices and triangles must each number fewer than `2^32`. Determinism is guaranteed for repeated calls with identical inputs, options, CUDA software, and GPU architecture; floating-point values are compared to documented tolerances across environments.
+v0.1.0 does not provide a C ABI, Python binding, CPU fallback, Windows support, public traversal API, dynamic mesh updates, or bundled third-party scenes. Vertices, triangles, and AABB primitives must remain within documented 32-bit limits. Determinism is guaranteed for repeated calls with identical inputs, options, CUDA software, and GPU architecture; floating-point values are compared to documented tolerances across environments.
 
 ## License
 
