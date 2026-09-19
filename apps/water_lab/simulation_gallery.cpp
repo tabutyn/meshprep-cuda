@@ -168,6 +168,7 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         options.ground_friction = 10.0F;
         options.unbonded_voxel_collisions = true;
         options.velocity_damping = 0.45F;
+        options.cross_source_mass_multiplier = 8.0F;
     } else if (context == meshprep::sim::ExampleContext::cloth) {
         // Impact strain is sampled before projection in this scene. Require a
         // persistent but locally reachable strain so rolling contact can tear
@@ -224,8 +225,14 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
     options.require_1000_voxels = false;
     if (context == ExampleContext::rope) {
         rope_node_count = std::clamp(rope_node_count, 8U, 512U);
+        const std::uint32_t authored_nodes=std::max(16U,rope_node_count);
+        const std::uint32_t trunk_nodes=std::max(8U,authored_nodes/2U);
+        const std::uint32_t branch_nodes=std::max(
+            5U,(authored_nodes-trunk_nodes)/2U+1U);
+        options.cage_first_node=trunk_nodes+branch_nodes-1U;
+        options.cage_node_count=20U;
         SoftBodyAsset rope = make_y_rope_cage(
-            std::max(16U,rope_node_count),rope_length);
+            authored_nodes,rope_length);
         rope = translate_soft_body_asset(std::move(rope), rope_anchor);
         return std::make_unique<SoftBodyCourse>(std::move(rope), options);
     }
@@ -251,7 +258,7 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         options.rope_bridge_columns=bridge_columns;
         options.rope_bridge_rows=bridge_rows;
         options.rope_bridge_nodes_per_tile=
-            context==ExampleContext::soft_body_rope ? 16U : 4U;
+            context==ExampleContext::soft_body_rope ? 256U : 36U;
         SoftBodyAsset bridge = context==ExampleContext::soft_body_rope
             ? make_dense_tile_rope_bridge(bridge_columns,bridge_rows)
             : make_rope_bridge(bridge_columns,bridge_rows,true);
@@ -523,7 +530,8 @@ RigidSphereState initial_rigid_sphere(
     } else if (context == meshprep::sim::ExampleContext::cloth_rope ||
                context == meshprep::sim::ExampleContext::soft_body_rope) {
         sphere.radius = 0.34F;
-        sphere.mass = 45.0F;
+        sphere.mass = context==meshprep::sim::ExampleContext::cloth_rope
+            ? 180.0F : 45.0F;
         sphere.center = make_float3(0.0F,
             rope_bridge_land_y + sphere.radius,
             rope_bridge_land_inner_z + 0.65F);

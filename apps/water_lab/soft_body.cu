@@ -234,11 +234,15 @@ void validate_options(const SoftBodyOptions& options)
             options.fracture_persistence_substeps > 64U ||
         !finite(options.maximum_speed) || options.maximum_speed <= 0.0F ||
         !finite(options.strength_multiplier) || options.strength_multiplier <= 0.0F ||
+        !finite(options.cross_source_mass_multiplier) ||
+            options.cross_source_mass_multiplier < 1.0F ||
+            options.cross_source_mass_multiplier > 1'000'000.0F ||
         !finite(options.ground_friction) || options.ground_friction < 0.0F ||
         options.rope_bridge_columns < 2U || options.rope_bridge_columns > 16U ||
         options.rope_bridge_rows < 2U || options.rope_bridge_rows > 64U ||
         (options.rope_bridge_nodes_per_tile != 4U &&
-            options.rope_bridge_nodes_per_tile != 16U) ||
+            options.rope_bridge_nodes_per_tile != 36U &&
+            options.rope_bridge_nodes_per_tile != 256U) ||
         options.hierarchy_leaf_size == 0U) {
         throw std::invalid_argument("invalid soft-body solver option");
     }
@@ -700,7 +704,8 @@ __global__ void contact_soft_nodes_against_mesh_kernel(
     const float3* render_positions, const uint3* triangles,
     const SoftBodyBinding* bindings, std::uint32_t first_target_triangle,
     std::uint32_t target_triangle_count, float radius, float maximum_correction,
-    float dt, float inverse_mass, float maximum_speed,
+    float dt,float source_inverse_mass,float target_inverse_mass,
+    float maximum_speed,
     std::uint32_t* reaction_keys, float3* reaction_values)
 {
     const std::uint32_t source = blockIdx.x * blockDim.x + threadIdx.x;
@@ -779,12 +784,14 @@ __global__ void contact_soft_nodes_against_mesh_kernel(
     const std::uint32_t nodes[3]{bindings[triangle.x].voxels.x,
         bindings[triangle.y].voxels.x, bindings[triangle.z].voxels.x};
     const float weights[3]{best_weights.x, best_weights.y, best_weights.z};
-    float inverse_mass_sum = inverse_mass;
+    float inverse_mass_sum = source_inverse_mass;
     for (std::uint32_t corner = 0U; corner < 3U; ++corner)
         if ((flags[nodes[corner]] & soft_body_voxel_pinned) == 0U)
-            inverse_mass_sum += weights[corner] * weights[corner] * inverse_mass;
+            inverse_mass_sum += weights[corner] * weights[corner] *
+                target_inverse_mass;
     const float multiplier = penetration / inverse_mass_sum;
-    const float3 source_correction = multiply(best_normal, inverse_mass * multiplier);
+    const float3 source_correction = multiply(
+        best_normal,source_inverse_mass*multiplier);
     positions[source] = add(point, source_correction);
     velocities[source] = clamp_length(add(velocities[source],
         multiply(source_correction, 1.0F / dt)), maximum_speed);
@@ -792,7 +799,7 @@ __global__ void contact_soft_nodes_against_mesh_kernel(
         if ((flags[nodes[corner]] & soft_body_voxel_pinned) != 0U) continue;
         reaction_keys[base + corner] = nodes[corner];
         reaction_values[base + corner] = multiply(best_normal,
-            -weights[corner] * inverse_mass * multiplier);
+            -weights[corner]*target_inverse_mass*multiplier);
     }
 }
 
@@ -1026,7 +1033,8 @@ __global__ void damp_spring_velocities(const float3* positions,
 }
 
 __global__ void apply_contact_impulses(float3* positions, float3* velocities,
-    const float3* rest_positions, const std::uint32_t* flags,
+    const float3* rest_positions,const float3* substep_start_positions,
+    const std::uint32_t* flags,
     const float3* external_impulses, const float3* position_corrections,
     std::uint32_t total_voxels, float dt, float inverse_mass,
     float maximum_speed, float voxel_radius, bool course_board_collisions,
@@ -1058,6 +1066,9 @@ __global__ void apply_contact_impulses(float3* positions, float3* velocities,
     // below transfers only the configured fraction into momentum.
     velocity = clamp_length(velocity, maximum_speed);
     if (arena != GalleryArena::none) {
+        if (arena==GalleryArena::rope_post)
+            project_swept_rope_post(substep_start_positions[voxel],position,
+                velocity,2.0F*voxel_radius);
         project_gallery_contact(position, velocity, voxel_radius, arena);
         // Friction is deliberately applied after constraint velocity
         // reconstruction below. Applying it here let the spring solve rebuild
@@ -1273,6 +1284,49 @@ __global__ void emit_member_bounds(const float3* positions,
     return milliseconds;
 }
 
+void contain_sphere_in_d12(RigidSphereState& sphere,
+    const std::vector<float3>& positions,std::uint32_t first,float clearance)
+{
+    constexpr std::uint32_t faces[12][5]{
+        {0,1,12,16,17},{0,2,8,10,16},{0,4,8,12,14},
+        {1,3,9,11,17},{1,5,9,12,14},{2,3,13,16,17},
+        {2,6,10,13,15},{3,7,11,13,15},{4,5,14,18,19},
+        {4,6,8,10,18},{5,7,9,11,19},{6,7,15,18,19}};
+    float3 center{};
+    for (std::uint32_t node=0U;node<20U;++node)
+        center=add(center,positions[first+node]);
+    center=multiply(center,1.0F/20.0F);
+    // Sequential half-space projection closes the twelve pentagonal faces.
+    // Node spheres still handle ordinary force transfer; this is the hard
+    // geometric invariant that prevents the glass sphere escaping a gap.
+    for (std::uint32_t pass=0U;pass<8U;++pass) {
+        for (const auto& face:faces) {
+            float3 face_center{};
+            for (std::uint32_t corner:face)
+                face_center=add(face_center,positions[first+corner]);
+            face_center=multiply(face_center,0.2F);
+            const float3 a=positions[first+face[0]];
+            const float3 b=positions[first+face[1]];
+            const float3 c=positions[first+face[2]];
+            float3 normal=cross(subtract(b,a),subtract(c,a));
+            const float normal_length=length(normal);
+            if (!(normal_length>1.0e-8F)) continue;
+            normal=multiply(normal,1.0F/normal_length);
+            if (dot(normal,subtract(face_center,center))<0.0F)
+                normal=multiply(normal,-1.0F);
+            const float limit=-sphere.radius-clearance;
+            const float signed_distance=dot(
+                subtract(sphere.center,face_center),normal);
+            if (signed_distance<=limit) continue;
+            sphere.center=add(sphere.center,
+                multiply(normal,limit-signed_distance));
+            const float outward=dot(sphere.velocity,normal);
+            if (outward>0.0F)
+                sphere.velocity=add(sphere.velocity,multiply(normal,-outward));
+        }
+    }
+}
+
 } // namespace
 
 void advance_rigid_sphere_rotation(
@@ -1400,6 +1454,13 @@ void validate_soft_body_asset(const SoftBodyAsset& asset)
             triangle.z >= render_vertex_count || triangle.x == triangle.y ||
             triangle.y == triangle.z || triangle.z == triangle.x) {
             throw std::invalid_argument("invalid soft-body render triangle");
+        }
+    }
+    for (const SoftBodyEdge edge : asset.render_member_edges) {
+        if (edge.vertices.x >= voxel_count || edge.vertices.y >= voxel_count ||
+            edge.vertices.x >= edge.vertices.y || !finite(edge.rest_length) ||
+            edge.rest_length <= 0.0F) {
+            throw std::invalid_argument("invalid presentation-only soft-body member");
         }
     }
 }
@@ -1591,9 +1652,11 @@ struct SoftBodyCourse::Impl {
     std::vector<float3> host_contact_positions;
     std::uint32_t* flags{};
     SoftBodyEdge* edges{};
+    SoftBodyEdge* presentation_member_edges{};
     std::uint32_t* neighbor_offsets{};
     SoftBodyNeighbor* neighbors{};
     std::uint8_t* active_edges{};
+    std::uint8_t* presentation_member_active{};
     std::uint8_t* edge_damage{};
     std::uint64_t* voxel_cell_keys_a{};
     std::uint64_t* voxel_cell_keys_b{};
@@ -1634,6 +1697,8 @@ struct SoftBodyCourse::Impl {
 
     std::uint32_t total_voxels{};
     std::uint32_t total_edges{};
+    std::uint32_t members_per_instance{};
+    std::uint32_t total_members{};
     std::uint32_t total_render_vertices{};
     std::uint32_t total_render_triangles{};
 
@@ -1725,12 +1790,22 @@ struct SoftBodyCourse::Impl {
         host_rigid_sphere_impulses.resize(total_voxels);
         host_contact_positions.resize(total_voxels);
         total_edges = static_cast<std::uint32_t>(edge_total);
+        members_per_instance = static_cast<std::uint32_t>(
+            asset.render_member_edges.empty()
+                ? asset.edges.size() : asset.render_member_edges.size());
+        total_members = static_cast<std::uint32_t>(checked_product(
+            members_per_instance, options.instance_count, "presentation members"));
         total_render_vertices = static_cast<std::uint32_t>(render_vertex_total);
         total_render_triangles = static_cast<std::uint32_t>(render_triangle_total);
         if (options.cross_source_nodes != 0U &&
             (options.cross_source_nodes >= total_voxels ||
              options.cross_target_triangle_first >= total_render_triangles)) {
             throw std::invalid_argument("invalid soft/cloth cross-component ranges");
+        }
+        if (options.cage_node_count != 0U &&
+            (options.instance_count != 1U || options.cage_node_count != 20U ||
+             options.cage_first_node + options.cage_node_count > total_voxels)) {
+            throw std::invalid_argument("invalid closed rope-cage range");
         }
 
         std::vector<float3> host_rest_positions;
@@ -1801,6 +1876,10 @@ struct SoftBodyCourse::Impl {
             allocate(neighbor_offsets, asset.neighbor_offsets.size());
             allocate(neighbors, asset.neighbors.size());
             allocate(active_edges, total_edges);
+            if (!asset.render_member_edges.empty()) {
+                allocate(presentation_member_edges, asset.render_member_edges.size());
+                allocate(presentation_member_active, total_members);
+            }
             allocate(edge_damage, total_edges);
             if (options.unbonded_voxel_collisions) {
                 allocate(voxel_cell_keys_a, total_voxels);
@@ -1829,10 +1908,16 @@ struct SoftBodyCourse::Impl {
                 allocate(local_render_triangle_edges, asset.render_triangles.size());
             allocate(render_triangle_active, total_render_triangles);
             allocate(render_bounds, total_render_triangles);
-            if (options.render_internal_members) allocate(member_bounds, total_edges);
+            if (options.render_internal_members) allocate(member_bounds, total_members);
             upload(rest_positions, host_rest_positions);
             upload(flags, host_flags);
             upload(edges, asset.edges);
+            if (!asset.render_member_edges.empty()) {
+                upload(presentation_member_edges, asset.render_member_edges);
+                check(cudaMemset(presentation_member_active, 1,
+                    total_members * sizeof(std::uint8_t)),
+                    "initialize presentation member activity");
+            }
             upload(neighbor_offsets, asset.neighbor_offsets);
             upload(neighbors, asset.neighbors);
             upload(local_rest_voxels, asset.rest_voxels);
@@ -1885,6 +1970,8 @@ struct SoftBodyCourse::Impl {
             marker = nullptr;
         }
         cudaFree(member_bounds);
+        cudaFree(presentation_member_active);
+        cudaFree(presentation_member_edges);
         cudaFree(render_bounds);
         cudaFree(render_triangle_active);
         cudaFree(local_render_triangle_edges);
@@ -1920,6 +2007,8 @@ struct SoftBodyCourse::Impl {
         cudaFree(position_a);
         render_bounds = nullptr;
         member_bounds = nullptr;
+        presentation_member_active = nullptr;
+        presentation_member_edges = nullptr;
         render_triangle_active = nullptr;
         local_render_frame_edges = nullptr;
         local_render_triangle_edges = nullptr;
@@ -1985,7 +2074,7 @@ struct SoftBodyCourse::Impl {
             "build soft-body render hierarchy");
         update_render_normals(nullptr);
         if (options.render_internal_members) {
-            check(meshprep::build_hierarchy({member_bounds, total_edges},
+            check(meshprep::build_hierarchy({member_bounds, total_members},
                 {options.hierarchy_leaf_size}, member_workspace, member_hierarchy),
                 "build soft-body member hierarchy");
         }
@@ -2029,10 +2118,14 @@ struct SoftBodyCourse::Impl {
             total_render_triangles, render_bounds);
         check(cudaGetLastError(), "launch soft-body render bounds");
         if (options.render_internal_members) {
-            emit_member_bounds<<<(total_edges + block_size - 1U) / block_size,
-                block_size, 0, stream>>>(positions, edges, active_edges,
+            const SoftBodyEdge* member_edges = asset.render_member_edges.empty()
+                ? edges : presentation_member_edges;
+            const std::uint8_t* member_active = asset.render_member_edges.empty()
+                ? active_edges : presentation_member_active;
+            emit_member_bounds<<<(total_members + block_size - 1U) / block_size,
+                block_size, 0, stream>>>(positions, member_edges, member_active,
                 static_cast<std::uint32_t>(asset.rest_voxels.size()),
-                static_cast<std::uint32_t>(asset.edges.size()), total_edges,
+                members_per_instance, total_members,
                 0.11F * asset.voxel_radius, member_bounds);
             check(cudaGetLastError(), "launch soft-body member bounds");
         }
@@ -2051,7 +2144,7 @@ struct SoftBodyCourse::Impl {
     {
         if (!options.render_internal_members) return;
         check(meshprep::refit_hierarchy_unchecked_async(
-            {member_bounds, total_edges}, member_hierarchy, stream),
+            {member_bounds, total_members}, member_hierarchy, stream),
             "refit soft-body member hierarchy");
     }
 };
@@ -2156,7 +2249,8 @@ void SoftBodyCourse::finish_substep(float dt, float3 gravity, cudaStream_t strea
         "begin soft-body contact application");
     apply_contact_impulses<<<(state.total_voxels + block_size - 1U) / block_size,
         block_size, 0, stream>>>(state.positions, state.velocities,
-        state.rest_positions, state.flags, state.external_impulses,
+        state.rest_positions,state.substep_start_positions,state.flags,
+        state.external_impulses,
         state.position_corrections, state.total_voxels, dt,
         1.0F / state.options.voxel_mass, state.options.maximum_speed,
         state.asset.voxel_radius, state.options.course_board_collisions,
@@ -2175,7 +2269,9 @@ void SoftBodyCourse::finish_substep(float dt, float3 gravity, cudaStream_t strea
             target_first, state.total_render_triangles - target_first,
             1.5F * state.asset.voxel_radius,
             2.0F * state.asset.voxel_radius,
-            dt, 1.0F / state.options.voxel_mass,
+            dt,1.0F/(state.options.voxel_mass*
+                state.options.cross_source_mass_multiplier),
+            1.0F/state.options.voxel_mass,
             state.options.maximum_speed, state.cross_contact_keys,
             state.cross_contact_values);
         check(cudaGetLastError(), "generate soft sphere/cloth contacts");
@@ -2675,6 +2771,9 @@ SoftBodyTimings SoftBodyCourse::step_with_tethered_rigid_spheres(
         prepare_substep(dt,gravity,stream);
         contact_rigid_sphere_substep(sphere,dt,stream);
         contact_rigid_sphere_substep(caged_sphere,dt,stream);
+        if (state.options.cage_node_count==20U)
+            contain_sphere_in_d12(caged_sphere,state.host_contact_positions,
+                state.options.cage_first_node,0.10F*state.asset.voxel_radius);
         finish_substep(dt,gravity,stream);
         tether_rigid_sphere_kernel<<<1,1,0,stream>>>(
             state.positions,state.velocities,state.flags,endpoint_node,sphere,
@@ -2685,8 +2784,16 @@ SoftBodyTimings SoftBodyCourse::step_with_tethered_rigid_spheres(
         check(cudaMemcpyAsync(state.host_rigid_sphere_impulses.data(),
             state.rigid_sphere_impulses,2U*sizeof(float3),cudaMemcpyDeviceToHost,
             stream),"download paired rope/sphere tether reaction");
+        if (state.options.cage_node_count==20U)
+            check(cudaMemcpyAsync(state.host_contact_positions.data(),state.positions,
+                static_cast<std::size_t>(state.total_voxels)*sizeof(float3),
+                cudaMemcpyDeviceToHost,stream),
+                "download committed D12 cage positions");
         check(cudaStreamSynchronize(stream),
             "finish paired rope/sphere tether reaction");
+        if (state.options.cage_node_count==20U)
+            contain_sphere_in_d12(caged_sphere,state.host_contact_positions,
+                state.options.cage_first_node,0.10F*state.asset.voxel_radius);
         sphere.center=add(sphere.center,state.host_rigid_sphere_impulses[0]);
         sphere.velocity=add(sphere.velocity,state.host_rigid_sphere_impulses[1]);
         project_gallery_contact(sphere.center,sphere.velocity,sphere.radius,
@@ -2867,6 +2974,22 @@ void SoftBodyCourse::set_voxel_mass(float mass)
 float SoftBodyCourse::voxel_mass() const noexcept
 {
     return impl_ ? impl_->options.voxel_mass : 0.0F;
+}
+
+void SoftBodyCourse::set_primary_body_mass(float mass)
+{
+    if (!impl_) throw std::logic_error("moved-from soft-body course");
+    if (impl_->frame_open || impl_->options.cross_source_nodes==0U ||
+        !finite(mass) || mass<impl_->options.voxel_mass || mass>20'000.0F)
+        throw std::invalid_argument(
+            "primary soft-body node mass must be between target mass and 20000");
+    impl_->options.cross_source_mass_multiplier=mass/impl_->options.voxel_mass;
+}
+
+float SoftBodyCourse::primary_body_mass() const noexcept
+{
+    return impl_ ? impl_->options.voxel_mass*
+        impl_->options.cross_source_mass_multiplier : 0.0F;
 }
 
 SoftBodyMaterial SoftBodyCourse::material() const noexcept
@@ -3085,14 +3208,18 @@ SoftBodyRenderView SoftBodyCourse::render_view() const noexcept
         impl_->render_hierarchy.nodes(), impl_->render_hierarchy.primitive_indices(),
         hierarchy.node_count, hierarchy.max_depth,
         impl_->options.render_internal_members ? impl_->positions : nullptr,
-        impl_->options.render_internal_members ? impl_->edges : nullptr,
-        impl_->options.render_internal_members ? impl_->active_edges : nullptr,
+        impl_->options.render_internal_members
+            ? (impl_->asset.render_member_edges.empty()
+                ? impl_->edges : impl_->presentation_member_edges) : nullptr,
+        impl_->options.render_internal_members
+            ? (impl_->asset.render_member_edges.empty()
+                ? impl_->active_edges : impl_->presentation_member_active) : nullptr,
         impl_->member_hierarchy.nodes(), impl_->member_hierarchy.primitive_indices(),
-        impl_->options.render_internal_members ? impl_->total_edges : 0U,
+        impl_->options.render_internal_members ? impl_->total_members : 0U,
         impl_->options.render_internal_members
             ? static_cast<std::uint32_t>(impl_->asset.rest_voxels.size()) : 0U,
         impl_->options.render_internal_members
-            ? static_cast<std::uint32_t>(impl_->asset.edges.size()) : 0U,
+            ? impl_->members_per_instance : 0U,
         members.node_count, members.max_depth, 0.11F * impl_->asset.voxel_radius,
         impl_->options.surface_triangle_split,
         impl_->options.secondary_surface_triangle_split,

@@ -54,6 +54,11 @@ struct SoftBodyAsset {
     std::vector<float3> rest_voxels;
     std::vector<std::uint32_t> voxel_flags;
     std::vector<SoftBodyEdge> edges;
+    // Optional presentation-only members. Physics always uses `edges`; when
+    // this list is non-empty the renderer draws only these links. This lets a
+    // cloth tile keep its dense structural graph without presenting every
+    // internal cloth bond as a rope or truss.
+    std::vector<SoftBodyEdge> render_member_edges;
     std::vector<std::uint32_t> neighbor_offsets;
     std::vector<SoftBodyNeighbor> neighbors;
     std::vector<float3> render_positions;
@@ -102,6 +107,13 @@ struct SoftBodyOptions {
     // cross_target_triangle_first. Target triangle bindings name physical nodes.
     std::uint32_t cross_source_nodes{};
     std::uint32_t cross_target_triangle_first{};
+    // Relative mass of the leading cross-contact body. It changes only the
+    // source/target correction split; the target cloth keeps `voxel_mass`.
+    float cross_source_mass_multiplier{1.0F};
+    // Optional closed D12 cage range used by the rope example. Node contacts
+    // provide ordinary coupling; the face half-spaces provide containment.
+    std::uint32_t cage_first_node{};
+    std::uint32_t cage_node_count{};
     // Optional presentation boundaries for merged procedural assets. They do
     // not affect physics; the renderer uses them to distinguish a source body,
     // a goal cloth, and any remaining support cloth.
@@ -307,6 +319,8 @@ public:
     void set_material(SoftBodyMaterial material);
     void set_voxel_mass(float mass);
     [[nodiscard]] float voxel_mass() const noexcept;
+    void set_primary_body_mass(float mass);
+    [[nodiscard]] float primary_body_mass() const noexcept;
     [[nodiscard]] SoftBodyMaterial material() const noexcept;
     [[nodiscard]] std::uint32_t spring_solver_iterations() const noexcept;
     void set_uniform_velocity(

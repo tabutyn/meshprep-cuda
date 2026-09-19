@@ -1052,7 +1052,9 @@ void update_fishing_controls(GLFWwindow* window,Interaction& input,
         static_cast<float>(pressed(GLFW_KEY_LEFT));
     if (horizontal!=0.0F) {
         const float desired=std::clamp(
-            input.fishing_head_x+horizontal*1.35F*dt,-2.10F,2.10F);
+            input.fishing_head_x+horizontal*2.0F*dt,
+            -waterlab::fishing_tank_half_extents.x+0.10F,
+            waterlab::fishing_tank_half_extents.x-0.10F);
         const float delta=desired-input.fishing_head_x;
         rope->translate_pinned(make_float3(delta,0.0F,0.0F));
         input.fishing_head_x=desired;
@@ -2062,9 +2064,14 @@ void apply_physics_adjustment(Interaction& input, waterlab::HybridDroplet& dropl
         return;
     }
     if (input.physics_parameter == 28 && soft_bodies != nullptr) {
-        soft_bodies->set_voxel_mass(std::clamp(
-            soft_bodies->voxel_mass() * std::pow(1.25F, amount),
-            0.001F, 100.0F));
+        if (input.context==parallel_mater::sim::ExampleContext::cloth_soft_body)
+            soft_bodies->set_primary_body_mass(std::clamp(
+                soft_bodies->primary_body_mass()*std::pow(1.25F,amount),
+                soft_bodies->voxel_mass(),20'000.0F));
+        else
+            soft_bodies->set_voxel_mass(std::clamp(
+                soft_bodies->voxel_mass() * std::pow(1.25F, amount),
+                0.001F, 100.0F));
         input.physics_adjustment = 0;
         return;
     }
@@ -2159,7 +2166,10 @@ void draw_physics_panel(
         rigid_sphere ? rigid_sphere->mass : 0.0F,
         soft_material.ground_friction, foam.emission_rate,
         foam.radius_scale, foam.lifetime_scale,
-        soft_bodies ? soft_bodies->voxel_mass() : 0.0F,
+        soft_bodies ? (input.context==
+            parallel_mater::sim::ExampleContext::cloth_soft_body
+                ? soft_bodies->primary_body_mass()
+                : soft_bodies->voxel_mass()) : 0.0F,
         static_cast<float>(input.bridge_columns),
         static_cast<float>(input.bridge_rows)};
     const float panel_width = 374.0F;

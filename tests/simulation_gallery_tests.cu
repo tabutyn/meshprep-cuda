@@ -319,8 +319,8 @@ void gpu_fixture_test()
         {0U, 0U}, {1U, 840U}, {20U, 20'000U}, {1U, 84U},
         {0U, 0U}, {1U, 870U},
         {1U, waterlab::gallery::default_rope_nodes}, {1U, 3'176U},
-        {1U, waterlab::rope_bridge_columns * waterlab::rope_bridge_rows * 4U},
-        {1U, waterlab::rope_bridge_columns * waterlab::rope_bridge_rows * 16U},
+        {1U, waterlab::rope_bridge_columns * waterlab::rope_bridge_rows * 36U},
+        {1U, waterlab::rope_bridge_columns * waterlab::rope_bridge_rows * 256U},
     }};
 
     for (std::size_t index = 0U; index < expected.size(); ++index) {
@@ -435,17 +435,17 @@ void gpu_fixture_test()
             context == ExampleContext::soft_body_rope) {
             const auto lattice = deformable->lattice_view();
             const std::uint32_t nodes_per_tile=
-                context==ExampleContext::soft_body_rope ? 16U : 4U;
+                context==ExampleContext::soft_body_rope ? 256U : 36U;
             require(lattice.voxels_per_instance ==
                         waterlab::rope_bridge_columns*waterlab::rope_bridge_rows*
                             nodes_per_tile &&
                     deformable->render_view().member_count ==
-                        deformable->statistics().total_edge_count,
-                "bridge context did not expose forty braced tiles and their ropes");
+                        264U,
+                "bridge context did not expose forty tiles and direct rope links");
             const std::uint32_t expected_edges = context == ExampleContext::cloth_rope
-                ? 504U : 1'944U;
+                ? 4'664U : 37'464U;
             const std::uint32_t expected_triangles =
-                context == ExampleContext::cloth_rope ? 80U : 720U;
+                context == ExampleContext::cloth_rope ? 2'000U : 18'000U;
             require(deformable->statistics().total_edge_count == expected_edges &&
                     deformable->render_view().triangle_count == expected_triangles,
                 "bridge does not contain its requested ropes per shared edge");
@@ -459,7 +459,8 @@ void gpu_fixture_test()
                     return (flag & waterlab::soft_body_voxel_pinned) != 0U;
                 });
             require(pinned == static_cast<std::ptrdiff_t>(
-                        2U*waterlab::rope_bridge_columns*nodes_per_tile),
+                        2U*waterlab::rope_bridge_columns*
+                            (context==ExampleContext::soft_body_rope ? 16U : 6U)),
                 "rope bridge must pin only its two land-connected end rows");
         }
 
@@ -1322,6 +1323,69 @@ void gpu_rope_rigid_test()
     require(std::fabs(final_endpoint_gap - attachment) < 0.04F &&
             final_reach <= maximum_reach * 1.08F,
         "rope endpoint detached or graph allowed unbounded rigid-body travel");
+
+    auto enclosed=waterlab::gallery::make_context_deformable(
+        context,physics,MESHPREP_SOFT_BODY_TEST_ASSET,40U);
+    auto tethered=waterlab::gallery::initial_rigid_sphere(context,40U);
+    auto glass=waterlab::gallery::initial_caged_rigid_sphere(40U);
+    glass.velocity=make_float3(3.0F,1.0F,-2.0F);
+    const auto enclosed_lattice=enclosed->lattice_view();
+    const std::uint32_t enclosed_endpoint=enclosed_lattice.voxels_per_instance-1U;
+    for (std::uint32_t frame=0U;frame<180U;++frame) {
+        const auto timing=enclosed->step_with_tethered_rigid_spheres(
+            tethered,enclosed_endpoint,tethered.radius+enclosed_lattice.voxel_radius,
+            glass,physics.gravity);
+        require(finite(timing) && enclosed->statistics().finite_failure_count==0U,
+            "closed D12 rope cage became non-finite");
+    }
+    waterlab::SoftBodyState enclosed_state;
+    enclosed->capture_state(enclosed_state);
+    constexpr std::uint32_t cage_first=30U;
+    float3 cage_center{};
+    for (std::uint32_t node=0U;node<20U;++node) {
+        cage_center.x+=enclosed_state.positions[cage_first+node].x/20.0F;
+        cage_center.y+=enclosed_state.positions[cage_first+node].y/20.0F;
+        cage_center.z+=enclosed_state.positions[cage_first+node].z/20.0F;
+    }
+    const float cage_offset=std::hypot(std::hypot(
+        glass.center.x-cage_center.x,glass.center.y-cage_center.y),
+        glass.center.z-cage_center.z);
+    constexpr std::uint32_t cage_faces[12][5]{
+        {0,1,12,16,17},{0,2,8,10,16},{0,4,8,12,14},
+        {1,3,9,11,17},{1,5,9,12,14},{2,3,13,16,17},
+        {2,6,10,13,15},{3,7,11,13,15},{4,5,14,18,19},
+        {4,6,8,10,18},{5,7,9,11,19},{6,7,15,18,19}};
+    float maximum_face_violation=-INFINITY;
+    for (const auto& face:cage_faces) {
+        float3 face_center{};
+        for (std::uint32_t corner:face) {
+            const float3 p=enclosed_state.positions[cage_first+corner];
+            face_center.x+=p.x/5.0F; face_center.y+=p.y/5.0F;
+            face_center.z+=p.z/5.0F;
+        }
+        const float3 a=enclosed_state.positions[cage_first+face[0]];
+        const float3 b=enclosed_state.positions[cage_first+face[1]];
+        const float3 c=enclosed_state.positions[cage_first+face[2]];
+        float3 normal{(b.y-a.y)*(c.z-a.z)-(b.z-a.z)*(c.y-a.y),
+            (b.z-a.z)*(c.x-a.x)-(b.x-a.x)*(c.z-a.z),
+            (b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x)};
+        const float n=std::hypot(std::hypot(normal.x,normal.y),normal.z);
+        normal={normal.x/n,normal.y/n,normal.z/n};
+        const float outward=(face_center.x-cage_center.x)*normal.x+
+            (face_center.y-cage_center.y)*normal.y+
+            (face_center.z-cage_center.z)*normal.z;
+        if (outward<0.0F) normal={-normal.x,-normal.y,-normal.z};
+        const float signed_distance=(glass.center.x-face_center.x)*normal.x+
+            (glass.center.y-face_center.y)*normal.y+
+            (glass.center.z-face_center.z)*normal.z;
+        maximum_face_violation=std::max(maximum_face_violation,
+            signed_distance+glass.radius);
+    }
+    std::fprintf(stderr,
+        "D12 cage after impact: center offset %.5f, face violation %.6f\n",
+        cage_offset,maximum_face_violation);
+    require(maximum_face_violation<1.0e-3F,
+        "glass sphere escaped the closed D12 rope enclosure");
 }
 
 void gpu_rope_bridge_crossing_test()
@@ -1348,9 +1412,10 @@ void gpu_rope_bridge_crossing_test()
     float maximum_anchor_error{};
     for (std::uint32_t row : {0U, waterlab::rope_bridge_rows - 1U}) {
         for (std::uint32_t column = 0U; column < waterlab::rope_bridge_columns; ++column) {
-            for (std::uint32_t corner = 0U; corner < 16U; ++corner) {
+            for (std::uint32_t sample = 0U; sample < 16U; ++sample) {
+                const std::uint32_t local = row==0U ? sample : 15U*16U+sample;
                 const std::uint32_t node =
-                    (row*waterlab::rope_bridge_columns + column)*16U + corner;
+                    (row*waterlab::rope_bridge_columns + column)*256U + local;
                 const float3 delta{state.positions[node].x - baseline.positions[node].x,
                     state.positions[node].y - baseline.positions[node].y,
                     state.positions[node].z - baseline.positions[node].z};

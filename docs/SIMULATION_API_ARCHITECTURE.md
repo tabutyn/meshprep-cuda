@@ -53,13 +53,15 @@ until reset.
   heavy finite-mass treasure chest in 40,000 particles. The native app
   translates the pinned head, scales rope rest lengths for reeling, latches
   the hook on contact, and completes only after the chest reaches the top.
-- Cloth-Rope procedurally builds an M x N tile floor. Every adjacent tile pair
-  receives four short rope links; only the land-connected end rows are pinned.
-- Softbody-Rope uses larger 4 x 4-node tiles. Matching samples across each
-  shared edge create four parallel ropes and sixteen attachment points per tile.
+- Cloth-Rope procedurally builds an M x N tile floor from 6 x 6-node tiles.
+  Four attachment samples are inset from each edge's corners, and every rope
+  is one direct tile-to-tile bond with no rope-to-rope joints.
+- Softbody-Rope uses 16 x 16-node cloth tiles. Dense structural and shear bonds
+  simulate each tile but remain presentation-hidden; only four direct links
+  across each neighboring edge render as ropes.
 - Rope exposes two equal-size rigid spheres and one lattice. The second sphere
-  is physically contacted by the D12 cage; no deforming proxy surface is part
-  of the public render view.
+  is physically contacted by face-braced D12 nodes and constrained by its 12
+  live face half-spaces; no deforming proxy surface is part of the public view.
 - Cloth-Rope and Softbody-Rope apply gravity to the rigid sphere and zero body
   gravity to the structure, isolating rigid-to-deformable load transfer.
 - Softbody accepts cylinder row/column overrides. The instance count is

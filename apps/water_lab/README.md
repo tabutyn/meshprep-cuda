@@ -19,8 +19,8 @@ two-component pairing:
 | `6` | Water-Softbody | Water-driven wheel, soft crosses, and 32 rigid outer rungs |
 | `7` | Water-Rope | 40k-particle fishing tank, reelable hook, and heavy treasure chest |
 | `8` | Cloth-Softbody | Soft sphere, ground cloth, and goal cloth |
-| `9` | Cloth-Rope | 4 x 10 cloth-tile floor joined by four ropes per shared edge |
-| `0` | Softbody-Rope | Soft sphere on 16-node tiles joined by four parallel ropes |
+| `9` | Cloth-Rope | 4 x 10 floor of 6 x 6 tiles with four inset direct rope links per edge |
+| `0` | Softbody-Rope | Soft sphere on 16 x 16 cloth tiles with four direct rope links per edge |
 
 The former Water Snake context was removed; key `5` is now Water-Cloth.
 
@@ -37,7 +37,8 @@ measurable reaction to the sphere rather than sag from its own weight.
 - `1`-`9`, `0`: choose a context.
 - Arrow keys or `WASD`: apply the context's authored control. In Water-Rope,
   arrows control the fishing head and rope length instead of gravity.
-- `P`: physics/material controls.
+- `P`: physics/material controls. Context 8 exposes the source soft-body mass
+  independently of the goal cloth; context 9 exposes rigid-sphere mass.
 - `L`: simulation quantities. Softbody exposes cylinder columns and rows;
   changing either rebuilds the same occupied volume with thinner cylinders.
 - `V`: particle/lattice debug view.

@@ -141,6 +141,39 @@ __host__ __device__ inline CourseContact rope_post_contact(float3 p)
     }
     return {distance, normal};
 }
+
+__host__ __device__ inline void project_swept_rope_post(
+    float3 start,float3& p,float3& v,float radius)
+{
+    const float expanded=rope_post_radius+radius;
+    const float sx=start.x-rope_post_center.x;
+    const float sz=start.z-rope_post_center.z;
+    const float dx=p.x-start.x;
+    const float dz=p.z-start.z;
+    const float a=dx*dx+dz*dz;
+    const float c=sx*sx+sz*sz-expanded*expanded;
+    if (!(c>0.0F) || !(a>1.0e-12F)) return;
+    const float b=2.0F*(sx*dx+sz*dz);
+    const float discriminant=b*b-4.0F*a*c;
+    if (!(discriminant>=0.0F)) return;
+    const float hit=(-b-sqrtf(discriminant))/(2.0F*a);
+    if (!(hit>=0.0F && hit<=1.0F)) return;
+    const float hit_y=start.y+(p.y-start.y)*hit;
+    if (fabsf(hit_y-rope_post_center.y)>
+        0.5F*rope_post_height+radius) return;
+    const float safe=fmaxf(0.0F,hit-1.0e-4F);
+    p=make_float3(start.x+(p.x-start.x)*safe,
+        start.y+(p.y-start.y)*safe,start.z+(p.z-start.z)*safe);
+    const float nx=p.x-rope_post_center.x;
+    const float nz=p.z-rope_post_center.z;
+    const float inverse=1.0F/sqrtf(fmaxf(nx*nx+nz*nz,1.0e-12F));
+    const float3 normal=make_float3(nx*inverse,0.0F,nz*inverse);
+    const float inward=v.x*normal.x+v.z*normal.z;
+    if (inward<0.0F) {
+        v.x-=inward*normal.x;
+        v.z-=inward*normal.z;
+    }
+}
 // The context-7 ground cloth spans this opening. Its pinned border rests on
 // the room floor while the free interior can sag into the finite pit.
 inline constexpr float2 ground_pit_center{0.0F, -0.55F};
