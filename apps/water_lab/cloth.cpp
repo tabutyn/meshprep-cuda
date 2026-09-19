@@ -541,7 +541,8 @@ SoftBodyAsset make_y_rope_cage(std::uint32_t node_count,float total_length)
     return asset;
 }
 
-SoftBodyAsset make_rope_bridge(std::uint32_t columns, std::uint32_t rows)
+SoftBodyAsset make_rope_bridge(
+    std::uint32_t columns,std::uint32_t rows,bool four_ropes_per_edge)
 {
     if (columns < 2U || columns > 16U || rows < 2U || rows > 64U)
         throw std::invalid_argument("rope bridge dimensions must be 2..16 by 2..64");
@@ -605,10 +606,18 @@ SoftBodyAsset make_rope_bridge(std::uint32_t columns, std::uint32_t rows)
             if (column + 1U < columns) {
                 const std::uint32_t right = tile(column+1U, row);
                 connect(base+1U, right); connect(base+2U, right+3U);
+                if (four_ropes_per_edge) {
+                    connect(base+1U,right+3U);
+                    connect(base+2U,right);
+                }
             }
             if (row + 1U < rows) {
                 const std::uint32_t next = tile(column, row+1U);
                 connect(base+2U, next+1U); connect(base+3U, next);
+                if (four_ropes_per_edge) {
+                    connect(base+2U,next);
+                    connect(base+3U,next+1U);
+                }
             }
         }
     }
@@ -621,6 +630,96 @@ SoftBodyAsset make_rope_bridge(std::uint32_t columns, std::uint32_t rows)
     for (const uint2 edge : endpoints)
         asset.edges.push_back({edge,
             distance(asset.rest_voxels[edge.x], asset.rest_voxels[edge.y])});
+    rebuild_adjacency(asset);
+    validate_soft_body_asset(asset);
+    return asset;
+}
+
+SoftBodyAsset make_dense_tile_rope_bridge(
+    std::uint32_t columns,std::uint32_t rows)
+{
+    if (columns<2U || columns>16U || rows<2U || rows>64U)
+        throw std::invalid_argument("dense rope bridge dimensions must be 2..16 by 2..64");
+    constexpr std::uint32_t resolution=4U;
+    constexpr std::uint32_t nodes_per_tile=resolution*resolution;
+    constexpr float tile_size=0.40F;
+    constexpr float gap=rope_bridge_pitch-tile_size;
+    const float node_spacing=tile_size/static_cast<float>(resolution-1U);
+    const float width=columns*tile_size+(columns-1U)*gap;
+    const float bridge_length=rows*tile_size+(rows-1U)*gap;
+    const float first_x=-0.5F*width+0.5F*tile_size;
+    const float first_z=0.5F*bridge_length-0.5F*tile_size;
+    const auto tile=[columns](std::uint32_t column,std::uint32_t row) {
+        return (row*columns+column)*nodes_per_tile;
+    };
+    const auto local=[](std::uint32_t x,std::uint32_t z) {
+        return z*resolution+x;
+    };
+    SoftBodyAsset asset;
+    asset.nominal_spacing=gap;
+    asset.voxel_radius=0.028F;
+    std::vector<uint2> endpoints;
+    const auto connect=[&](std::uint32_t a,std::uint32_t b) {
+        endpoints.push_back(make_uint2(std::min(a,b),std::max(a,b)));
+    };
+    for (std::uint32_t row=0U;row<rows;++row) {
+        for (std::uint32_t column=0U;column<columns;++column) {
+            const std::uint32_t base=tile(column,row);
+            const float cx=first_x+column*rope_bridge_pitch;
+            const float cz=first_z-row*rope_bridge_pitch;
+            for (std::uint32_t z=0U;z<resolution;++z) {
+                for (std::uint32_t x=0U;x<resolution;++x) {
+                    const float3 point=make_float3(
+                        cx-0.5F*tile_size+x*node_spacing,rope_bridge_deck_y,
+                        cz+0.5F*tile_size-z*node_spacing);
+                    const std::uint32_t node=base+local(x,z);
+                    asset.rest_voxels.push_back(point);
+                    asset.voxel_flags.push_back(soft_body_voxel_surface |
+                        ((row==0U || row+1U==rows) ? soft_body_voxel_pinned : 0U));
+                    asset.render_positions.push_back(point);
+                    asset.render_uvs.push_back(make_float2(
+                        static_cast<float>(column)+static_cast<float>(x)/3.0F,
+                        static_cast<float>(row)+static_cast<float>(z)/3.0F));
+                    asset.render_bindings.push_back({make_uint4(node,node,node,node),
+                        make_float4(1,0,0,0)});
+                    if (x+1U<resolution) connect(node,node+1U);
+                    if (z+1U<resolution) connect(node,node+resolution);
+                    if (x+1U<resolution && z+1U<resolution) {
+                        connect(node,node+resolution+1U);
+                        connect(node+1U,node+resolution);
+                    }
+                }
+            }
+            for (std::uint32_t z=0U;z+1U<resolution;++z)
+                for (std::uint32_t x=0U;x+1U<resolution;++x) {
+                    const std::uint32_t a=base+local(x,z);
+                    const std::uint32_t b=base+local(x+1U,z);
+                    const std::uint32_t c=base+local(x+1U,z+1U);
+                    const std::uint32_t d=base+local(x,z+1U);
+                    asset.render_triangles.push_back(make_uint3(a,c,b));
+                    asset.render_triangles.push_back(make_uint3(a,d,c));
+                }
+            if (column+1U<columns) {
+                const std::uint32_t right=tile(column+1U,row);
+                for (std::uint32_t lane=0U;lane<resolution;++lane)
+                    connect(base+local(resolution-1U,lane),right+local(0U,lane));
+            }
+            if (row+1U<rows) {
+                const std::uint32_t next=tile(column,row+1U);
+                for (std::uint32_t lane=0U;lane<resolution;++lane)
+                    connect(base+local(lane,resolution-1U),next+local(lane,0U));
+            }
+        }
+    }
+    std::sort(endpoints.begin(),endpoints.end(),[](uint2 a,uint2 b) {
+        return a.x<b.x || (a.x==b.x && a.y<b.y);
+    });
+    endpoints.erase(std::unique(endpoints.begin(),endpoints.end(),[](uint2 a,uint2 b) {
+        return a.x==b.x && a.y==b.y;
+    }),endpoints.end());
+    for (uint2 edge:endpoints)
+        asset.edges.push_back({edge,distance(
+            asset.rest_voxels[edge.x],asset.rest_voxels[edge.y])});
     rebuild_adjacency(asset);
     validate_soft_body_asset(asset);
     return asset;

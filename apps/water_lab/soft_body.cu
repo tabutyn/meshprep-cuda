@@ -210,7 +210,7 @@ void validate_options(const SoftBodyOptions& options)
 {
     if (options.instance_count == 0U ||
         options.instance_count > SoftBodyOptions::maximum_instances) {
-        throw std::invalid_argument("soft-body instance count must be in [1, 8]");
+        throw std::invalid_argument("soft-body instance count must be in [1, 256]");
     }
     if (options.solver_substeps == 0U || options.solver_substeps > 32U) {
         throw std::invalid_argument("soft-body solver substeps must be in [1, 32]");
@@ -237,6 +237,8 @@ void validate_options(const SoftBodyOptions& options)
         !finite(options.ground_friction) || options.ground_friction < 0.0F ||
         options.rope_bridge_columns < 2U || options.rope_bridge_columns > 16U ||
         options.rope_bridge_rows < 2U || options.rope_bridge_rows > 64U ||
+        (options.rope_bridge_nodes_per_tile != 4U &&
+            options.rope_bridge_nodes_per_tile != 16U) ||
         options.hierarchy_leaf_size == 0U) {
         throw std::invalid_argument("invalid soft-body solver option");
     }
@@ -548,6 +550,24 @@ __global__ void contact_rigid_sphere_kernel(
         subtract(velocities[node], old_velocity), -node_mass);
 }
 
+__global__ void fracture_edges_from_rigid_impact(
+    const SoftBodyEdge* edges,const float3* node_impulses,
+    std::uint8_t* active_edges,std::uint32_t voxels_per_instance,
+    std::uint32_t edges_per_instance,std::uint32_t total_edges,
+    float impulse_threshold,std::uint32_t* counters)
+{
+    const std::uint32_t global_edge=blockIdx.x*blockDim.x+threadIdx.x;
+    if (global_edge>=total_edges || active_edges[global_edge]==0U) return;
+    const std::uint32_t instance=global_edge/edges_per_instance;
+    const SoftBodyEdge edge=edges[global_edge-instance*edges_per_instance];
+    const std::uint32_t base=instance*voxels_per_instance;
+    const float load=length(node_impulses[base+edge.vertices.x])+
+        length(node_impulses[base+edge.vertices.y]);
+    if (!(load>impulse_threshold)) return;
+    active_edges[global_edge]=0U;
+    atomicAdd(counters,1U);
+}
+
 __global__ void tether_rigid_sphere_kernel(
     float3* positions, float3* velocities, const std::uint32_t* flags,
     std::uint32_t endpoint, RigidSphereState sphere,
@@ -611,6 +631,23 @@ __global__ void set_voxel_velocity_kernel(
     const std::uint32_t node = first + blockIdx.x * blockDim.x + threadIdx.x;
     if (node >= last) return;
     if ((flags[node] & soft_body_voxel_pinned) == 0U) velocities[node] = velocity;
+}
+
+__global__ void translate_pinned_kernel(float3* rest_positions,
+    float3* positions, const std::uint32_t* flags, std::uint32_t count,
+    float3 delta)
+{
+    const std::uint32_t node=blockIdx.x*blockDim.x+threadIdx.x;
+    if (node>=count || (flags[node]&soft_body_voxel_pinned)==0U) return;
+    rest_positions[node]=add(rest_positions[node],delta);
+    positions[node]=add(positions[node],delta);
+}
+
+__global__ void scale_edge_rest_lengths_kernel(
+    SoftBodyEdge* edges,std::uint32_t count,float factor)
+{
+    const std::uint32_t edge=blockIdx.x*blockDim.x+threadIdx.x;
+    if (edge<count) edges[edge].rest_length*=factor;
 }
 
 __global__ void rotate_pinned_rest_positions_kernel(
@@ -2370,6 +2407,16 @@ void SoftBodyCourse::contact_rigid_sphere_substep(
         state.options.arena == GalleryArena::enclosed_box,
         state.rigid_sphere_impulses);
     check(cudaGetLastError(), "launch rigid sphere/mesh contact");
+    if (state.options.fracture_before_projection) {
+        fracture_edges_from_rigid_impact<<<
+            (state.total_edges+block_size-1U)/block_size,block_size,0,stream>>>(
+            state.edges,state.rigid_sphere_impulses,state.active_edges,
+            static_cast<std::uint32_t>(state.asset.rest_voxels.size()),
+            static_cast<std::uint32_t>(state.asset.edges.size()),state.total_edges,
+            0.10F*state.options.voxel_mass*state.options.strength_multiplier,
+            state.counters);
+        check(cudaGetLastError(),"fracture cloth edges from rigid impact");
+    }
     check(cudaEventRecord(state.rigid_contact_end[substep], stream),
         "record rigid sphere contact end");
     state.rigid_contact_substeps = std::max(
@@ -2451,7 +2498,7 @@ void SoftBodyCourse::contact_rigid_sphere_substep(
         // closes the square interiors so a fast sphere cannot tunnel between
         // four corner samples. It follows the deformed tile heights.
         float support = -std::numeric_limits<float>::infinity();
-        constexpr std::uint32_t corners = 4U;
+        const std::uint32_t corners=state.options.rope_bridge_nodes_per_tile;
         const float margin = 0.70F*sphere.radius;
         for (std::uint32_t tile=0U;
              tile<state.options.rope_bridge_columns*
@@ -2467,7 +2514,7 @@ void SoftBodyCourse::contact_rigid_sphere_substep(
                 maximum_x=std::max(maximum_x,point.x);
                 minimum_z=std::min(minimum_z,point.z);
                 maximum_z=std::max(maximum_z,point.z);
-                average_y+=0.25F*point.y;
+                average_y+=point.y/static_cast<float>(corners);
             }
             if (sphere.center.x>=minimum_x-margin && sphere.center.x<=maximum_x+margin &&
                 sphere.center.z>=minimum_z-margin && sphere.center.z<=maximum_z+margin)
@@ -2485,11 +2532,19 @@ void SoftBodyCourse::contact_rigid_sphere_substep(
 SoftBodyTimings SoftBodyCourse::step_with_rigid_sphere(
     RigidSphereState& sphere, float3 gravity, cudaStream_t stream)
 {
+    return step_with_rigid_sphere(sphere, gravity, gravity, stream);
+}
+
+SoftBodyTimings SoftBodyCourse::step_with_rigid_sphere(
+    RigidSphereState& sphere, float3 body_gravity, float3 sphere_gravity,
+    cudaStream_t stream)
+{
     if (!impl_) throw std::logic_error("moved-from soft-body course");
     if (!finite(sphere.center) || !finite(sphere.velocity) ||
         !finite(sphere.angular_velocity) || !finite(sphere.orientation) ||
         !finite(sphere.radius) || !finite(sphere.mass) ||
-        sphere.radius <= 0.0F || sphere.mass <= 0.0F || !finite(gravity)) {
+        sphere.radius <= 0.0F || sphere.mass <= 0.0F ||
+        !finite(body_gravity) || !finite(sphere_gravity)) {
         throw std::invalid_argument("invalid rolling rigid sphere");
     }
     auto& state = *impl_;
@@ -2498,7 +2553,7 @@ SoftBodyTimings SoftBodyCourse::step_with_rigid_sphere(
         static_cast<float>(state.options.solver_substeps);
     for (std::uint32_t substep = 0U;
          substep < state.options.solver_substeps; ++substep) {
-        sphere.velocity = add(sphere.velocity, multiply(gravity, dt));
+        sphere.velocity = add(sphere.velocity, multiply(sphere_gravity, dt));
         sphere.velocity = multiply(sphere.velocity, 1.0F / (1.0F + 0.25F * dt));
         sphere.center = add(sphere.center, multiply(sphere.velocity, dt));
         const float3 unprojected=sphere.center;
@@ -2507,13 +2562,13 @@ SoftBodyTimings SoftBodyCourse::step_with_rigid_sphere(
                 ? GalleryArena::ground : state.options.arena);
         apply_rigid_contact_friction(sphere,
             subtract(sphere.center,unprojected),state.options.ground_friction,dt);
-        prepare_substep(dt, gravity, stream);
+        prepare_substep(dt, body_gravity, stream);
         contact_rigid_sphere_substep(sphere, dt, stream);
         advance_rigid_sphere_rotation(sphere,
             state.options.arena == GalleryArena::none
                 ? GalleryArena::ground : state.options.arena,
             state.options.ground_friction, dt);
-        finish_substep(dt, gravity, stream);
+        finish_substep(dt, body_gravity, stream);
     }
     return finish_frame(stream);
 }
@@ -2576,6 +2631,76 @@ SoftBodyTimings SoftBodyCourse::step_with_tethered_rigid_sphere(
         const float sphere_speed = length(sphere.velocity);
         if (sphere_speed > 3.0F)
             sphere.velocity = multiply(sphere.velocity, 3.0F / sphere_speed);
+    }
+    return finish_frame(stream);
+}
+
+SoftBodyTimings SoftBodyCourse::step_with_tethered_rigid_spheres(
+    RigidSphereState& sphere, std::uint32_t endpoint_node,
+    float attachment_distance, RigidSphereState& caged_sphere,
+    float3 gravity, cudaStream_t stream)
+{
+    if (!impl_) throw std::logic_error("moved-from soft-body course");
+    const auto valid_sphere=[](const RigidSphereState& value) {
+        return finite(value.center) && finite(value.velocity) &&
+            finite(value.angular_velocity) && finite(value.orientation) &&
+            finite(value.radius) && finite(value.mass) && value.radius>0.0F &&
+            value.mass>0.0F;
+    };
+    if (!valid_sphere(sphere) || !valid_sphere(caged_sphere) || !finite(gravity) ||
+        !finite(attachment_distance) || attachment_distance<=0.0F ||
+        endpoint_node>=impl_->total_voxels ||
+        endpoint_node>=impl_->asset.rest_voxels.size())
+        throw std::invalid_argument("invalid paired rope rigid spheres");
+    auto& state=*impl_;
+    begin_frame(stream);
+    const float dt=state.options.fixed_dt/
+        static_cast<float>(state.options.solver_substeps);
+    const float maximum_rope_reach=length(subtract(
+        state.asset.rest_voxels[endpoint_node],state.asset.rest_voxels[0U]))+
+        attachment_distance;
+    for (std::uint32_t substep=0U;substep<state.options.solver_substeps;++substep) {
+        auto integrate=[&](RigidSphereState& value) {
+            value.velocity=add(value.velocity,multiply(gravity,dt));
+            value.velocity=multiply(value.velocity,1.0F/(1.0F+0.15F*dt));
+            value.center=add(value.center,multiply(value.velocity,dt));
+            const float3 unprojected=value.center;
+            project_gallery_contact(value.center,value.velocity,value.radius,
+                state.options.arena);
+            apply_rigid_contact_friction(value,subtract(value.center,unprojected),
+                state.options.ground_friction,dt);
+        };
+        integrate(sphere);
+        integrate(caged_sphere);
+        prepare_substep(dt,gravity,stream);
+        contact_rigid_sphere_substep(sphere,dt,stream);
+        contact_rigid_sphere_substep(caged_sphere,dt,stream);
+        finish_substep(dt,gravity,stream);
+        tether_rigid_sphere_kernel<<<1,1,0,stream>>>(
+            state.positions,state.velocities,state.flags,endpoint_node,sphere,
+            attachment_distance,state.options.voxel_mass,maximum_rope_reach,
+            4.0F*state.asset.voxel_radius,dt,state.options.maximum_speed,
+            state.rigid_sphere_impulses);
+        check(cudaGetLastError(),"launch paired rope/sphere tether constraint");
+        check(cudaMemcpyAsync(state.host_rigid_sphere_impulses.data(),
+            state.rigid_sphere_impulses,2U*sizeof(float3),cudaMemcpyDeviceToHost,
+            stream),"download paired rope/sphere tether reaction");
+        check(cudaStreamSynchronize(stream),
+            "finish paired rope/sphere tether reaction");
+        sphere.center=add(sphere.center,state.host_rigid_sphere_impulses[0]);
+        sphere.velocity=add(sphere.velocity,state.host_rigid_sphere_impulses[1]);
+        project_gallery_contact(sphere.center,sphere.velocity,sphere.radius,
+            state.options.arena);
+        advance_rigid_sphere_rotation(sphere,state.options.arena,
+            state.options.ground_friction,dt);
+        advance_rigid_sphere_rotation(caged_sphere,state.options.arena,
+            state.options.ground_friction,dt);
+        const auto limit_speed=[](RigidSphereState& value) {
+            const float speed=length(value.velocity);
+            if (speed>3.0F) value.velocity=multiply(value.velocity,3.0F/speed);
+        };
+        limit_speed(sphere);
+        limit_speed(caged_sphere);
     }
     return finish_frame(stream);
 }
@@ -2776,6 +2901,30 @@ void SoftBodyCourse::set_uniform_velocity(
     check(cudaStreamSynchronize(stream), "commit soft-body initial velocity");
 }
 
+void SoftBodyCourse::translate_pinned(float3 delta,cudaStream_t stream)
+{
+    if (!impl_) throw std::logic_error("moved-from soft-body course");
+    if (impl_->frame_open || !finite(delta))
+        throw std::invalid_argument("pinned translation requires finite input between frames");
+    translate_pinned_kernel<<<
+        (impl_->total_voxels+block_size-1U)/block_size,block_size,0,stream>>>(
+        impl_->rest_positions,impl_->positions,impl_->flags,
+        impl_->total_voxels,delta);
+    check(cudaGetLastError(),"translate pinned soft-body anchors");
+}
+
+void SoftBodyCourse::scale_rest_lengths(float factor,cudaStream_t stream)
+{
+    if (!impl_) throw std::logic_error("moved-from soft-body course");
+    if (impl_->frame_open || !finite(factor) || factor<0.25F || factor>4.0F)
+        throw std::invalid_argument("rope rest scale factor must be in [0.25, 4]");
+    const std::uint32_t count=static_cast<std::uint32_t>(impl_->asset.edges.size());
+    scale_edge_rest_lengths_kernel<<<
+        (count+block_size-1U)/block_size,block_size,0,stream>>>(
+        impl_->edges,count,factor);
+    check(cudaGetLastError(),"scale rope rest lengths");
+}
+
 void SoftBodyCourse::capture_state(SoftBodyState& output, cudaStream_t stream) const
 {
     if (!impl_) throw std::logic_error("moved-from soft-body course");
@@ -2948,7 +3097,8 @@ SoftBodyRenderView SoftBodyCourse::render_view() const noexcept
         impl_->options.surface_triangle_split,
         impl_->options.secondary_surface_triangle_split,
         impl_->options.rope_bridge_columns,
-        impl_->options.rope_bridge_rows};
+        impl_->options.rope_bridge_rows,
+        impl_->options.rope_bridge_nodes_per_tile};
 }
 
 meshprep::DeviceMeshView SoftBodyCourse::render_mesh() const noexcept

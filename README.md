@@ -101,9 +101,10 @@ overrides are explicit, and `resolved_physics()` reports what was selected.
 The optional gallery has a 20,000-particle hemispherical paint bowl with a dynamic sphere,
 closed-box rigid-sphere/cloth and rigid-sphere/soft-body examples, a combined
 sphere/particle/catching-cloth scene, a torque-driven water wheel with compliant
-axle-to-rim soft crosses, a load-bearing procedural soft sphere rolling over
+axle-to-rim soft crosses and 32 rigid outer rungs, a load-bearing procedural soft sphere rolling over
 ground cloth into hanging cloth, and a rigid sphere tethered to a central post
-by a procedural rope, and a forty-tile rope bridge carrying a soft sphere. The native `P`
+by a procedural Y rope alongside an equal-sized glass rigid sphere in a D12
+cage, and two distinct forty-tile rope bridges carrying a rigid sphere. The native `P`
 panel exposes active particle count and physical water-skin detail where
 applicable. These scene recipes remain experimental and are deliberately
 separate from the general physics contract.
@@ -143,7 +144,7 @@ ctest --test-dir build --output-on-failure
 ```
 
 The default package build is intentionally small: geometry and general physics
-only. Benchmarks, tests, capture tools, the nine-scene gallery API, and the
+only. Benchmarks, tests, capture tools, the ten-scene gallery API, and the
 OpenGL app are opt-in CMake options. CI enables all of them explicitly.
 
 The test and sanitizer commands need a CUDA-capable host. Tests cover smooth and sharp meshes, a sharp cube, disconnected fans, duplicate edges, a non-manifold edge, degenerate faces, identical centroids, invalid inputs, and seeded triangle soup.
@@ -171,7 +172,7 @@ For an optional complete gallery preset, the convenience API is intentionally sm
 parallel_mater::sim::GallerySimulation simulation;
 parallel_mater::Status status =
     parallel_mater::sim::SimulationBuilder(
-        parallel_mater::sim::ExampleContext::particle_bowl)
+        parallel_mater::sim::ExampleContext::water)
         .particles(20'000)
         .iterations(4)
         .build(simulation);

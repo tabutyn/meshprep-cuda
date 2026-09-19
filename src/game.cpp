@@ -10,8 +10,9 @@ namespace {
 
 [[nodiscard]] bool valid_context(ExampleContext context) noexcept
 {
-    const auto value = static_cast<std::uint32_t>(context);
-    return value >= 1U && value <= levels.size();
+    return std::any_of(levels.begin(), levels.end(), [context](const auto& item) {
+        return item.context == context;
+    });
 }
 
 [[nodiscard]] float saturated(float value) noexcept
@@ -48,7 +49,7 @@ std::string_view describe(ConfigError error) noexcept
 {
     switch (error) {
     case ConfigError::none: return "valid";
-    case ConfigError::invalid_context: return "context must be between 1 and 9";
+    case ConfigError::invalid_context: return "context must be one of the ten gallery recipes";
     case ConfigError::invalid_timestep: return "timestep must be finite and positive";
     case ConfigError::invalid_iterations: return "solver iterations must be between 1 and 16";
     case ConfigError::invalid_particle_count: return "particle count must be between 256 and 100000";
@@ -87,6 +88,10 @@ LevelProgress evaluate(ExampleContext context, const LevelMetrics& metrics) noex
     case GoalKind::wrap_post:
         result.normalized = saturated(metrics.rope_turns / level(context).target);
         break;
+    case GoalKind::catch_treasure:
+        result.normalized = metrics.treasure_caught
+            ? saturated(metrics.treasure_lift_progress) : 0.0F;
+        break;
     }
     result.won = result.normalized >= 1.0F;
     return result;
@@ -108,9 +113,12 @@ LevelProgress Campaign::update(const LevelMetrics& metrics) noexcept
     }
     ++won_frames_;
     // Hold the win card for 1.5 seconds at the fixed 60 Hz cadence.
-    if (won_frames_ >= 90U && context_ != ExampleContext::rope_bridge) {
-        context_ = static_cast<ExampleContext>(
-            static_cast<std::uint32_t>(context_) + 1U);
+    if (won_frames_ >= 90U && context_ != example_contexts.back().id) {
+        const auto current = std::find_if(example_contexts.begin(), example_contexts.end(),
+            [this](const auto& item) { return item.id == context_; });
+        if (current == example_contexts.end() || current + 1 == example_contexts.end())
+            return result;
+        context_ = (current + 1)->id;
         won_frames_ = 0U;
         result.advanced = true;
     }

@@ -26,25 +26,28 @@ struct ExpectedContext {
     Component components;
 };
 
-constexpr std::array<ExpectedContext, 9> expected_contexts{{
-    {ExampleContext::water_course, '1', "water-course", "Water obstacle course",
-        Component::fluid_particles | Component::water_skin | Component::rigid_bodies},
-    {ExampleContext::particle_bowl, '2', "particle-bowl", "Paint the bowl blue",
+constexpr std::array<ExpectedContext, 10> expected_contexts{{
+    {ExampleContext::water, '1', "water", "Water",
         Component::fluid_particles | Component::rigid_bodies},
-    {ExampleContext::cloth_rigid, '3', "cloth-rigid", "Break the goal cloth",
+    {ExampleContext::cloth, '2', "cloth", "Cloth",
         Component::cloth | Component::rigid_bodies},
-    {ExampleContext::soft_body_rigid, '4', "soft-body-rigid", "Cylinder curtain",
+    {ExampleContext::soft_body, '3', "softbody", "Softbody",
         Component::soft_body | Component::rigid_bodies},
-    {ExampleContext::particles_cloth, '5', "particles-cloth", "Water snake",
-        Component::fluid_particles | Component::cloth | Component::rigid_bodies},
-    {ExampleContext::soft_body_fluid, '6', "soft-body-fluid", "Water wheel crossing",
+    {ExampleContext::rope, '4', "rope", "Rope",
+        Component::rope | Component::rigid_bodies},
+    {ExampleContext::water_cloth, '5', "water-cloth", "Water-Cloth",
+        Component::fluid_particles | Component::water_skin |
+            Component::cloth | Component::rigid_bodies},
+    {ExampleContext::water_soft_body, '6', "water-softbody", "Water-Softbody",
         Component::soft_body | Component::fluid_particles | Component::rigid_bodies},
-    {ExampleContext::soft_body_cloth, '7', "soft-body-cloth", "Cloth gate",
+    {ExampleContext::water_rope, '7', "water-rope", "Water-Rope",
+        Component::fluid_particles | Component::rope | Component::rigid_bodies},
+    {ExampleContext::cloth_soft_body, '8', "cloth-softbody", "Cloth-Softbody",
         Component::soft_body | Component::cloth | Component::rigid_bodies},
-    {ExampleContext::rope_rigid, '8', "rope-rigid", "Wrap the post",
-        Component::soft_body | Component::rigid_bodies},
-    {ExampleContext::rope_bridge, '9', "rope-bridge", "Cross the rope bridge",
-        Component::soft_body | Component::rigid_bodies},
+    {ExampleContext::cloth_rope, '9', "cloth-rope", "Cloth-Rope",
+        Component::cloth | Component::rope | Component::rigid_bodies},
+    {ExampleContext::soft_body_rope, '0', "softbody-rope", "Softbody-Rope",
+        Component::soft_body | Component::rope | Component::rigid_bodies},
 }};
 
 int failures{};
@@ -59,7 +62,7 @@ void expect(bool condition, const char* message)
 void test_context_catalog()
 {
     expect(meshprep::sim::example_contexts.size() == expected_contexts.size(),
-        "catalog must contain exactly contexts 1 through 9");
+        "catalog must contain the ten component and pair contexts");
 
     for (std::size_t index = 0; index < expected_contexts.size(); ++index) {
         const auto& expected = expected_contexts[index];
@@ -74,11 +77,13 @@ void test_context_catalog()
             "lookup must return the catalog entry, not a copy");
     }
 
-    expect(meshprep::sim::find_example_context('0') == nullptr,
-        "context 0 must be rejected");
+    const auto* softbody_rope = meshprep::sim::find_example_context('0');
+    expect(softbody_rope != nullptr &&
+            softbody_rope->id == ExampleContext::soft_body_rope,
+        "context 0 must expose Softbody-Rope");
     const auto* bridge = meshprep::sim::find_example_context('9');
-    expect(bridge != nullptr && bridge->id == ExampleContext::rope_bridge,
-        "context 9 must expose the rope bridge");
+    expect(bridge != nullptr && bridge->id == ExampleContext::cloth_rope,
+        "context 9 must expose Cloth-Rope");
     expect(meshprep::sim::find_example_context('x') == nullptr,
         "non-number context key must be rejected");
     expect(!meshprep::sim::has_component(Component::none, Component::cloth),
@@ -122,7 +127,7 @@ void test_fixed_step_contract()
 void test_portable_game_contract()
 {
     auto config = meshprep::sim::SimulationConfig::for_level(
-        ExampleContext::particles_cloth);
+        ExampleContext::water_rope);
     config.timestep(1.0F / 120.0F).iterations(8U).particles(12'000U)
         .cloth_resolution(4U);
     expect(meshprep::sim::validate(config) == meshprep::sim::ConfigError::none,
@@ -135,19 +140,23 @@ void test_portable_game_contract()
     meshprep::sim::LevelMetrics metrics;
     metrics.painted_fraction = 0.42F;
     const auto paint = meshprep::sim::evaluate(
-        ExampleContext::particle_bowl, metrics);
+        ExampleContext::water, metrics);
     expect(paint.normalized == 0.42F && !paint.won,
         "paint goal must expose continuous normalized progress");
     metrics.rope_turns = 3.0F;
-    expect(meshprep::sim::evaluate(ExampleContext::rope_rigid, metrics).won,
+    expect(meshprep::sim::evaluate(ExampleContext::rope, metrics).won,
         "rope goal must win at three complete turns");
+    metrics.treasure_caught = true;
+    metrics.treasure_lift_progress = 1.0F;
+    expect(meshprep::sim::evaluate(ExampleContext::water_rope, metrics).won,
+        "fishing goal must win after the caught treasure reaches the top");
 
-    meshprep::sim::Campaign campaign(ExampleContext::cloth_rigid);
+    meshprep::sim::Campaign campaign(ExampleContext::cloth);
     metrics = {};
     metrics.broken_connections = 1U;
     meshprep::sim::LevelProgress progress;
     for (int frame = 0; frame < 90; ++frame) progress = campaign.update(metrics);
-    expect(progress.advanced && campaign.current() == ExampleContext::soft_body_rigid,
+    expect(progress.advanced && campaign.current() == ExampleContext::soft_body,
         "campaign must advance after holding a completed goal");
 }
 
@@ -159,17 +168,17 @@ void test_owning_simulation_contract()
     static_assert(!std::is_copy_constructible_v<meshprep::sim::GallerySimulation>);
     static_assert(!std::is_copy_assignable_v<meshprep::sim::GallerySimulation>);
 
-    expect(!meshprep::sim::requires_soft_body_asset(ExampleContext::particle_bowl),
+    expect(!meshprep::sim::requires_soft_body_asset(ExampleContext::water),
         "procedural particle bowl must not require an asset");
-    expect(!meshprep::sim::requires_soft_body_asset(ExampleContext::cloth_rigid),
+    expect(!meshprep::sim::requires_soft_body_asset(ExampleContext::cloth),
         "procedural cloth must not require an asset");
-    expect(!meshprep::sim::requires_soft_body_asset(ExampleContext::water_course),
+    expect(!meshprep::sim::requires_soft_body_asset(ExampleContext::water_cloth),
         "rigid water course must not request a soft-body asset");
-    expect(meshprep::sim::requires_soft_body_asset(ExampleContext::soft_body_rigid),
+    expect(meshprep::sim::requires_soft_body_asset(ExampleContext::soft_body),
         "soft-body context must request its authored cylinder asset");
-    expect(!meshprep::sim::requires_soft_body_asset(ExampleContext::soft_body_fluid),
+    expect(!meshprep::sim::requires_soft_body_asset(ExampleContext::water_soft_body),
         "procedural water-wheel cross must not request the retired cylinder asset");
-    expect(!meshprep::sim::requires_soft_body_asset(ExampleContext::rope_rigid),
+    expect(!meshprep::sim::requires_soft_body_asset(ExampleContext::rope),
         "procedural rope must not request an external asset");
 
     meshprep::sim::GallerySimulation empty;

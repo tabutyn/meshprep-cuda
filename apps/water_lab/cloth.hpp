@@ -32,13 +32,20 @@ struct ClothGridOptions {
 [[nodiscard]] SoftBodyAsset make_soft_rope(
     std::uint32_t node_count = 32U, float spacing = 0.055F);
 // A pinned trunk splits into a directly tethered branch and a second branch
-// carrying a dodecahedral rope cage around a deforming glass render sphere.
+// carrying a dodecahedral rope cage around an independently simulated rigid
+// sphere. The legacy bound surface remains internal for asset compatibility.
 // The direct-attachment endpoint is deliberately stored as the final node.
 [[nodiscard]] SoftBodyAsset make_y_rope_cage(
     std::uint32_t node_count = 64U, float total_length = 4.0F);
-// Forty independently braced 0.3 m deck tiles. Adjacent tile edges are joined
-// by two 0.2 m spring ropes, so an interior tile owns eight bridge ropes.
+// Independently braced 0.3 m cloth tiles. Adjacent edges use two aligned ropes,
+// or four aligned/crossed ropes for the dedicated Cloth-Rope floor.
 [[nodiscard]] SoftBodyAsset make_rope_bridge(
+    std::uint32_t columns = rope_bridge_columns,
+    std::uint32_t rows = rope_bridge_rows,
+    bool four_ropes_per_edge = false);
+// Larger 0.4 m tiles use a 4x4 physical surface (16 attachment points).
+// Four parallel ropes join matching samples on every adjacent tile edge.
+[[nodiscard]] SoftBodyAsset make_dense_tile_rope_bridge(
     std::uint32_t columns = rope_bridge_columns,
     std::uint32_t rows = rope_bridge_rows);
 // Three-layer load-bearing cross used by the water wheel. A small central

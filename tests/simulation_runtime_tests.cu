@@ -63,13 +63,13 @@ void test_particle_tub_without_asset()
 {
     meshprep::sim::GallerySimulation simulation;
     meshprep::sim::GallerySimulationOptions options;
-    options.context = meshprep::sim::ExampleContext::particle_bowl;
+    options.context = meshprep::sim::ExampleContext::water;
     require(options.soft_body_asset_path.empty(),
         "particle tub test accidentally supplied an asset");
     require(simulation.initialize(options).ok(),
         "particle tub must initialize without an asset");
     require(simulation.initialized() &&
-            simulation.context() == meshprep::sim::ExampleContext::particle_bowl,
+            simulation.context() == meshprep::sim::ExampleContext::water,
         "particle tub identity was not retained");
     require_recipe_parity(simulation, options);
 
@@ -118,7 +118,7 @@ void test_particle_tub_without_asset()
 void test_live_particle_resize()
 {
     meshprep::sim::GallerySimulationOptions options;
-    options.context = meshprep::sim::ExampleContext::particle_bowl;
+    options.context = meshprep::sim::ExampleContext::water;
     options.particle_count_override = 512U;
     meshprep::sim::GallerySimulation simulation;
     require(simulation.initialize(options).ok(), "small active particle prefix failed");
@@ -140,19 +140,20 @@ void test_live_particle_resize()
 void test_procedural_soft_body_fluid()
 {
     meshprep::sim::GallerySimulationOptions options;
-    options.context = meshprep::sim::ExampleContext::soft_body_fluid;
+    options.context = meshprep::sim::ExampleContext::water_soft_body;
     meshprep::sim::GallerySimulation simulation;
     require(meshprep::sim::GallerySimulation::create(options, simulation).ok(),
         "procedural water-wheel context failed to initialize without an asset");
     require_recipe_parity(simulation, options);
     const auto configured = simulation.options();
-    require(configured.context == meshprep::sim::ExampleContext::soft_body_fluid &&
+    require(configured.context == meshprep::sim::ExampleContext::water_soft_body &&
             configured.soft_body_asset_path.empty(),
         "procedural water-wheel context invented an asset dependency");
 
     auto frame = simulation.render_view();
     require(frame.particle_system_count == 1U && frame.surface_count == 1U &&
-            frame.rigid_body_count == 12U + waterlab::water_wheel_fin_count &&
+            frame.rigid_body_count == 12U + waterlab::water_wheel_fin_count +
+                waterlab::water_wheel_outer_rung_count &&
             frame.lattice_count == 1U,
         "soft-body/fluid context exposed an undeclared component view");
     const std::uint32_t first_platform=7U+waterlab::water_wheel_fin_count;
@@ -173,6 +174,14 @@ void test_procedural_soft_body_fluid()
             right_bumper.translation.x>waterlab::water_wheel_center.x+
                 waterlab::water_wheel_top_platform_outer_x,
         "public water-wheel recipe omitted its stage bumper walls");
+    const std::uint32_t first_rung=12U+waterlab::water_wheel_fin_count;
+    require(frame.rigid_bodies[first_rung].translation.z==
+                waterlab::water_wheel_stage_z &&
+            frame.rigid_bodies[first_rung].scale.x==
+                waterlab::water_wheel_outer_rung_radial_half_length &&
+            frame.rigid_bodies[first_rung+waterlab::water_wheel_outer_rung_count-1U]
+                .scale.y==waterlab::water_wheel_outer_rung_tangent_half_width,
+        "public water-wheel recipe omitted its 32 interactive outer rungs");
     require(frame.surfaces[0].mesh.vertex_count != 0U &&
             frame.surfaces[0].mesh.triangle_count != 0U &&
             frame.surfaces[0].triangle_active != nullptr,
@@ -202,7 +211,8 @@ void test_procedural_soft_body_fluid()
     const auto stats = simulation.statistics();
     require(stats.frame_index == 1U && stats.particle_count == 322U &&
             stats.surface_count == 1U &&
-            stats.rigid_body_count == 12U + waterlab::water_wheel_fin_count &&
+            stats.rigid_body_count == 12U + waterlab::water_wheel_fin_count +
+                waterlab::water_wheel_outer_rung_count &&
             stats.finite_failure_count == 0U,
         "procedural water-wheel context statistics are inconsistent");
 
@@ -236,7 +246,11 @@ void test_every_public_recipe_steps_declared_components()
         const bool deformable = meshprep::sim::has_component(
                 recipe.components, meshprep::sim::Component::cloth) ||
             meshprep::sim::has_component(
-                recipe.components, meshprep::sim::Component::soft_body);
+                recipe.components, meshprep::sim::Component::soft_body) ||
+            meshprep::sim::has_component(
+                recipe.components, meshprep::sim::Component::rope);
+        const bool separate_deformable = deformable &&
+            recipe.id != meshprep::sim::ExampleContext::water_cloth;
         const bool water_skin = meshprep::sim::has_component(
             recipe.components, meshprep::sim::Component::water_skin);
         const bool rigid = meshprep::sim::has_component(
@@ -245,26 +259,30 @@ void test_every_public_recipe_steps_declared_components()
         const auto stats = simulation.statistics();
         require(frame.particle_system_count == (particles ? 1U : 0U) &&
                 frame.surface_count == static_cast<std::uint32_t>(water_skin) +
-                    static_cast<std::uint32_t>(deformable) &&
+                    static_cast<std::uint32_t>(separate_deformable &&
+                        recipe.id != meshprep::sim::ExampleContext::rope) &&
                 frame.rigid_body_count == ([&] {
                     if (!rigid) return 0U;
-                    if (recipe.id == meshprep::sim::ExampleContext::water_course)
+                    if (recipe.id == meshprep::sim::ExampleContext::water_cloth)
                         return 5U + waterlab::course_peg_count;
-                    if (recipe.id == meshprep::sim::ExampleContext::particle_bowl)
+                    if (recipe.id == meshprep::sim::ExampleContext::water)
                         return 2U + waterlab::bowl_peg_count;
-                    if (recipe.id == meshprep::sim::ExampleContext::soft_body_fluid)
-                        return 12U + waterlab::water_wheel_fin_count;
-                    if (recipe.id == meshprep::sim::ExampleContext::particles_cloth)
-                        return 15U;
-                    if (recipe.id == meshprep::sim::ExampleContext::soft_body_cloth)
+                    if (recipe.id == meshprep::sim::ExampleContext::water_soft_body)
+                        return 12U + waterlab::water_wheel_fin_count +
+                            waterlab::water_wheel_outer_rung_count;
+                    if (recipe.id == meshprep::sim::ExampleContext::water_rope)
+                        return 7U;
+                    if (recipe.id == meshprep::sim::ExampleContext::cloth_soft_body)
                         return 6U;
-                    if (recipe.id == meshprep::sim::ExampleContext::rope_rigid)
+                    if (recipe.id == meshprep::sim::ExampleContext::rope)
+                        return 4U;
+                    if (recipe.id == meshprep::sim::ExampleContext::cloth_rope)
                         return 3U;
-                    if (recipe.id == meshprep::sim::ExampleContext::rope_bridge)
+                    if (recipe.id == meshprep::sim::ExampleContext::soft_body_rope)
                         return 3U;
                     return 7U;
                 }()) &&
-                frame.lattice_count == (deformable ? 1U : 0U),
+                frame.lattice_count == (separate_deformable ? 1U : 0U),
             "public gallery recipe exposed an undeclared component");
         for (std::uint32_t body_index = 0U;
              body_index < frame.rigid_body_count; ++body_index) {
@@ -278,7 +296,16 @@ void test_every_public_recipe_steps_declared_components()
                         triangle.z < body.mesh.vertex_count;
                 }), "public rigid-body view contains non-local triangle indices");
         }
-        if (recipe.id == meshprep::sim::ExampleContext::water_course) {
+        if (recipe.id==meshprep::sim::ExampleContext::rope) {
+            const auto& primary=frame.rigid_bodies[0];
+            const auto& glass=frame.rigid_bodies[1];
+            require(primary.scale.x==glass.scale.x &&
+                    primary.scale.y==glass.scale.y &&
+                    primary.scale.z==glass.scale.z &&
+                    primary.translation.z!=glass.translation.z,
+                "rope cage must expose a second equal-sized rigid sphere");
+        }
+        if (recipe.id == meshprep::sim::ExampleContext::water_cloth) {
             require(frame.lattice_count == 0U && frame.rigid_body_count == 13U,
                 "water course retained a soft lattice or omitted rigid posts");
             for (std::uint32_t peg = 0U; peg < waterlab::course_peg_count; ++peg) {
@@ -342,7 +369,7 @@ void test_lattice_masks_keep_instance_identity()
 void test_explicit_physics_overrides()
 {
     meshprep::sim::GallerySimulationOptions options;
-    options.context = meshprep::sim::ExampleContext::particles_cloth;
+    options.context = meshprep::sim::ExampleContext::cloth;
     options.fixed_step.timestep = 1.0F / 120.0F;
     options.solver_iterations_override = 2U;
     options.gravity_override = make_float3(0.25F, -1.5F, 0.5F);
@@ -360,8 +387,8 @@ void test_explicit_physics_overrides()
         "public gallery did not report exact resolved overrides");
     const auto detailed_cloth = simulation.render_view().lattices[0];
     require(detailed_cloth.nodes_per_instance == (27U * 3U + 1U) *
-            (21U * 3U + 1U),
-        "public cloth-detail override did not retessellate context 5");
+            (29U * 3U + 1U),
+        "public cloth-detail override did not retessellate Cloth");
     require(simulation.step().ok() && simulation.step().ok(),
         "overridden public gallery recipe failed repeated steps");
 
@@ -382,7 +409,7 @@ void test_explicit_physics_overrides()
         "non-finite gravity override was accepted");
 
     meshprep::sim::GallerySimulationOptions hanging_options;
-    hanging_options.context = meshprep::sim::ExampleContext::cloth_rigid;
+    hanging_options.context = meshprep::sim::ExampleContext::cloth;
     hanging_options.cloth_detail_override = 2U;
     meshprep::sim::GallerySimulation hanging_cloth;
     require(hanging_cloth.initialize(hanging_options).ok(),
@@ -391,6 +418,19 @@ void test_explicit_physics_overrides()
     require(hanging_lattice.nodes_per_instance == (27U * 2U + 1U) *
             (29U * 2U + 1U),
         "context-3 cloth-detail override did not retessellate the cloth");
+
+    meshprep::sim::GallerySimulationOptions cylinder_options;
+    cylinder_options.context=meshprep::sim::ExampleContext::soft_body;
+    cylinder_options.soft_body_asset_path=MESHPREP_SIMULATION_TEST_ASSET;
+    cylinder_options.cylinder_columns_override=6U;
+    cylinder_options.cylinder_rows_override=3U;
+    meshprep::sim::GallerySimulation cylinders;
+    require(cylinders.initialize(cylinder_options).ok(),
+        "configurable Softbody cylinder grid was rejected");
+    const auto cylinder_lattice=cylinders.render_view().lattices[0];
+    require(cylinder_lattice.instance_count==18U &&
+            cylinder_lattice.node_count==18U*cylinder_lattice.nodes_per_instance,
+        "Softbody N x M override did not create exactly N*M cylinders");
 }
 
 meshprep::Status invoke_during_stream_capture(
@@ -422,7 +462,7 @@ meshprep::Status invoke_during_stream_capture(
 void test_cuda_failures_retain_the_runtime_error()
 {
     meshprep::sim::GallerySimulationOptions options;
-    options.context = meshprep::sim::ExampleContext::particle_bowl;
+    options.context = meshprep::sim::ExampleContext::water;
 
     meshprep::sim::GallerySimulation simulation;
     require(simulation.initialize(options).ok(),

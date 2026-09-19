@@ -25,7 +25,9 @@ struct Bond {
 // General fixed-topology lattice configuration. Scene layout, gravity,
 // colliders, and rendering remain application policy rather than presets.
 struct SoftBodyOptions {
-    static constexpr std::uint32_t maximum_instances{32U};
+    // Keep this limit aligned with the CUDA solver.  Dense gallery fixtures
+    // (for example an adjustable N x M field) are valid API clients too.
+    static constexpr std::uint32_t maximum_instances{256U};
 
     std::uint32_t instance_count{1U};
     std::uint32_t substeps{4U};

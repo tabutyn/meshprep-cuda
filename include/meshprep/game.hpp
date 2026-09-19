@@ -19,6 +19,7 @@ enum class Component : std::uint32_t {
     soft_body = 1U << 3U,
     rigid_bodies = 1U << 4U,
     hand_particles = 1U << 5U,
+    rope = 1U << 6U,
 };
 
 [[nodiscard]] constexpr Component operator|(Component left, Component right) noexcept
@@ -34,15 +35,16 @@ enum class Component : std::uint32_t {
 }
 
 enum class ExampleContext : std::uint8_t {
-    water_course = 1,
-    particle_bowl = 2,
-    cloth_rigid = 3,
-    soft_body_rigid = 4,
-    particles_cloth = 5,
-    soft_body_fluid = 6,
-    soft_body_cloth = 7,
-    rope_rigid = 8,
-    rope_bridge = 9,
+    water = 1,
+    cloth = 2,
+    soft_body = 3,
+    rope = 4,
+    water_cloth = 5,
+    water_soft_body = 6,
+    water_rope = 7,
+    cloth_soft_body = 8,
+    cloth_rope = 9,
+    soft_body_rope = 10,
 };
 
 struct ExampleContextInfo {
@@ -53,25 +55,28 @@ struct ExampleContextInfo {
     Component components{};
 };
 
-inline constexpr std::array<ExampleContextInfo, 9> example_contexts{{
-    {ExampleContext::water_course, '1', "water-course", "Water obstacle course",
-        Component::fluid_particles | Component::water_skin | Component::rigid_bodies},
-    {ExampleContext::particle_bowl, '2', "particle-bowl", "Paint the bowl blue",
+inline constexpr std::array<ExampleContextInfo, 10> example_contexts{{
+    {ExampleContext::water, '1', "water", "Water",
         Component::fluid_particles | Component::rigid_bodies},
-    {ExampleContext::cloth_rigid, '3', "cloth-rigid", "Break the goal cloth",
+    {ExampleContext::cloth, '2', "cloth", "Cloth",
         Component::cloth | Component::rigid_bodies},
-    {ExampleContext::soft_body_rigid, '4', "soft-body-rigid", "Cylinder curtain",
+    {ExampleContext::soft_body, '3', "softbody", "Softbody",
         Component::soft_body | Component::rigid_bodies},
-    {ExampleContext::particles_cloth, '5', "particles-cloth", "Water snake",
-        Component::fluid_particles | Component::cloth | Component::rigid_bodies},
-    {ExampleContext::soft_body_fluid, '6', "soft-body-fluid", "Water wheel crossing",
+    {ExampleContext::rope, '4', "rope", "Rope",
+        Component::rope | Component::rigid_bodies},
+    {ExampleContext::water_cloth, '5', "water-cloth", "Water-Cloth",
+        Component::fluid_particles | Component::water_skin |
+            Component::cloth | Component::rigid_bodies},
+    {ExampleContext::water_soft_body, '6', "water-softbody", "Water-Softbody",
         Component::soft_body | Component::fluid_particles | Component::rigid_bodies},
-    {ExampleContext::soft_body_cloth, '7', "soft-body-cloth", "Cloth gate",
+    {ExampleContext::water_rope, '7', "water-rope", "Water-Rope",
+        Component::fluid_particles | Component::rope | Component::rigid_bodies},
+    {ExampleContext::cloth_soft_body, '8', "cloth-softbody", "Cloth-Softbody",
         Component::soft_body | Component::cloth | Component::rigid_bodies},
-    {ExampleContext::rope_rigid, '8', "rope-rigid", "Wrap the post",
-        Component::soft_body | Component::rigid_bodies},
-    {ExampleContext::rope_bridge, '9', "rope-bridge", "Cross the rope bridge",
-        Component::soft_body | Component::rigid_bodies},
+    {ExampleContext::cloth_rope, '9', "cloth-rope", "Cloth-Rope",
+        Component::cloth | Component::rope | Component::rigid_bodies},
+    {ExampleContext::soft_body_rope, '0', "softbody-rope", "Softbody-Rope",
+        Component::soft_body | Component::rope | Component::rigid_bodies},
 }};
 
 [[nodiscard]] constexpr const ExampleContextInfo* find_example_context(char key) noexcept
@@ -91,6 +96,7 @@ enum class GoalKind : std::uint8_t {
     ride_lift,
     pass_cloth,
     wrap_post,
+    catch_treasure,
 };
 
 struct LevelDefinition {
@@ -100,36 +106,41 @@ struct LevelDefinition {
     float target{};
 };
 
-inline constexpr std::array<LevelDefinition, 9> levels{{
-    {ExampleContext::water_course, GoalKind::reach_course_goal,
-        "Roll the water sphere through the obstacle course.", 1.0F},
-    {ExampleContext::particle_bowl, GoalKind::paint_surface,
+inline constexpr std::array<LevelDefinition, 10> levels{{
+    {ExampleContext::water, GoalKind::paint_surface,
         "Cover every bowl tile with blue water.", 1.0F},
-    {ExampleContext::cloth_rigid, GoalKind::damage_cloth,
+    {ExampleContext::cloth, GoalKind::damage_cloth,
         "Damage the cloth marked GOAL.", 1.0F},
-    {ExampleContext::soft_body_rigid, GoalKind::paint_surface,
+    {ExampleContext::soft_body, GoalKind::paint_surface,
         "Cover the rolling sphere in blue paint from the cylinders.", 1.0F},
-    {ExampleContext::particles_cloth, GoalKind::reach_hole,
-        "Pilot the boat and water into the green goal cube.", 1.0F},
-    {ExampleContext::soft_body_fluid, GoalKind::ride_lift,
-        "Cross the water wheel from the right stage to the left exit.", 1.0F},
-    {ExampleContext::soft_body_cloth, GoalKind::damage_cloth,
-        "Paint and damage the cloth marked GOAL.", 1.0F},
-    {ExampleContext::rope_rigid, GoalKind::wrap_post,
+    {ExampleContext::rope, GoalKind::wrap_post,
         "Wrap the tether three complete turns around the post.", 3.0F},
-    {ExampleContext::rope_bridge, GoalKind::reach_exit,
+    {ExampleContext::water_cloth, GoalKind::reach_course_goal,
+        "Roll the water sphere through the obstacle course.", 1.0F},
+    {ExampleContext::water_soft_body, GoalKind::ride_lift,
+        "Cross the water wheel from the right stage to the left exit.", 1.0F},
+    {ExampleContext::water_rope, GoalKind::catch_treasure,
+        "Hook the submerged treasure and reel it to the top.", 1.0F},
+    {ExampleContext::cloth_soft_body, GoalKind::damage_cloth,
+        "Paint and damage the cloth marked GOAL.", 1.0F},
+    {ExampleContext::cloth_rope, GoalKind::reach_exit,
+        "Roll across the cloth-and-rope floor.", 1.0F},
+    {ExampleContext::soft_body_rope, GoalKind::reach_exit,
         "Roll the soft-body sphere across the suspended rope bridge.", 1.0F},
 }};
 
 [[nodiscard]] constexpr const LevelDefinition& level(ExampleContext context) noexcept
 {
-    return levels[static_cast<std::size_t>(context) - 1U];
+    for (const auto& definition : levels) {
+        if (definition.context == context) return definition;
+    }
+    return levels.front();
 }
 
 // Setup shared by the CUDA simulation and native applications. Empty optionals
 // select the authored level preset.
 struct SimulationConfig {
-    ExampleContext context{ExampleContext::water_course};
+    ExampleContext context{ExampleContext::water};
     float fixed_timestep{1.0F / 60.0F};
     std::optional<std::uint32_t> solver_iterations{};
     std::optional<std::uint32_t> particle_count{};
@@ -203,10 +214,14 @@ struct LevelMetrics {
     float lift_progress{};
     bool cloth_passed{};
     float rope_turns{};
+    bool treasure_caught{};
+    // Zero until the hook latches. One means the treasure has reached the
+    // authored recovery height at the top of the tank.
+    float treasure_lift_progress{};
 };
 
 struct LevelProgress {
-    ExampleContext context{ExampleContext::water_course};
+    ExampleContext context{ExampleContext::water};
     float normalized{};
     bool won{};
     bool advanced{};
@@ -218,7 +233,7 @@ struct LevelProgress {
 class Campaign {
 public:
     explicit constexpr Campaign(
-        ExampleContext context = ExampleContext::water_course) noexcept
+        ExampleContext context = ExampleContext::water) noexcept
         : context_(context) {}
 
     void select(ExampleContext context) noexcept;
@@ -230,7 +245,7 @@ public:
     }
 
 private:
-    ExampleContext context_{ExampleContext::water_course};
+    ExampleContext context_{ExampleContext::water};
     std::uint32_t won_frames_{};
 };
 

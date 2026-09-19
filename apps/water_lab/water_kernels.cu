@@ -1187,6 +1187,47 @@ __device__ bool intersect_water_wheel_fin(const Ray& ray, float angle,
     return true;
 }
 
+__device__ bool intersect_water_wheel_outer_rung(const Ray& ray,float angle,
+    float maximum_distance,float& distance,float3& normal)
+{
+    const float cosine=cosf(angle),sine=sinf(angle);
+    const float radial_center=water_wheel_outer_disk_radius+
+        0.5F*water_wheel_outer_rung_radial_half_length;
+    const float3 center=make_float3(
+        water_wheel_center.x+radial_center*cosine,
+        water_wheel_center.y+radial_center*sine,water_wheel_stage_z);
+    const float3 relative=subtract(ray.origin,center);
+    const float3 local_origin=make_float3(
+        relative.x*cosine+relative.y*sine,
+        -relative.x*sine+relative.y*cosine,relative.z);
+    const float3 local_direction=make_float3(
+        ray.direction.x*cosine+ray.direction.y*sine,
+        -ray.direction.x*sine+ray.direction.y*cosine,ray.direction.z);
+    float near_distance=-1.0e30F,far_distance=maximum_distance;
+    float3 local_normal{};
+    if (!wheel_slab(local_origin.x,local_direction.x,
+            -water_wheel_outer_rung_radial_half_length,
+            water_wheel_outer_rung_radial_half_length,
+            make_float3(-1,0,0),make_float3(1,0,0),near_distance,far_distance,
+            local_normal) ||
+        !wheel_slab(local_origin.y,local_direction.y,
+            -water_wheel_outer_rung_tangent_half_width,
+            water_wheel_outer_rung_tangent_half_width,
+            make_float3(0,-1,0),make_float3(0,1,0),near_distance,far_distance,
+            local_normal) ||
+        !wheel_slab(local_origin.z,local_direction.z,
+            -water_wheel_outer_rung_axial_half_depth,
+            water_wheel_outer_rung_axial_half_depth,
+            make_float3(0,0,-1),make_float3(0,0,1),near_distance,far_distance,
+            local_normal)) return false;
+    const float hit=near_distance>1.0e-5F ? near_distance : far_distance;
+    if (hit<=1.0e-5F || hit>=maximum_distance) return false;
+    distance=hit;
+    normal=make_float3(local_normal.x*cosine-local_normal.y*sine,
+        local_normal.x*sine+local_normal.y*cosine,local_normal.z);
+    return true;
+}
+
 __device__ bool intersect_gallery_opaque(
     const Ray& ray, GalleryArena arena, const OrientedBox& collider,
     float maximum_distance, float& distance, float3& color)
@@ -1477,6 +1518,20 @@ __device__ bool intersect_gallery_opaque(
                     normalize(make_float3(-0.48F, 0.84F, 0.34F)))));
             hit_any = true;
         }
+        for (std::uint32_t rung=0U;rung<water_wheel_outer_rung_count;++rung) {
+            float rung_distance{};
+            float3 rung_normal{};
+            const float angle=collider.yaw+two_pi*static_cast<float>(rung)/
+                static_cast<float>(water_wheel_outer_rung_count);
+            if (!intersect_water_wheel_outer_rung(
+                    ray,angle,best,rung_distance,rung_normal)) continue;
+            best=rung_distance;
+            distance=rung_distance;
+            color=multiply(make_float3(0.92F,0.66F,0.10F),
+                0.30F+0.70F*fmaxf(0.0F,dot(rung_normal,
+                    normalize(make_float3(-0.48F,0.84F,0.34F)))));
+            hit_any=true;
+        }
         // The abandoned ladder/tow overlay is replaced by two simple exit
         // platforms just below the wheel crown. Their gap exposes only the
         // top of the wheel; the soft crosses and outer rims sit farther along
@@ -1597,6 +1652,22 @@ __device__ bool intersect_gallery_opaque(
                     dot(hit_normal, normalize(make_float3(-0.48F, 0.84F, 0.34F)))));
             hit_any = true;
         }
+        // The D12 cage contains a second real rigid sphere. It is analytic in
+        // the renderer just like the primary sphere; the rope graph is no
+        // longer abused as a deformable glass surface.
+        if (collider.secondary_sphere_radius > 0.0F &&
+            intersect_particle_sphere(ray,collider.secondary_sphere_center,
+                collider.secondary_sphere_radius,best,hit,hit_normal)) {
+            best=hit;
+            distance=hit;
+            const float facing=fabsf(dot(hit_normal,ray.direction));
+            const float fresnel=0.04F+0.96F*powf(1.0F-facing,5.0F);
+            const float light=0.20F+0.80F*fmaxf(0.0F,dot(hit_normal,
+                normalize(make_float3(-0.48F,0.84F,0.34F))));
+            color=add(multiply(make_float3(0.08F,0.28F,0.38F),0.55F*light),
+                multiply(make_float3(0.72F,0.94F,1.0F),0.70F*fresnel));
+            hit_any=true;
+        }
         if (intersect_particle_sphere(ray, collider.center, collider.half_extents.x,
                 best, hit, hit_normal)) {
             distance = hit;
@@ -1671,16 +1742,19 @@ __device__ bool intersect_gallery_opaque(
         return true;
     }
     if (arena == GalleryArena::enclosed_box || arena == GalleryArena::cloth_basin ||
-        arena == GalleryArena::ground_box || arena == GalleryArena::low_ceiling_box) {
+        arena == GalleryArena::ground_box || arena == GalleryArena::low_ceiling_box ||
+        arena == GalleryArena::fishing_tank) {
         // The camera normally lives inside this room. Intersect the first of
         // its six inward-facing planes, then compose the dynamic sphere in
         // front of that wall. The same constants drive collision projection.
         float wall_distance = maximum_distance;
         float3 wall_normal{};
-        const float3 room_center = arena == GalleryArena::low_ceiling_box
-            ? low_gallery_box_center : gallery_box_center;
-        const float3 room_half_extents = arena == GalleryArena::low_ceiling_box
-            ? low_gallery_box_half_extents : gallery_box_half_extents;
+        const float3 room_center = arena == GalleryArena::fishing_tank
+            ? fishing_tank_center : (arena == GalleryArena::low_ceiling_box
+                ? low_gallery_box_center : gallery_box_center);
+        const float3 room_half_extents = arena == GalleryArena::fishing_tank
+            ? fishing_tank_half_extents : (arena == GalleryArena::low_ceiling_box
+                ? low_gallery_box_half_extents : gallery_box_half_extents);
         const float3 minimum = subtract(room_center, room_half_extents);
         const float3 maximum = add(room_center, room_half_extents);
         const auto plane = [&](float coordinate, float direction, float boundary,
@@ -1863,8 +1937,41 @@ __device__ bool intersect_gallery_opaque(
                 wall=true;
             }
         }
+        if (arena == GalleryArena::fishing_tank) {
+            // The finite sphere used by the fluid/contact solver is presented
+            // as a brass-banded treasure chest.
+            float chest_distance = wall ? distance : maximum_distance;
+            float3 chest_normal{};
+            bool chest{};
+            const float radius = collider.half_extents.x;
+            const auto chest_part = [&](float3 offset, float3 half) {
+                float candidate{};
+                float3 candidate_normal{};
+                if (intersect_box(ray, add(collider.center, offset), half,
+                        chest_distance, candidate, candidate_normal)) {
+                    chest = true;
+                    chest_distance = candidate;
+                    chest_normal = candidate_normal;
+                }
+            };
+            chest_part(make_float3(0.0F,-0.12F*radius,0.0F),
+                make_float3(1.30F*radius,0.66F*radius,0.72F*radius));
+            chest_part(make_float3(0.0F,0.48F*radius,0.0F),
+                make_float3(1.30F*radius,0.22F*radius,0.72F*radius));
+            if (chest) {
+                distance = chest_distance;
+                const float band = fabsf(chest_normal.y) < 0.4F ? 0.70F : 0.30F;
+                color = multiply(add(
+                    multiply(make_float3(0.42F,0.16F,0.035F),1.0F-band),
+                    multiply(make_float3(0.95F,0.62F,0.10F),band)),
+                    0.35F+0.65F*fmaxf(0.0F,dot(chest_normal,
+                        normalize(make_float3(-0.48F,0.84F,0.34F)))));
+                wall = true;
+            }
+        }
         float sphere_distance{};
         if (arena != GalleryArena::ground_box && arena != GalleryArena::cloth_basin &&
+            arena != GalleryArena::fishing_tank &&
             intersect_particle_sphere(ray, collider.center, collider.half_extents.x,
                 wall ? distance : maximum_distance, sphere_distance, normal)) {
             distance = sphere_distance;
@@ -1902,10 +2009,32 @@ __device__ bool trace_opaque_scene(const Ray& ray, const OrientedBox& collider,
     float3 opaque_color{};
     const bool box = intersect_gallery_opaque(
         ray, arena, collider, maximum_distance, distance, opaque_color);
-    const SoftBodyHit body = trace_soft_body(ray, soft_body, maximum_distance);
+    SoftBodyHit body = trace_soft_body(ray, soft_body, maximum_distance);
+    if constexpr (arena == GalleryArena::rope_post) {
+        // Historical builds skinned a fake sphere onto cage vertices. Keep the
+        // asset topology for compatibility but never display that deforming
+        // proxy now that the caged object has its own rigid state.
+        body.distance=1.0e30F;
+    }
     const SoftBodyHit member = trace_soft_members(ray, soft_body, maximum_distance);
+    float hook_distance = maximum_distance;
+    float3 hook_normal{};
+    const bool hook = arena == GalleryArena::fishing_tank &&
+        soft_body.member_positions != nullptr &&
+        soft_body.member_voxels_per_instance != 0U &&
+        intersect_particle_sphere(ray,
+            soft_body.member_positions[soft_body.member_voxels_per_instance - 1U],
+            0.075F, maximum_distance, hook_distance, hook_normal);
     const bool wheel_overlay = arena == GalleryArena::water_wheel && box &&
         body.distance < distance + 0.012F;
+    if (hook && hook_distance < body.distance &&
+        hook_distance < member.distance && (!box || hook_distance < distance)) {
+        distance = hook_distance;
+        const float light = 0.30F + 0.70F * fmaxf(0.0F,
+            dot(hook_normal, normalize(make_float3(-0.48F, 0.84F, 0.34F))));
+        color = multiply(make_float3(1.0F, 0.68F, 0.08F), light);
+        return true;
+    }
     if (member.distance < maximum_distance &&
         member.distance < body.distance && (!box || member.distance < distance)) {
         distance = member.distance;
@@ -2795,7 +2924,7 @@ __global__ void update_goal_cloth_paint_kernel(const float3* positions,
     constexpr float half_width = 0.5F*23.0F*0.075F;
     constexpr float bottom = course_floor_y;
     constexpr float top = course_floor_y+23.0F*0.075F;
-    constexpr float plane_z = -2.35F;
+    constexpr float plane_z = cloth_soft_body_goal_z;
     if (fabsf(point.z-plane_z) <= source_radius+0.02F &&
         point.x >= -half_width-source_radius && point.x <= half_width+source_radius &&
         point.y >= bottom-source_radius && point.y <= top+source_radius) {
@@ -2806,8 +2935,24 @@ __global__ void update_goal_cloth_paint_kernel(const float3* positions,
         // mirrored onto the opposite vertical part of the goal sheet.
         const float v = fminf(0.999999F, fmaxf(0.0F,
             (point.y-bottom)/(top-bottom)));
-        goal_pixels[static_cast<std::uint32_t>(v*cloth_paint_height)*cloth_paint_width+
-            static_cast<std::uint32_t>(u*cloth_paint_width)] = 1U;
+        const int center_x=static_cast<int>(u*cloth_paint_width);
+        const int center_y=static_cast<int>(v*cloth_paint_height);
+        // A soft sphere is a finite contact patch, not a point sample. Splat a
+        // conservative footprint so rolling across either face paints the
+        // complete touched area instead of a sparse trail of single texels.
+        const int radius_x=max(1,static_cast<int>(ceilf(
+            (source_radius+0.055F)*cloth_paint_width/(2.0F*half_width))));
+        const int radius_y=max(1,static_cast<int>(ceilf(
+            (source_radius+0.055F)*cloth_paint_height/(top-bottom))));
+        for (int oy=-radius_y;oy<=radius_y;++oy) {
+            const int py=max(0,min(static_cast<int>(cloth_paint_height)-1,center_y+oy));
+            for (int ox=-radius_x;ox<=radius_x;++ox) {
+                if (ox*ox*radius_y*radius_y+oy*oy*radius_x*radius_x>
+                    radius_x*radius_x*radius_y*radius_y) continue;
+                const int px=max(0,min(static_cast<int>(cloth_paint_width)-1,center_x+ox));
+                goal_pixels[py*cloth_paint_width+px]=1U;
+            }
+        }
     }
     constexpr float ground_half = 0.5F*39.0F*0.075F;
     constexpr float ground_center_z = -0.55F;
@@ -2851,15 +2996,17 @@ __global__ void update_rope_bridge_paint_kernel(
     std::uint32_t columns, std::uint32_t rows, std::uint32_t* pixels)
 {
     const std::uint32_t tile=blockIdx.x*blockDim.x+threadIdx.x;
-    if (tile>=columns*rows ||
-        4U*tile+3U>=node_count) return;
+    const std::uint32_t tile_count=columns*rows;
+    const std::uint32_t nodes_per_tile=tile_count==0U ? 0U : node_count/tile_count;
+    if (tile>=tile_count || nodes_per_tile<4U ||
+        nodes_per_tile*tile+nodes_per_tile-1U>=node_count) return;
     float minimum_x=1.0e30F,maximum_x=-1.0e30F;
     float minimum_z=1.0e30F,maximum_z=-1.0e30F,average_y=0.0F;
-    for (std::uint32_t corner=0U;corner<4U;++corner) {
-        const float3 point=nodes[4U*tile+corner];
+    for (std::uint32_t corner=0U;corner<nodes_per_tile;++corner) {
+        const float3 point=nodes[nodes_per_tile*tile+corner];
         minimum_x=fminf(minimum_x,point.x); maximum_x=fmaxf(maximum_x,point.x);
         minimum_z=fminf(minimum_z,point.z); maximum_z=fmaxf(maximum_z,point.z);
-        average_y+=0.25F*point.y;
+        average_y+=point.y/static_cast<float>(nodes_per_tile);
     }
     const float closest_x=fminf(maximum_x,fmaxf(minimum_x,sphere.center.x));
     const float closest_z=fminf(maximum_z,fmaxf(minimum_z,sphere.center.z));
@@ -3016,6 +3163,8 @@ float RayTracer::render_hybrid(
         launch.operator()<false, GalleryArena::rope_post>();
     else if (arena == GalleryArena::rope_bridge)
         launch.operator()<false, GalleryArena::rope_bridge>();
+    else if (arena == GalleryArena::fishing_tank)
+        launch.operator()<false, GalleryArena::fishing_tank>();
     else launch.operator()<false, GalleryArena::none>();
     check(cudaPeekAtLastError(), "hybrid raytrace launch");
     check(cudaEventRecord(render_end_, stream), "record hybrid render end");

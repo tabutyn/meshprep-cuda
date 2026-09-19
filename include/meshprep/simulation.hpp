@@ -92,10 +92,10 @@ struct FixedStepOptions {
 
 // Configuration for the experimental, headless gallery backend. The asset
 // path is read only by initialize(); GallerySimulation owns its own copy after
-// initialization. Context 4 requires the converted cylinder .msb asset; the
+// initialization. Softbody requires the converted cylinder .msb asset; the
 // water wheel, rigid course, and other contexts are generated procedurally.
 struct GallerySimulationOptions {
-    ExampleContext context{ExampleContext::particle_bowl};
+    ExampleContext context{ExampleContext::water};
     FixedStepOptions fixed_step{};
     // Empty overrides select recipe defaults. An explicit particle count also
     // sizes the reserved capacity, up to the 100,000-particle stress ceiling.
@@ -104,12 +104,16 @@ struct GallerySimulationOptions {
     std::optional<std::uint32_t> particle_count_override{};
     std::optional<std::uint32_t> physical_skin_frequency_override{};
     std::optional<std::uint32_t> rope_node_count_override{};
-    // Multiplies each authored cloth interval in contexts 3 and 5 while
+    // Multiplies each authored cloth interval in Cloth while
     // preserving the fixture's physical dimensions. Range: 1..8.
     std::optional<std::uint32_t> cloth_detail_override{};
-    // Context 9 procedural bridge dimensions.  Empty selects 4x10.
+    // Cloth-Rope and Softbody-Rope bridge dimensions. Empty selects 4x10.
     std::optional<std::uint32_t> bridge_columns_override{};
     std::optional<std::uint32_t> bridge_rows_override{};
+    // Softbody cylinder-field dimensions. The same authored volume is
+    // repacked with thinner cylinders as either dimension grows.
+    std::optional<std::uint32_t> cylinder_columns_override{};
+    std::optional<std::uint32_t> cylinder_rows_override{};
     std::string_view soft_body_asset_path{};
 };
 
@@ -137,7 +141,7 @@ struct GallerySimulationStatistics {
 [[nodiscard]] constexpr bool requires_soft_body_asset(
     ExampleContext context) noexcept
 {
-    return context == ExampleContext::soft_body_rigid;
+    return context == ExampleContext::soft_body;
 }
 
 // Owning, synchronous fixed-step simulation without a window or renderer.
@@ -196,6 +200,10 @@ public:
     SimulationBuilder& skin_frequency(std::uint32_t value) noexcept;
     SimulationBuilder& rope_nodes(std::uint32_t value) noexcept;
     SimulationBuilder& cloth_detail(std::uint32_t value) noexcept;
+    SimulationBuilder& bridge_grid(
+        std::uint32_t columns, std::uint32_t rows) noexcept;
+    SimulationBuilder& cylinder_grid(
+        std::uint32_t columns, std::uint32_t rows) noexcept;
     SimulationBuilder& gravity(float3 value) noexcept;
     SimulationBuilder& soft_body_asset(std::string path);
 
@@ -206,6 +214,10 @@ public:
 private:
     SimulationConfig config_{};
     std::optional<float3> gravity_{};
+    std::optional<std::uint32_t> bridge_columns_{};
+    std::optional<std::uint32_t> bridge_rows_{};
+    std::optional<std::uint32_t> cylinder_columns_{};
+    std::optional<std::uint32_t> cylinder_rows_{};
     std::string asset_path_{};
 };
 

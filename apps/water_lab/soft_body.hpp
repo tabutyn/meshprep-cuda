@@ -69,7 +69,7 @@ void save_soft_body_asset(const SoftBodyAsset& asset, const std::string& path);
 void validate_soft_body_asset(const SoftBodyAsset& asset);
 
 struct SoftBodyOptions {
-    static constexpr std::uint32_t maximum_instances{32U};
+    static constexpr std::uint32_t maximum_instances{256U};
 
     std::uint32_t instance_count{8U};
     std::uint32_t solver_substeps{4U};
@@ -123,6 +123,7 @@ struct SoftBodyOptions {
     bool render_internal_members{};
     std::uint32_t rope_bridge_columns{waterlab::rope_bridge_columns};
     std::uint32_t rope_bridge_rows{waterlab::rope_bridge_rows};
+    std::uint32_t rope_bridge_nodes_per_tile{4U};
     std::array<float3, maximum_instances> instance_origins{};
 };
 
@@ -181,6 +182,7 @@ struct SoftBodyRenderView {
     std::uint32_t secondary_surface_triangle_split{};
     std::uint32_t rope_bridge_columns{};
     std::uint32_t rope_bridge_rows{};
+    std::uint32_t rope_bridge_nodes_per_tile{};
 };
 
 // Borrowed CUDA arrays for the complete volume and actual spring graph.
@@ -280,6 +282,11 @@ public:
     [[nodiscard]] SoftBodyTimings step(float3 gravity, cudaStream_t stream = nullptr);
     [[nodiscard]] SoftBodyTimings step_with_rigid_sphere(
         RigidSphereState& sphere, float3 gravity, cudaStream_t stream = nullptr);
+    // Lets an externally loaded rigid object deform a zero-gravity structure
+    // without inventing gravity on the structure itself.
+    [[nodiscard]] SoftBodyTimings step_with_rigid_sphere(
+        RigidSphereState& sphere, float3 body_gravity, float3 sphere_gravity,
+        cudaStream_t stream = nullptr);
     // Bilateral endpoint attachment plus a tension-only maximum-length
     // constraint against the rope's pinned first node. The latter transfers
     // the post reaction to the finite-mass sphere once the chain is taut.
@@ -287,6 +294,12 @@ public:
         RigidSphereState& sphere, std::uint32_t endpoint_node,
         float attachment_distance, float3 gravity,
         cudaStream_t stream = nullptr);
+    // Context 4: one tethered sphere and one independent finite-mass sphere
+    // contained by the D12 rope cage. Both contact the same graph.
+    [[nodiscard]] SoftBodyTimings step_with_tethered_rigid_spheres(
+        RigidSphereState& tethered_sphere, std::uint32_t endpoint_node,
+        float attachment_distance, RigidSphereState& caged_sphere,
+        float3 gravity, cudaStream_t stream = nullptr);
     void reset(cudaStream_t stream = nullptr);
     void set_strength_multiplier(float multiplier);
     void set_solver_substeps(std::uint32_t substeps);
@@ -299,6 +312,10 @@ public:
     void set_uniform_velocity(
         std::uint32_t first_node, std::uint32_t node_count, float3 velocity,
         cudaStream_t stream = nullptr);
+    // Lightweight authored controls for rope-like fixtures. Translation moves
+    // pinned anchors; rest scaling reels every structural segment uniformly.
+    void translate_pinned(float3 delta, cudaStream_t stream = nullptr);
+    void scale_rest_lengths(float factor, cudaStream_t stream = nullptr);
     // Prescribes the water-wheel pose for central axle anchors and outer-rim
     // tip anchors from immutable authored positions; free nodes remain dynamic.
     void set_pinned_rotation_z(

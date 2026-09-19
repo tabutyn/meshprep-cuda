@@ -90,7 +90,16 @@ void check_cuda(cudaError_t status, const char* operation)
              *options.bridge_columns_override <= 16U)) &&
         (!options.bridge_rows_override.has_value() ||
             (*options.bridge_rows_override >= 2U &&
-             *options.bridge_rows_override <= 64U));
+             *options.bridge_rows_override <= 64U)) &&
+        (!options.cylinder_columns_override.has_value() ||
+            (*options.cylinder_columns_override >= 1U &&
+             *options.cylinder_columns_override <= 16U)) &&
+        (!options.cylinder_rows_override.has_value() ||
+            (*options.cylinder_rows_override >= 1U &&
+             *options.cylinder_rows_override <= 16U)) &&
+        options.cylinder_columns_override.value_or(5U)*
+            options.cylinder_rows_override.value_or(4U)<=
+                waterlab::SoftBodyOptions::maximum_instances;
 }
 
 [[nodiscard]] const ExampleContextInfo* context_info(ExampleContext context) noexcept
@@ -159,8 +168,10 @@ struct GallerySimulation::Impl {
             info_->components, Component::fluid_particles) ||
             has_component(info_->components, Component::hand_particles);
         const bool water_skin = has_component(info_->components, Component::water_skin);
-        const bool deformable = has_component(info_->components, Component::cloth) ||
-            has_component(info_->components, Component::soft_body);
+        const bool deformable = (has_component(info_->components, Component::cloth) &&
+                options_.context!=ExampleContext::water_cloth) ||
+            has_component(info_->components, Component::soft_body) ||
+            has_component(info_->components, Component::rope);
         const bool rigid = has_component(info_->components, Component::rigid_bodies);
 
         const waterlab::gallery::ContextPhysicsOverrides overrides{
@@ -177,7 +188,7 @@ struct GallerySimulation::Impl {
 
         if (particles || water_skin) {
             hybrid_ = std::make_unique<waterlab::HybridDroplet>(physics);
-            if (options_.context==ExampleContext::soft_body_fluid &&
+            if (options_.context==ExampleContext::water_soft_body &&
                 physics.particle_count>256U) {
                 staged_particle_target_=physics.particle_count;
                 hybrid_->resize_particles(256U,stream);
@@ -190,7 +201,9 @@ struct GallerySimulation::Impl {
                 options_.bridge_columns_override.value_or(
                     waterlab::rope_bridge_columns),
                 options_.bridge_rows_override.value_or(
-                    waterlab::rope_bridge_rows));
+                    waterlab::rope_bridge_rows),
+                options_.cylinder_columns_override.value_or(5U),
+                options_.cylinder_rows_override.value_or(4U));
             if (!deformable_) {
                 throw std::runtime_error("gallery recipe omitted a declared deformable");
             }
@@ -203,7 +216,11 @@ struct GallerySimulation::Impl {
 
     void initialize_rigid_arena(cudaStream_t stream)
     {
-        if (options_.context == ExampleContext::particle_bowl) {
+        rigid_sphere_view_index_=std::numeric_limits<std::uint32_t>::max();
+        caged_rigid_sphere_view_index_=std::numeric_limits<std::uint32_t>::max();
+        rigid_wheel_first_fin_=std::numeric_limits<std::uint32_t>::max();
+        rigid_wheel_first_rung_=std::numeric_limits<std::uint32_t>::max();
+        if (options_.context == ExampleContext::water) {
             constexpr std::uint32_t segments = 40U;
             constexpr std::uint32_t rings = 16U;
             std::vector<float3> vertices;
@@ -298,8 +315,9 @@ struct GallerySimulation::Impl {
             rigid_count_ = 2U + waterlab::bowl_peg_count;
             return;
         }
-        if (options_.context == ExampleContext::rope_rigid ||
-            options_.context == ExampleContext::rope_bridge) {
+        if (options_.context == ExampleContext::rope ||
+            options_.context == ExampleContext::cloth_rope ||
+            options_.context == ExampleContext::soft_body_rope) {
             constexpr std::array<float3, 8U> cube_vertices{{
                 {-1.0F, -1.0F, -1.0F}, {1.0F, -1.0F, -1.0F},
                 {1.0F, 1.0F, -1.0F}, {-1.0F, 1.0F, -1.0F},
@@ -324,6 +342,8 @@ struct GallerySimulation::Impl {
             rigid_triangles_.upload(triangles.data(), triangles.size(), stream);
             rigid_sphere_ = waterlab::gallery::initial_rigid_sphere(
                 options_.context, rope_node_count());
+            caged_rigid_sphere_ = waterlab::gallery::initial_caged_rigid_sphere(
+                rope_node_count());
             rigid_views_[0] = {{rigid_vertices_.get(), sphere.positions.size(),
                     rigid_triangles_.get(), sphere.triangles.size()},
                 rigid_sphere_.center, {0,0,0,1},
@@ -332,11 +352,17 @@ struct GallerySimulation::Impl {
             const DeviceMeshView cube{rigid_vertices_.get() + cube_vertex_first,
                 cube_vertices.size(), rigid_triangles_.get() + cube_triangle_first,
                 cube_triangles.size()};
-            if (options_.context == ExampleContext::rope_rigid) {
-                rigid_views_[1] = {cube,
+            if (options_.context == ExampleContext::rope) {
+                rigid_views_[1] = {{rigid_vertices_.get(), sphere.positions.size(),
+                        rigid_triangles_.get(), sphere.triangles.size()},
+                    caged_rigid_sphere_.center, {0,0,0,1},
+                    {caged_rigid_sphere_.radius,caged_rigid_sphere_.radius,
+                     caged_rigid_sphere_.radius}};
+                caged_rigid_sphere_view_index_=1U;
+                rigid_views_[2] = {cube,
                     {0.0F, waterlab::course_floor_y - 0.05F, -1.2F}, {0,0,0,1},
                     {3.1F, 0.05F, 2.7F}};
-                rigid_views_[2] = {cube, waterlab::rope_post_center, {0,0,0,1},
+                rigid_views_[3] = {cube, waterlab::rope_post_center, {0,0,0,1},
                     {waterlab::rope_post_radius, 0.5F * waterlab::rope_post_height,
                      waterlab::rope_post_radius}};
             } else {
@@ -351,13 +377,13 @@ struct GallerySimulation::Impl {
                          0.5F*std::fabs(outer-inner)}};
                 }
             }
-            rigid_count_ = 3U;
+            rigid_count_ = options_.context==ExampleContext::rope ? 4U : 3U;
             return;
         }
-        if (options_.context == ExampleContext::cloth_rigid ||
-            options_.context == ExampleContext::soft_body_rigid ||
-            options_.context == ExampleContext::particles_cloth ||
-            options_.context == ExampleContext::soft_body_cloth) {
+        if (options_.context == ExampleContext::cloth ||
+            options_.context == ExampleContext::soft_body ||
+            options_.context == ExampleContext::water_rope ||
+            options_.context == ExampleContext::cloth_soft_body) {
             constexpr std::array<float3, 8U> cube_vertices{{
                 {-1.0F, -1.0F, -1.0F}, {1.0F, -1.0F, -1.0F},
                 {1.0F, 1.0F, -1.0F}, {-1.0F, 1.0F, -1.0F},
@@ -392,10 +418,15 @@ struct GallerySimulation::Impl {
             const DeviceMeshView cube{rigid_vertices_.get() + cube_vertex_first,
                 cube_vertices.size(), rigid_triangles_.get() + cube_triangle_first,
                 cube_triangles.size()};
-            const float3 c = options_.context == ExampleContext::soft_body_rigid
-                ? waterlab::low_gallery_box_center : waterlab::gallery_box_center;
-            const float3 h = options_.context == ExampleContext::soft_body_rigid
-                ? waterlab::low_gallery_box_half_extents : waterlab::gallery_box_half_extents;
+            const float3 c = options_.context==ExampleContext::water_rope
+                ? waterlab::fishing_tank_center
+                : (options_.context == ExampleContext::soft_body
+                    ? waterlab::low_gallery_box_center : waterlab::gallery_box_center);
+            const float3 h = options_.context==ExampleContext::water_rope
+                ? waterlab::fishing_tank_half_extents
+                : (options_.context == ExampleContext::soft_body
+                    ? waterlab::low_gallery_box_half_extents
+                    : waterlab::gallery_box_half_extents);
             constexpr float thickness = 0.045F;
             rigid_views_[1] = {cube, {c.x, c.y - h.y - thickness, c.z}, {0,0,0,1},
                 {h.x, thickness, h.z}};
@@ -410,30 +441,12 @@ struct GallerySimulation::Impl {
             rigid_views_[6] = {cube, {c.x, c.y, c.z + h.z + thickness}, {0,0,0,1},
                 {h.x, h.y, thickness}};
             rigid_count_ = 7U;
-            if (options_.context == ExampleContext::particles_cloth) {
-                constexpr float support_half_width = 0.018F;
-                constexpr float support_half_height = 0.025F;
-                const float support_y = waterlab::cloth_basin_center.y - 0.040F;
-                for (std::uint32_t line = 0U; line < 4U; ++line) {
-                    const float alpha = static_cast<float>(line) / 3.0F;
-                    const float x = waterlab::cloth_basin_center.x +
-                        (2.0F * alpha - 1.0F) *
-                            waterlab::cloth_basin_inner_half_extents.x;
-                    const float z = waterlab::cloth_basin_center.z +
-                        (2.0F * alpha - 1.0F) *
-                            waterlab::cloth_basin_inner_half_extents.y;
-                    rigid_views_[7U + line] = {cube,
-                        {x, support_y, waterlab::cloth_basin_center.z}, {0,0,0,1},
-                        {support_half_width, support_half_height,
-                         waterlab::cloth_basin_inner_half_extents.y + support_half_width}};
-                    rigid_views_[11U + line] = {cube,
-                        {waterlab::cloth_basin_center.x, support_y, z}, {0,0,0,1},
-                        {waterlab::cloth_basin_inner_half_extents.x + support_half_width,
-                         support_half_height, support_half_width}};
-                }
-                rigid_count_ = 15U;
+            if (options_.context == ExampleContext::water_rope) {
+                rigid_views_[0].mesh=cube;
+                rigid_views_[0].scale={1.30F*rigid_sphere_.radius,
+                    0.75F*rigid_sphere_.radius,0.72F*rigid_sphere_.radius};
             }
-            if (options_.context == ExampleContext::soft_body_cloth) {
+            if (options_.context == ExampleContext::cloth_soft_body) {
                 for (std::uint32_t wall = 0U; wall < 6U; ++wall)
                     rigid_views_[wall] = rigid_views_[wall + 1U];
                 rigid_sphere_view_index_ = std::numeric_limits<std::uint32_t>::max();
@@ -441,7 +454,7 @@ struct GallerySimulation::Impl {
             }
             return;
         }
-        if (options_.context == ExampleContext::soft_body_fluid) {
+        if (options_.context == ExampleContext::water_soft_body) {
             constexpr std::uint32_t segments = 64U;
             constexpr float shell_half_thickness = 0.045F;
             const float outer = waterlab::water_wheel_shell_radius + shell_half_thickness;
@@ -650,7 +663,25 @@ struct GallerySimulation::Impl {
                  waterlab::water_wheel_top_bumper_height,
                  waterlab::water_wheel_top_platform_half_depth+
                     2.0F*waterlab::water_wheel_top_bumper_thickness}};
-            rigid_count_ = 12U + waterlab::water_wheel_fin_count;
+            rigid_wheel_first_rung_=first_bumper+3U;
+            for (std::uint32_t rung=0U;
+                 rung<waterlab::water_wheel_outer_rung_count;++rung) {
+                const float angle=6.28318530717958647692F*
+                    static_cast<float>(rung)/
+                    static_cast<float>(waterlab::water_wheel_outer_rung_count);
+                const float radial_center=waterlab::water_wheel_outer_disk_radius+
+                    0.5F*waterlab::water_wheel_outer_rung_radial_half_length;
+                rigid_views_[rigid_wheel_first_rung_+rung]={cube,
+                    {waterlab::water_wheel_center.x+radial_center*std::cos(angle),
+                     waterlab::water_wheel_center.y+radial_center*std::sin(angle),
+                     waterlab::water_wheel_stage_z},
+                    {0,0,std::sin(0.5F*angle),std::cos(0.5F*angle)},
+                    {waterlab::water_wheel_outer_rung_radial_half_length,
+                     waterlab::water_wheel_outer_rung_tangent_half_width,
+                     waterlab::water_wheel_outer_rung_axial_half_depth}};
+            }
+            rigid_count_ = 12U + waterlab::water_wheel_fin_count+
+                waterlab::water_wheel_outer_rung_count;
             return;
         }
         // The course exposes the same board, rails, and capped posts as the
@@ -760,6 +791,11 @@ struct GallerySimulation::Impl {
         if (rigid_sphere_view_index_ != std::numeric_limits<std::uint32_t>::max()) {
             rigid_views_[rigid_sphere_view_index_].translation = rigid_sphere_.center;
         }
+        if (caged_rigid_sphere_view_index_ !=
+            std::numeric_limits<std::uint32_t>::max()) {
+            rigid_views_[caged_rigid_sphere_view_index_].translation =
+                caged_rigid_sphere_.center;
+        }
         if (rigid_wheel_first_fin_ != std::numeric_limits<std::uint32_t>::max()) {
             constexpr float two_pi = 6.28318530717958647692F;
             const float middle = 0.5F * (waterlab::water_wheel_radius +
@@ -779,8 +815,25 @@ struct GallerySimulation::Impl {
                 rigid_wheel_first_fin_ + waterlab::water_wheel_fin_count + 3U;
             for (std::uint32_t side = 0U; side < 2U; ++side) {
                 rigid_views_[first_outer_rim + side].orientation = {0.0F, 0.0F,
-                    std::sin(0.5F * water_wheel_.angle),
-                    std::cos(0.5F * water_wheel_.angle)};
+                    std::sin(0.5F * water_wheel_.rim_angle),
+                    std::cos(0.5F * water_wheel_.rim_angle)};
+            }
+            if (rigid_wheel_first_rung_!=
+                std::numeric_limits<std::uint32_t>::max()) {
+                const float radial_center=waterlab::water_wheel_outer_disk_radius+
+                    0.5F*waterlab::water_wheel_outer_rung_radial_half_length;
+                for (std::uint32_t rung=0U;
+                     rung<waterlab::water_wheel_outer_rung_count;++rung) {
+                    const float angle=water_wheel_.rim_angle+6.28318530717958647692F*
+                        static_cast<float>(rung)/
+                        static_cast<float>(waterlab::water_wheel_outer_rung_count);
+                    auto& view=rigid_views_[rigid_wheel_first_rung_+rung];
+                    view.translation={
+                        waterlab::water_wheel_center.x+radial_center*std::cos(angle),
+                        waterlab::water_wheel_center.y+radial_center*std::sin(angle),
+                        waterlab::water_wheel_stage_z};
+                    view.orientation={0,0,std::sin(0.5F*angle),std::cos(0.5F*angle)};
+                }
             }
         }
         particle_count_ = 0U;
@@ -797,11 +850,19 @@ struct GallerySimulation::Impl {
                 hybrid_->skin_normals().vertex_normals(), nullptr, nullptr};
         }
         if (deformable_ && (has_component(info_->components, Component::cloth) ||
-                               has_component(info_->components, Component::soft_body))) {
+                               has_component(info_->components, Component::soft_body) ||
+                               has_component(info_->components, Component::rope))) {
             const waterlab::SoftBodyRenderView view = deformable_->render_view();
-            surface_views_[surface_count_++] = {
-                {view.positions, view.vertex_count, view.triangles, view.triangle_count},
-                view.vertex_normals, view.texcoords, view.triangle_active};
+            // Rope exposes its physical graph through LatticeRenderView. The
+            // historical cage-bound "glass skin" is deliberately not part of
+            // the public render surface now that the glass object is a rigid
+            // body in rigid_bodies[1].
+            if (options_.context!=ExampleContext::rope) {
+                surface_views_[surface_count_++] = {
+                    {view.positions, view.vertex_count, view.triangles,
+                     view.triangle_count},view.vertex_normals,view.texcoords,
+                    view.triangle_active};
+            }
             const waterlab::SoftBodyLatticeView lattice = deformable_->lattice_view();
             lattice_views_[lattice_count_++] = {lattice.positions, lattice.flags,
                 lattice.edges, lattice.active_edges, lattice.voxel_count,
@@ -846,29 +907,35 @@ struct GallerySimulation::Impl {
                     256U+(range*staged_spawn_frame_+299U)/300U),stream);
             }
             const bool dynamic_sphere =
-                options_.context == ExampleContext::particle_bowl ||
-                options_.context == ExampleContext::particles_cloth ||
-                options_.context == ExampleContext::soft_body_fluid;
+                options_.context == ExampleContext::water ||
+                options_.context == ExampleContext::water_rope ||
+                options_.context == ExampleContext::water_soft_body;
             const auto timing = hybrid_->step(
                 {}, 0.0F, stream, deformable_.get(), false,
                 dynamic_sphere ? &rigid_sphere_ : nullptr,
-                options_.context == ExampleContext::soft_body_fluid
+                options_.context == ExampleContext::water_soft_body
                     ? &water_wheel_ : nullptr,
-                options_.context == ExampleContext::soft_body_fluid
+                options_.context == ExampleContext::water_soft_body
                     ? &resolved_physics_.gravity : nullptr);
             gpu_time = timing.gpu_total_ms();
         } else if (deformable_) {
-            const bool rolling_rigid = options_.context == ExampleContext::cloth_rigid ||
-                options_.context == ExampleContext::soft_body_rigid ||
-                options_.context == ExampleContext::rope_rigid ||
-                options_.context == ExampleContext::rope_bridge;
+            const bool rolling_rigid = options_.context == ExampleContext::cloth ||
+                options_.context == ExampleContext::soft_body ||
+                options_.context == ExampleContext::rope ||
+                options_.context == ExampleContext::cloth_rope ||
+                options_.context == ExampleContext::soft_body_rope;
             waterlab::SoftBodyTimings timing{};
-            if (options_.context == ExampleContext::rope_rigid) {
+            if (options_.context == ExampleContext::rope) {
                 const auto lattice = deformable_->lattice_view();
-                timing = deformable_->step_with_tethered_rigid_sphere(
+                timing = deformable_->step_with_tethered_rigid_spheres(
                     rigid_sphere_, lattice.voxels_per_instance - 1U,
                     rigid_sphere_.radius + lattice.voxel_radius,
+                    caged_rigid_sphere_,
                     resolved_physics_.gravity, stream);
+            } else if (options_.context == ExampleContext::cloth_rope ||
+                       options_.context == ExampleContext::soft_body_rope) {
+                timing = deformable_->step_with_rigid_sphere(rigid_sphere_,
+                    make_float3(0.0F,0.0F,0.0F),resolved_physics_.gravity,stream);
             } else if (rolling_rigid) {
                 timing = deformable_->step_with_rigid_sphere(
                     rigid_sphere_, resolved_physics_.gravity, stream);
@@ -891,7 +958,7 @@ struct GallerySimulation::Impl {
             }
         }
         if (deformable_) {
-            if (options_.context == ExampleContext::soft_body_fluid) {
+            if (options_.context == ExampleContext::water_soft_body) {
                 deformable_->set_pinned_rotation_z(
                     waterlab::water_wheel_center, 0.0F, stream);
             }
@@ -899,16 +966,20 @@ struct GallerySimulation::Impl {
             waterlab::gallery::initialize_context_motion(
                 options_.context, *deformable_);
         }
-        if (options_.context == ExampleContext::cloth_rigid ||
-            options_.context == ExampleContext::soft_body_rigid ||
-            options_.context == ExampleContext::particle_bowl ||
-            options_.context == ExampleContext::particles_cloth ||
-            options_.context == ExampleContext::rope_rigid ||
-            options_.context == ExampleContext::rope_bridge) {
+        if (options_.context == ExampleContext::cloth ||
+            options_.context == ExampleContext::soft_body ||
+            options_.context == ExampleContext::water ||
+            options_.context == ExampleContext::water_rope ||
+            options_.context == ExampleContext::rope ||
+            options_.context == ExampleContext::cloth_rope ||
+            options_.context == ExampleContext::soft_body_rope) {
             rigid_sphere_ = waterlab::gallery::initial_rigid_sphere(
                 options_.context, rope_node_count());
+            if (options_.context==ExampleContext::rope)
+                caged_rigid_sphere_=waterlab::gallery::initial_caged_rigid_sphere(
+                    rope_node_count());
         }
-        if (options_.context == ExampleContext::soft_body_fluid)
+        if (options_.context == ExampleContext::water_soft_body)
             water_wheel_ = {};
         refresh_views();
         refresh_statistics(0.0F);
@@ -921,6 +992,7 @@ struct GallerySimulation::Impl {
     std::unique_ptr<waterlab::HybridDroplet> hybrid_;
     std::unique_ptr<waterlab::SoftBodyCourse> deformable_;
     waterlab::RigidSphereState rigid_sphere_{};
+    waterlab::RigidSphereState caged_rigid_sphere_{};
     waterlab::WaterWheelState water_wheel_{};
     std::uint32_t staged_particle_target_{};
     std::uint32_t staged_spawn_frame_{};
@@ -928,14 +1000,19 @@ struct GallerySimulation::Impl {
     DeviceBuffer<uint3> rigid_triangles_;
     std::array<ParticleRenderView, 1U> particle_views_{};
     std::array<SurfaceRenderView, 2U> surface_views_{};
-    std::array<RigidBodyRenderView, 12U + waterlab::water_wheel_fin_count> rigid_views_{};
+    std::array<RigidBodyRenderView, 12U + waterlab::water_wheel_fin_count +
+        waterlab::water_wheel_outer_rung_count> rigid_views_{};
     std::array<LatticeRenderView, 1U> lattice_views_{};
     std::uint32_t particle_count_{};
     std::uint32_t surface_count_{};
     std::uint32_t rigid_count_{};
     std::uint32_t rigid_sphere_view_index_{
         std::numeric_limits<std::uint32_t>::max()};
+    std::uint32_t caged_rigid_sphere_view_index_{
+        std::numeric_limits<std::uint32_t>::max()};
     std::uint32_t rigid_wheel_first_fin_{
+        std::numeric_limits<std::uint32_t>::max()};
+    std::uint32_t rigid_wheel_first_rung_{
         std::numeric_limits<std::uint32_t>::max()};
     std::uint32_t lattice_count_{};
     GallerySimulationStatistics statistics_{};
@@ -1043,7 +1120,7 @@ bool GallerySimulation::initialized() const noexcept
 
 ExampleContext GallerySimulation::context() const noexcept
 {
-    return impl_ ? impl_->options_.context : ExampleContext::particle_bowl;
+    return impl_ ? impl_->options_.context : ExampleContext::water;
 }
 
 GallerySimulationOptions GallerySimulation::options() const noexcept
@@ -1111,6 +1188,22 @@ SimulationBuilder& SimulationBuilder::cloth_detail(std::uint32_t value) noexcept
     return *this;
 }
 
+SimulationBuilder& SimulationBuilder::bridge_grid(
+    std::uint32_t columns,std::uint32_t rows) noexcept
+{
+    bridge_columns_=columns;
+    bridge_rows_=rows;
+    return *this;
+}
+
+SimulationBuilder& SimulationBuilder::cylinder_grid(
+    std::uint32_t columns,std::uint32_t rows) noexcept
+{
+    cylinder_columns_=columns;
+    cylinder_rows_=rows;
+    return *this;
+}
+
 SimulationBuilder& SimulationBuilder::gravity(float3 value) noexcept
 {
     gravity_ = value;
@@ -1137,6 +1230,10 @@ Status SimulationBuilder::build(
     options.physical_skin_frequency_override = config_.physical_skin_frequency;
     options.rope_node_count_override = config_.rope_node_count;
     options.cloth_detail_override = config_.cloth_detail;
+    options.bridge_columns_override=bridge_columns_;
+    options.bridge_rows_override=bridge_rows_;
+    options.cylinder_columns_override=cylinder_columns_;
+    options.cylinder_rows_override=cylinder_rows_;
     options.soft_body_asset_path = asset_path_;
     return output.initialize(options, stream);
 }

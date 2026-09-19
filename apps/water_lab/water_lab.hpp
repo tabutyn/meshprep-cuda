@@ -39,6 +39,10 @@ struct OrientedBox {
     float3 half_extents{0.30F, 0.65F, 0.42F};
     float yaw{};
     float4 sphere_orientation{0.0F, 0.0F, 0.0F, 1.0F};
+    // Optional second analytic sphere used by the rope-cage scene. A zero
+    // radius disables it for every other scene.
+    float3 secondary_sphere_center{};
+    float secondary_sphere_radius{};
 };
 
 struct Camera {

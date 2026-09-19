@@ -20,6 +20,7 @@ enum class GalleryArena : unsigned {
     low_ceiling_box,
     rope_post,
     rope_bridge,
+    fishing_tank,
 };
 
 struct CourseContact {
@@ -33,6 +34,12 @@ inline constexpr float bowl_wall_thickness = 0.08F;
 inline constexpr std::uint32_t bowl_peg_count = 4U;
 inline constexpr float bowl_peg_radius = 0.12F;
 inline constexpr float bowl_peg_height = 0.55F;
+// Water-Rope: a thin, tall aquarium viewed through its near wall.
+inline constexpr float3 fishing_tank_center{0.0F, -0.25F, -1.15F};
+inline constexpr float3 fishing_tank_half_extents{2.45F, 1.85F, 0.62F};
+inline constexpr float3 fishing_rope_anchor{0.0F, 1.48F, -1.15F};
+inline constexpr float3 fishing_chest_start{1.15F, -1.72F, -1.15F};
+inline constexpr float fishing_chest_radius = 0.30F;
 __host__ __device__ inline float3 bowl_peg(std::uint32_t index)
 {
     // Four vertical capped cylinders are seated on the inner hemisphere and
@@ -163,6 +170,7 @@ inline constexpr float cloth_snake_collision_top = 2.20F;
 inline constexpr float3 cloth_goal_center{
     cloth_basin_center.x + 1.38F, 0.55F, cloth_basin_center.z - 1.00F};
 inline constexpr float3 cloth_goal_half_extents{0.32F, 0.48F, 0.32F};
+inline constexpr float cloth_soft_body_goal_z = -2.75F;
 __host__ __device__ inline float cloth_snake_wall_z(std::uint32_t wall)
 {
     const float panel_depth = 2.0F * cloth_basin_inner_half_extents.y / 3.0F;
@@ -197,6 +205,11 @@ inline constexpr float water_wheel_top_platform_half_depth = 0.30F;
 inline constexpr float water_wheel_top_bumper_thickness = 0.055F;
 inline constexpr float water_wheel_top_bumper_height = 0.16F;
 inline constexpr std::uint32_t water_wheel_fin_count = 8U;
+inline constexpr std::uint32_t water_wheel_outer_rung_count = 32U;
+inline constexpr float water_wheel_outer_rung_radial_half_length = 0.11F;
+inline constexpr float water_wheel_outer_rung_tangent_half_width = 0.035F;
+inline constexpr float water_wheel_outer_rung_axial_half_depth =
+    water_wheel_outer_disk_half_thickness + 0.045F;
 inline constexpr float water_wheel_inlet_start_x = -5.20F;
 inline constexpr float water_wheel_entry_x =
     water_wheel_center.x - water_wheel_shell_radius;
@@ -455,7 +468,8 @@ __host__ __device__ inline void project_course_contact(
 }
 
 __host__ __device__ inline void project_gallery_contact(
-    float3& p, float3& v, float radius, GalleryArena arena)
+    float3& p, float3& v, float radius, GalleryArena arena,
+    float wheel_rim_angle = 0.0F)
 {
     if (arena == GalleryArena::course) {
         project_course_contact(p, v, radius);
@@ -493,6 +507,50 @@ __host__ __device__ inline void project_gallery_contact(
         const float radial = sqrtf(dx * dx + dy * dy);
         const float radial_offset = radial-water_wheel_outer_disk_radius;
         const float axial_offset = p.z-water_wheel_stage_z;
+        // Thirty-two short radial bars are attached to the outer rim. Resolve
+        // the closest point of each oriented box so the bars can catch and
+        // drive the player sphere instead of behaving like a smooth torus.
+        constexpr float two_pi=6.28318530717958647692F;
+        for (std::uint32_t rung=0U;rung<water_wheel_outer_rung_count;++rung) {
+            const float angle=wheel_rim_angle+two_pi*static_cast<float>(rung)/
+                static_cast<float>(water_wheel_outer_rung_count);
+            const float cosine=cosf(angle),sine=sinf(angle);
+            const float radial_center=water_wheel_outer_disk_radius+
+                0.5F*water_wheel_outer_rung_radial_half_length;
+            const float center_x=water_wheel_center.x+radial_center*cosine;
+            const float center_y=water_wheel_center.y+radial_center*sine;
+            const float dxr=p.x-center_x, dyr=p.y-center_y;
+            const float local_x=dxr*cosine+dyr*sine;
+            const float local_y=-dxr*sine+dyr*cosine;
+            const float local_z=p.z-water_wheel_stage_z;
+            const float closest_x=fminf(water_wheel_outer_rung_radial_half_length,
+                fmaxf(-water_wheel_outer_rung_radial_half_length,local_x));
+            const float closest_y=fminf(water_wheel_outer_rung_tangent_half_width,
+                fmaxf(-water_wheel_outer_rung_tangent_half_width,local_y));
+            const float closest_z=fminf(water_wheel_outer_rung_axial_half_depth,
+                fmaxf(-water_wheel_outer_rung_axial_half_depth,local_z));
+            float nx=local_x-closest_x,ny=local_y-closest_y,nz=local_z-closest_z;
+            float distance=sqrtf(nx*nx+ny*ny+nz*nz);
+            if (distance>=radius) continue;
+            float inverse=1.0F;
+            if (distance<=1.0e-7F) {
+                nx=0.0F; ny=local_y>=0.0F ? 1.0F : -1.0F; nz=0.0F;
+                distance=0.0F;
+            } else {
+                inverse=1.0F/distance;
+            }
+            const float3 rung_normal=make_float3(
+                (nx*cosine-ny*sine)*inverse,
+                (nx*sine+ny*cosine)*inverse,nz*inverse);
+            const float correction=radius-distance;
+            p.x+=correction*rung_normal.x;
+            p.y+=correction*rung_normal.y;
+            p.z+=correction*rung_normal.z;
+            const float vn=v.x*rung_normal.x+v.y*rung_normal.y+v.z*rung_normal.z;
+            if (vn<0.0F) {
+                v.x-=vn*rung_normal.x; v.y-=vn*rung_normal.y; v.z-=vn*rung_normal.z;
+            }
+        }
         constexpr float rim_half_width=0.065F;
         const float radial_excess=fabsf(radial_offset)-rim_half_width;
         const float axial_excess=fabsf(axial_offset)-
@@ -587,11 +645,14 @@ __host__ __device__ inline void project_gallery_contact(
     } else if (arena == GalleryArena::enclosed_box ||
                arena == GalleryArena::ground_box ||
                arena == GalleryArena::cloth_basin ||
-               arena == GalleryArena::low_ceiling_box) {
-        const float3 box_center = arena == GalleryArena::low_ceiling_box
-            ? low_gallery_box_center : gallery_box_center;
-        const float3 box_half_extents = arena == GalleryArena::low_ceiling_box
-            ? low_gallery_box_half_extents : gallery_box_half_extents;
+               arena == GalleryArena::low_ceiling_box ||
+               arena == GalleryArena::fishing_tank) {
+        const float3 box_center = arena == GalleryArena::fishing_tank
+            ? fishing_tank_center : (arena == GalleryArena::low_ceiling_box
+                ? low_gallery_box_center : gallery_box_center);
+        const float3 box_half_extents = arena == GalleryArena::fishing_tank
+            ? fishing_tank_half_extents : (arena == GalleryArena::low_ceiling_box
+                ? low_gallery_box_half_extents : gallery_box_half_extents);
         const float lower_y = arena == GalleryArena::ground_box &&
                 inside_ground_pit(p, radius)
             ? ground_pit_bottom_y + radius

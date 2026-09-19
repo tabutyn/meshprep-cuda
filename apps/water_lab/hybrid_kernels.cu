@@ -1758,7 +1758,8 @@ HybridTimings HybridDroplet::step(
             rigid_sphere->center = add(rigid_sphere->center,
                 multiply(rigid_sphere->velocity, substep_options.fixed_dt));
             project_gallery_contact(rigid_sphere->center, rigid_sphere->velocity,
-                rigid_sphere->radius, arena);
+                rigid_sphere->radius, arena,
+                water_wheel != nullptr ? water_wheel->rim_angle : 0.0F);
         }
         if (water_wheel != nullptr) {
             const float cross_torque = water_wheel->cross_reaction_torque;
@@ -1842,7 +1843,8 @@ HybridTimings HybridDroplet::step(
             rigid_sphere->velocity = clamp_length(
                 rigid_sphere->velocity, options_.maximum_particle_speed);
             project_gallery_contact(rigid_sphere->center, rigid_sphere->velocity,
-                rigid_sphere->radius, arena);
+                rigid_sphere->radius, arena,
+                water_wheel != nullptr ? water_wheel->rim_angle : 0.0F);
         }
         check(cudaEventRecord(stage_end_[fluid_physics_event], stream),
             "record fluid physics end");
@@ -1961,7 +1963,8 @@ HybridTimings HybridDroplet::step(
                 soft_bodies->contact_rigid_sphere_substep(
                     *rigid_sphere, substep_options.fixed_dt, stream);
                 project_gallery_contact(rigid_sphere->center, rigid_sphere->velocity,
-                    rigid_sphere->radius, arena);
+                    rigid_sphere->radius, arena,
+                    water_wheel != nullptr ? water_wheel->rim_angle : 0.0F);
                 advance_rigid_sphere_rotation(*rigid_sphere, arena,
                     soft_bodies->material().ground_friction,
                     substep_options.fixed_dt);
