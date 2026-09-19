@@ -326,15 +326,21 @@ void test_particle_surface()
     require(surface.update(device_positions.get(),2U,hierarchy,support)>=0,"invalid surface timing");
     waterlab::FluidSurfaceGrid grid{};
     check(cudaMemcpy(&grid,surface.view().grid,sizeof(grid),cudaMemcpyDeviceToHost),"download surface grid");
+    require(grid.dimensions.x > grid.dimensions.y &&
+            grid.dimensions.x > grid.dimensions.z,
+        "elongated fluid bounds did not receive an aspect-aware surface grid");
     std::vector<float> values(grid.dimensions.x*grid.dimensions.y*grid.dimensions.z);
     check(cudaMemcpy(values.data(),surface.view().values,values.size()*sizeof(float),
         cudaMemcpyDeviceToHost),"download surface field");
     for (std::size_t i=0; i<values.size(); ++i) {
         require(std::isfinite(values[i]),"non-finite scalar surface field");
         if (i%41U!=0U) continue;
-        const float3 p=make_float3(grid.minimum.x+(i%32U)*grid.cell_size.x,
-            grid.minimum.y+((i/32U)%32U)*grid.cell_size.y,
-            grid.minimum.z+(i/1024U)*grid.cell_size.z);
+        const std::size_t x=i%grid.dimensions.x;
+        const std::size_t y=(i/grid.dimensions.x)%grid.dimensions.y;
+        const std::size_t z=i/(grid.dimensions.x*grid.dimensions.y);
+        const float3 p=make_float3(grid.minimum.x+x*grid.cell_size.x,
+            grid.minimum.y+y*grid.cell_size.y,
+            grid.minimum.z+z*grid.cell_size.z);
         double sum=0, dx=0, dy=0, dz=0;
         for (const auto q : positions) {
             const double x=static_cast<double>(p.x)-q.x, y=static_cast<double>(p.y)-q.y;

@@ -248,7 +248,8 @@ public:
         SoftBodyCourse* soft_bodies = nullptr,
         bool enable_rectangle_collider = true,
         RigidSphereState* rigid_sphere = nullptr,
-        WaterWheelState* water_wheel = nullptr);
+        WaterWheelState* water_wheel = nullptr,
+        const float3* rigid_sphere_gravity_override = nullptr);
     // Updates coefficients used by subsequent ticks. Allocation- and topology-
     // defining fields must remain unchanged.
     void set_runtime_options(const HybridOptions& options);

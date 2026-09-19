@@ -69,7 +69,7 @@ void save_soft_body_asset(const SoftBodyAsset& asset, const std::string& path);
 void validate_soft_body_asset(const SoftBodyAsset& asset);
 
 struct SoftBodyOptions {
-    static constexpr std::uint32_t maximum_instances{8U};
+    static constexpr std::uint32_t maximum_instances{32U};
 
     std::uint32_t instance_count{8U};
     std::uint32_t solver_substeps{4U};
@@ -102,6 +102,11 @@ struct SoftBodyOptions {
     // cross_target_triangle_first. Target triangle bindings name physical nodes.
     std::uint32_t cross_source_nodes{};
     std::uint32_t cross_target_triangle_first{};
+    // Optional presentation boundaries for merged procedural assets. They do
+    // not affect physics; the renderer uses them to distinguish a source body,
+    // a goal cloth, and any remaining support cloth.
+    std::uint32_t surface_triangle_split{};
+    std::uint32_t secondary_surface_triangle_split{};
     // Spatial-cell barrier between non-bonded voxels, including detached
     // fragments and separate post instances. Kept optional for cloth recipes.
     bool unbonded_voxel_collisions{};
@@ -170,6 +175,8 @@ struct SoftBodyRenderView {
     std::uint32_t member_node_count{};
     std::uint32_t member_max_depth{};
     float member_half_width{};
+    std::uint32_t surface_triangle_split{};
+    std::uint32_t secondary_surface_triangle_split{};
 };
 
 // Borrowed CUDA arrays for the complete volume and actual spring graph.
@@ -203,6 +210,10 @@ struct SoftBodyTimings {
 struct RigidSphereState {
     float3 center{};
     float3 velocity{};
+    float3 angular_velocity{};
+    // Unit quaternion (x,y,z,w). Rendering and persistent paint use this same
+    // material frame so ground friction produces visible rolling.
+    float4 orientation{0.0F, 0.0F, 0.0F, 1.0F};
     float radius{0.40F};
     float mass{4.0F};
 };
@@ -228,6 +239,11 @@ struct SoftBodyState {
     std::vector<std::uint8_t> edge_damage;
     std::vector<std::uint8_t> active_render_triangles;
 };
+
+// Applies finite ground friction and advances the sphere's material frame.
+// Kept shared so stand-alone and fluid-coupled gallery scenes roll identically.
+void advance_rigid_sphere_rotation(
+    RigidSphereState& sphere, GalleryArena arena, float friction, float dt);
 
 // A deterministic, fixed-topology spring lattice. Each voxel gathers its own
 // sorted CSR neighbors; simulation forces never use floating-point atomics.
@@ -260,8 +276,9 @@ public:
     [[nodiscard]] SoftBodyTimings step(float3 gravity, cudaStream_t stream = nullptr);
     [[nodiscard]] SoftBodyTimings step_with_rigid_sphere(
         RigidSphereState& sphere, float3 gravity, cudaStream_t stream = nullptr);
-    // Bilateral endpoint attachment used by the rope example. The endpoint and
-    // finite-mass sphere receive opposite mass-weighted corrections.
+    // Bilateral endpoint attachment plus a tension-only maximum-length
+    // constraint against the rope's pinned first node. The latter transfers
+    // the post reaction to the finite-mass sphere once the chain is taut.
     [[nodiscard]] SoftBodyTimings step_with_tethered_rigid_sphere(
         RigidSphereState& sphere, std::uint32_t endpoint_node,
         float attachment_distance, float3 gravity,

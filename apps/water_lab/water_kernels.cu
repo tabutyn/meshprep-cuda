@@ -13,6 +13,30 @@
 #include <string>
 
 namespace waterlab {
+
+namespace {
+constexpr std::uint32_t bowl_paint_width = 256U;
+constexpr std::uint32_t bowl_paint_height = 128U;
+constexpr std::uint32_t bowl_paint_pixel_count =
+    bowl_paint_width * bowl_paint_height;
+__device__ std::uint32_t* device_bowl_paint_pixels;
+// Intentionally coarse: contact paint is a graphic gameplay mask rather than
+// a per-pixel simulation. Cubic reconstruction below removes block edges.
+constexpr std::uint32_t sphere_paint_width = 64U;
+constexpr std::uint32_t sphere_paint_height = 32U;
+constexpr std::uint32_t sphere_paint_pixel_count =
+    sphere_paint_width * sphere_paint_height;
+// Paint is deliberately coarser than the physical sheets. Bicubic sampling
+// turns sparse contacts into a readable, stable painted patch instead of a
+// high-resolution constellation of individual contact texels.
+constexpr std::uint32_t cloth_paint_width = 64U;
+constexpr std::uint32_t cloth_paint_height = 64U;
+constexpr std::uint32_t cloth_paint_pixel_count =
+    cloth_paint_width * cloth_paint_height;
+__device__ std::uint32_t* device_sphere_paint_pixels;
+__device__ std::uint32_t* device_cloth_paint_pixels;
+__device__ std::uint32_t* device_ground_cloth_paint_pixels;
+}
 namespace {
 
 constexpr float pi = 3.14159265358979323846F;
@@ -656,13 +680,13 @@ struct SoftBodyHit {
     float distance{1.0e30F};
     float3 normal{};
     float2 uv{};
-
+    std::uint32_t triangle{UINT32_MAX};
 };
 
 __device__ SoftBodyHit trace_soft_body(
     const Ray& ray, SoftBodyRenderView soft_body, float maximum_distance = 1.0e30F)
 {
-    SoftBodyHit hit{maximum_distance, {}, {}};
+    SoftBodyHit hit{maximum_distance, {}, {}, UINT32_MAX};
     if (soft_body.positions == nullptr || soft_body.texcoords == nullptr ||
         soft_body.triangles == nullptr || soft_body.nodes == nullptr ||
         soft_body.primitive_indices == nullptr || soft_body.node_count == 0U) return hit;
@@ -713,7 +737,7 @@ __device__ SoftBodyHit trace_soft_body(
                 const float2 tc = soft_body.texcoords[triangle.z];
                 hit = {distance, normal,
                     make_float2(w * ta.x + u * tb.x + v * tc.x,
-                        w * ta.y + u * tb.y + v * tc.y)};
+                        w * ta.y + u * tb.y + v * tc.y), triangle_id};
             }
             continue;
         }
@@ -840,14 +864,127 @@ __device__ SoftBodyHit trace_soft_members(
     return hit;
 }
 
+__device__ bool goal_texel(float2 uv)
+{
+    // Four 5x7 bitmap glyphs embedded in the cloth UVs. This remains attached
+    // to the deforming triangles and therefore tears with the target.
+    const float u = (uv.x - 0.10F) / 0.80F;
+    const float v = (uv.y - 0.34F) / 0.32F;
+    if (u < 0.0F || u >= 1.0F || v < 0.0F || v >= 1.0F) return false;
+    const int glyph = min(3, static_cast<int>(u * 4.0F));
+    const float local_u = u * 4.0F - static_cast<float>(glyph);
+    const int x = min(4, static_cast<int>(local_u * 5.0F));
+    const int y = min(6, static_cast<int>((1.0F - v) * 7.0F));
+    // Rows are encoded most-significant pixel first: G, O, A, L.
+    const unsigned g[7]{14U,17U,16U,23U,17U,17U,14U};
+    const unsigned o[7]{14U,17U,17U,17U,17U,17U,14U};
+    const unsigned a[7]{14U,17U,17U,31U,17U,17U,17U};
+    const unsigned l[7]{16U,16U,16U,16U,16U,16U,31U};
+    const unsigned row = glyph == 0 ? g[y] : glyph == 1 ? o[y] :
+        glyph == 2 ? a[y] : l[y];
+    return (row & (1U << (4 - x))) != 0U;
+}
+
+__host__ __device__ float3 inverse_rotate_quaternion(float4 q, float3 value)
+{
+    const float3 inverse_axis = make_float3(-q.x,-q.y,-q.z);
+    const float3 first = multiply(cross(inverse_axis,value),2.0F);
+    return add(value,add(multiply(first,q.w),cross(inverse_axis,first)));
+}
+
+__device__ float cubic_weight(float value)
+{
+    value = fabsf(value);
+    if (value <= 1.0F)
+        return (1.5F*value-2.5F)*value*value+1.0F;
+    if (value < 2.0F)
+        return ((-0.5F*value+2.5F)*value-4.0F)*value+2.0F;
+    return 0.0F;
+}
+
+__device__ bool painted_sphere_texel(float3 world_normal, float4 orientation)
+{
+    if (device_sphere_paint_pixels == nullptr) return false;
+    const float3 normal = inverse_rotate_quaternion(orientation,world_normal);
+    const float longitude = (atan2f(normal.z, normal.x) + pi) / (2.0F*pi);
+    const float latitude = acosf(fminf(1.0F, fmaxf(-1.0F, normal.y))) / pi;
+    const float sample_x = longitude*static_cast<float>(sphere_paint_width)-0.5F;
+    const float sample_y = latitude*static_cast<float>(sphere_paint_height)-0.5F;
+    const int base_x = static_cast<int>(floorf(sample_x));
+    const int base_y = static_cast<int>(floorf(sample_y));
+    float filtered = 0.0F;
+    float total_weight = 0.0F;
+    for (int oy=-1; oy<=2; ++oy) {
+        const int y = max(0,min(static_cast<int>(sphere_paint_height)-1,base_y+oy));
+        const float wy = cubic_weight(sample_y-static_cast<float>(base_y+oy));
+        for (int ox=-1; ox<=2; ++ox) {
+            int x = (base_x+ox)%static_cast<int>(sphere_paint_width);
+            if (x < 0) x += static_cast<int>(sphere_paint_width);
+            const float weight = wy*cubic_weight(
+                sample_x-static_cast<float>(base_x+ox));
+            filtered += weight*(device_sphere_paint_pixels[
+                y*sphere_paint_width+x] != 0U ? 1.0F : 0.0F);
+            total_weight += weight;
+        }
+    }
+    return total_weight > 0.0F && filtered/total_weight >= 0.38F;
+}
+
+__device__ bool painted_cloth_texel(float2 uv, bool ground)
+{
+    const std::uint32_t* pixels = ground
+        ? device_ground_cloth_paint_pixels : device_cloth_paint_pixels;
+    if (pixels == nullptr) return false;
+    const float u = fminf(1.0F, fmaxf(0.0F, uv.x));
+    const float v = fminf(1.0F, fmaxf(0.0F, uv.y));
+    const float sample_x = u*static_cast<float>(cloth_paint_width)-0.5F;
+    const float sample_y = v*static_cast<float>(cloth_paint_height)-0.5F;
+    const int base_x = static_cast<int>(floorf(sample_x));
+    const int base_y = static_cast<int>(floorf(sample_y));
+    float filtered = 0.0F;
+    float total_weight = 0.0F;
+    for (int oy=-1; oy<=2; ++oy) {
+        const int y = max(0,min(static_cast<int>(cloth_paint_height)-1,base_y+oy));
+        const float wy = cubic_weight(sample_y-static_cast<float>(base_y+oy));
+        for (int ox=-1; ox<=2; ++ox) {
+            const int x = max(0,min(static_cast<int>(cloth_paint_width)-1,base_x+ox));
+            const float weight = wy*cubic_weight(
+                sample_x-static_cast<float>(base_x+ox));
+            filtered += weight*(pixels[y*cloth_paint_width+x] != 0U ? 1.0F : 0.0F);
+            total_weight += weight;
+        }
+    }
+    return total_weight > 0.0F && filtered/total_weight >= 0.38F;
+}
+
+__device__ float3 shade_colored_surface(
+    const Ray& ray, SoftBodyHit hit, float3 base, bool goal, int paint_layer)
+{
+    if (dot(hit.normal, ray.direction) > 0.0F)
+        hit.normal = multiply(hit.normal, -1.0F);
+    if (goal && goal_texel(hit.uv)) base = make_float3(1.0F,0.82F,0.08F);
+    if (paint_layer != 0 && painted_cloth_texel(hit.uv,paint_layer == 2))
+        base = make_float3(0.04F,0.34F,1.0F);
+    const float3 light = normalize(make_float3(-0.48F,0.84F,0.34F));
+    const float diffuse = 0.24F+0.76F*fmaxf(0.0F,dot(hit.normal,light));
+    const float3 reflected = subtract(multiply(hit.normal,
+        2.0F*dot(hit.normal,light)),light);
+    const float specular = 0.24F*powf(fmaxf(0.0F,
+        dot(normalize(multiply(ray.direction,-1.0F)),reflected)),28.0F);
+    return add(multiply(base,diffuse),multiply(make_float3(1,1,1),specular));
+}
+
 __device__ float3 shade_soft_body(const Ray& ray, SoftBodyHit hit,
-    bool cloth_palette = false, bool crust_palette = false)
+    bool cloth_palette = false, bool crust_palette = false,
+    bool goal_palette = false)
 {
     if (dot(hit.normal, ray.direction) > 0.0F) hit.normal = multiply(hit.normal, -1.0F);
     const int checker_u = static_cast<int>(floorf(hit.uv.x));
     const int checker_v = static_cast<int>(floorf(hit.uv.y));
     const bool light_square = ((checker_u + checker_v) & 1) == 0;
-    const float3 base = crust_palette
+    const float3 base = goal_palette && goal_texel(hit.uv)
+        ? make_float3(1.0F, 0.78F, 0.08F)
+        : crust_palette
         ? (light_square ? make_float3(0.93F, 0.47F, 0.13F)
                         : make_float3(0.46F, 0.16F, 0.035F))
         : cloth_palette
@@ -1079,9 +1216,25 @@ __device__ bool intersect_gallery_opaque(
                 const int tiles = static_cast<int>(floorf(point.x * 6.0F)) +
                     static_cast<int>(floorf(point.y * 6.0F)) +
                     static_cast<int>(floorf(point.z * 6.0F));
-                color = multiply((tiles & 1) == 0
-                    ? make_float3(0.54F, 0.67F, 0.78F)
-                    : make_float3(0.08F, 0.15F, 0.22F),
+                constexpr float pi = 3.14159265358979323846F;
+                const float3 direction = normalize(subtract(point, bowl_center));
+                const float longitude = (atan2f(direction.z, direction.x) + pi) /
+                    (2.0F * pi);
+                const float latitude = acosf(fminf(1.0F,
+                    fmaxf(0.0F, -direction.y))) / (0.5F * pi);
+                const std::uint32_t paint_x = min(bowl_paint_width - 1U,
+                    static_cast<std::uint32_t>(longitude * bowl_paint_width));
+                const std::uint32_t paint_y = min(bowl_paint_height - 1U,
+                    static_cast<std::uint32_t>(latitude * bowl_paint_height));
+                const bool painted = device_bowl_paint_pixels != nullptr &&
+                    device_bowl_paint_pixels[paint_y * bowl_paint_width + paint_x] != 0U;
+                const float3 ceramic = (tiles & 1) == 0
+                    ? make_float3(0.78F, 0.10F, 0.08F)
+                    : make_float3(0.36F, 0.025F, 0.02F);
+                const float3 wet_blue = (tiles & 1) == 0
+                    ? make_float3(0.08F, 0.45F, 1.0F)
+                    : make_float3(0.01F, 0.15F, 0.52F);
+                color = multiply(painted ? wet_blue : ceramic,
                     0.35F + 0.65F * fabsf(normal.y));
                 bowl = true;
                 break;
@@ -1324,6 +1477,86 @@ __device__ bool intersect_gallery_opaque(
                     normalize(make_float3(-0.48F, 0.84F, 0.34F)))));
             hit_any = true;
         }
+        // The abandoned ladder/tow overlay is replaced by two simple exit
+        // platforms just below the wheel crown. Their gap exposes only the
+        // top of the wheel; the soft crosses and outer rims sit farther along
+        // the axle, clear of the central fins and level geometry.
+        for (int side = -1; side <= 1; side += 2) {
+            const float inner = water_wheel_center.x +
+                static_cast<float>(side) * water_wheel_top_platform_gap_half_width;
+            const float outer = water_wheel_center.x +
+                static_cast<float>(side) * water_wheel_top_platform_outer_x;
+            float platform_distance{};
+            float3 platform_normal{};
+            if (!intersect_box(ray,
+                    make_float3(0.5F * (inner + outer),
+                        water_wheel_top_platform_y - 0.035F,
+                        water_wheel_stage_z),
+                    make_float3(0.5F * fabsf(outer - inner), 0.035F,
+                        water_wheel_top_platform_half_depth),
+                    best, platform_distance, platform_normal)) continue;
+            best = platform_distance;
+            distance = platform_distance;
+            color = multiply(make_float3(0.34F, 0.39F, 0.46F),
+                0.32F + 0.68F * fabsf(platform_normal.y));
+            hit_any = true;
+        }
+        // Low bumper rails keep the player sphere on the front stage while
+        // preserving a clear view of the wheel and soft crosses.
+        for (int side = -1; side <= 1; side += 2) {
+            float bumper_distance{};
+            float3 bumper_normal{};
+            if (!intersect_box(ray,
+                    make_float3(water_wheel_center.x,
+                        water_wheel_top_platform_y+water_wheel_top_bumper_height,
+                        water_wheel_stage_z+static_cast<float>(side)*
+                            (water_wheel_top_platform_half_depth+
+                                water_wheel_top_bumper_thickness)),
+                    make_float3(water_wheel_top_platform_outer_x,
+                        water_wheel_top_bumper_height,
+                        water_wheel_top_bumper_thickness),
+                    best,bumper_distance,bumper_normal)) continue;
+            best=bumper_distance;
+            distance=bumper_distance;
+            color=multiply(make_float3(0.92F,0.66F,0.10F),
+                0.34F+0.66F*fabsf(bumper_normal.y));
+            hit_any=true;
+        }
+        // Close the starting end; the opposite (left) end remains open and
+        // is the authored win direction.
+        {
+            float bumper_distance{};
+            float3 bumper_normal{};
+            if (intersect_box(ray,
+                    make_float3(water_wheel_center.x+
+                            water_wheel_top_platform_outer_x+
+                            water_wheel_top_bumper_thickness,
+                        water_wheel_top_platform_y+water_wheel_top_bumper_height,
+                        water_wheel_stage_z),
+                    make_float3(water_wheel_top_bumper_thickness,
+                        water_wheel_top_bumper_height,
+                        water_wheel_top_platform_half_depth+
+                            2.0F*water_wheel_top_bumper_thickness),
+                    best,bumper_distance,bumper_normal)) {
+                best=bumper_distance;
+                distance=bumper_distance;
+                color=multiply(make_float3(0.92F,0.66F,0.10F),
+                    0.34F+0.66F*fabsf(bumper_normal.y));
+                hit_any=true;
+            }
+        }
+        float sphere_distance{};
+        float3 sphere_normal{};
+        if (intersect_particle_sphere(ray, collider.center,
+                collider.half_extents.x, hit_any ? distance : maximum_distance,
+                sphere_distance, sphere_normal)) {
+            distance = sphere_distance;
+            color = multiply(make_float3(0.94F, 0.47F, 0.12F),
+                0.24F + 0.76F * fmaxf(0.0F,
+                    dot(sphere_normal,
+                        normalize(make_float3(-0.48F, 0.84F, 0.34F)))));
+            return true;
+        }
         return hit_any;
     }
     if (arena == GalleryArena::rope_post) {
@@ -1365,6 +1598,42 @@ __device__ bool intersect_gallery_opaque(
         }
         return hit_any;
     }
+    if (arena == GalleryArena::rope_bridge) {
+        bool hit_any = false;
+        float best = maximum_distance;
+        for (int side = -1; side <= 1; side += 2) {
+            const float inner = static_cast<float>(side)*rope_bridge_land_inner_z;
+            const float outer = static_cast<float>(side)*rope_bridge_land_outer_z;
+            float hit{};
+            float3 hit_normal{};
+            if (!intersect_box(ray,
+                    make_float3(0.0F,rope_bridge_land_y-0.06F,
+                        0.5F*(inner+outer)),
+                    make_float3(rope_bridge_land_half_width,0.06F,
+                        0.5F*fabsf(outer-inner)),
+                    best,hit,hit_normal)) continue;
+            best = hit;
+            distance = hit;
+            const float3 point = add(ray.origin,multiply(ray.direction,hit));
+            const int tiles = static_cast<int>(floorf(point.x*3.0F))+
+                static_cast<int>(floorf(point.z*3.0F));
+            color = multiply((tiles&1)==0 ? make_float3(0.42F,0.48F,0.55F)
+                                           : make_float3(0.07F,0.09F,0.13F),
+                0.35F+0.65F*fabsf(hit_normal.y));
+            hit_any = true;
+        }
+        float sphere_distance{};
+        float3 sphere_normal{};
+        if (intersect_particle_sphere(ray,collider.center,collider.half_extents.x,
+                best,sphere_distance,sphere_normal)) {
+            distance = sphere_distance;
+            color = multiply(make_float3(0.08F,0.36F,0.95F),
+                0.25F+0.75F*fmaxf(0.0F,dot(sphere_normal,
+                    normalize(make_float3(-0.48F,0.84F,0.34F)))));
+            return true;
+        }
+        return hit_any;
+    }
     if (arena == GalleryArena::slope || arena == GalleryArena::ground) {
         const float gradient = arena == GalleryArena::slope ? slope_gradient : 0.0F;
         const float height = arena == GalleryArena::slope
@@ -1399,6 +1668,8 @@ __device__ bool intersect_gallery_opaque(
         const auto plane = [&](float coordinate, float direction, float boundary,
                                float3 candidate_normal) {
             if (fabsf(direction) < 1.0e-7F) return;
+            if (arena == GalleryArena::low_ceiling_box &&
+                candidate_normal.y < -0.5F) return;
             // Draw inward-facing exits only. Cameras outside the containment
             // box can therefore look through the near wall while still seeing
             // the fixed floor, ceiling, and far walls that bound the physics.
@@ -1449,6 +1720,36 @@ __device__ bool intersect_gallery_opaque(
                 : make_float3(0.075F, 0.095F, 0.13F),
                 0.38F + 0.62F * fabsf(wall_normal.y));
         }
+        if (arena == GalleryArena::low_ceiling_box) {
+            constexpr int grate_lines = 9;
+            constexpr float grate_half_width = 0.025F;
+            for (int line = 0; line < grate_lines; ++line) {
+                const float alpha = static_cast<float>(line) /
+                    static_cast<float>(grate_lines - 1);
+                const float x = minimum.x + alpha * (maximum.x - minimum.x);
+                const float z = minimum.z + alpha * (maximum.z - minimum.z);
+                float grate_distance{};
+                float3 grate_normal{};
+                if (intersect_box(ray, make_float3(x, hanging_ceiling_y, room_center.z),
+                        make_float3(grate_half_width, 0.025F, room_half_extents.z),
+                        wall ? distance : maximum_distance,
+                        grate_distance, grate_normal)) {
+                    wall = true;
+                    distance = grate_distance;
+                    color = multiply(make_float3(0.34F, 0.38F, 0.43F),
+                        0.32F + 0.68F * fabsf(grate_normal.y));
+                }
+                if (intersect_box(ray, make_float3(room_center.x, hanging_ceiling_y, z),
+                        make_float3(room_half_extents.x, 0.025F, grate_half_width),
+                        wall ? distance : maximum_distance,
+                        grate_distance, grate_normal)) {
+                    wall = true;
+                    distance = grate_distance;
+                    color = multiply(make_float3(0.34F, 0.38F, 0.43F),
+                        0.32F + 0.68F * fabsf(grate_normal.y));
+                }
+            }
+        }
         // Context 5 exposes the four-by-four square support lattice just below
         // the horizontal cloth. The tall containment walls remain invisible.
         if (arena == GalleryArena::cloth_basin) {
@@ -1484,13 +1785,54 @@ __device__ bool intersect_gallery_opaque(
                         0.35F + 0.65F * fabsf(support_normal.y));
                 }
             }
+            const float minimum_x = cloth_basin_center.x -
+                cloth_basin_inner_half_extents.x;
+            const float maximum_x = cloth_basin_center.x +
+                cloth_basin_inner_half_extents.x;
+            const float wall_bottom = cloth_basin_center.y + 0.035F;
+            for (std::uint32_t divider = 0U;
+                 divider < cloth_snake_wall_count; ++divider) {
+                const bool gap_right = (divider & 1U) == 0U;
+                const float start_x = minimum_x +
+                    (gap_right ? 0.0F : cloth_snake_gap_width);
+                const float end_x = maximum_x -
+                    (gap_right ? cloth_snake_gap_width : 0.0F);
+                float divider_distance{};
+                float3 divider_normal{};
+                if (!intersect_box(ray,
+                        make_float3(0.5F * (start_x + end_x),
+                            0.5F * (wall_bottom + cloth_snake_wall_top),
+                            cloth_snake_wall_z(divider)),
+                        make_float3(0.5F * (end_x - start_x),
+                            0.5F * (cloth_snake_wall_top - wall_bottom),
+                            cloth_snake_wall_half_thickness),
+                        wall ? distance : maximum_distance,
+                        divider_distance, divider_normal)) continue;
+                wall = true;
+                distance = divider_distance;
+                color = multiply(make_float3(0.16F, 0.34F, 0.50F),
+                    0.32F + 0.68F * fabsf(divider_normal.y));
+            }
         }
         float sphere_distance{};
         if (arena != GalleryArena::ground_box &&
             intersect_particle_sphere(ray, collider.center, collider.half_extents.x,
                 wall ? distance : maximum_distance, sphere_distance, normal)) {
             distance = sphere_distance;
-            color = multiply(make_float3(0.94F, 0.47F, 0.12F),
+            const float3 material_normal = inverse_rotate_quaternion(
+                collider.sphere_orientation,normal);
+            const bool sphere_painted = arena == GalleryArena::low_ceiling_box &&
+                painted_sphere_texel(normal,collider.sphere_orientation);
+            const int longitude_tile = static_cast<int>(floorf(
+                (atan2f(material_normal.z,material_normal.x)+pi)/(2.0F*pi)*16.0F));
+            const int latitude_tile = static_cast<int>(floorf(
+                acosf(fminf(1.0F,fmaxf(-1.0F,material_normal.y)))/pi*8.0F));
+            const float3 sphere_base = sphere_painted
+                ? make_float3(0.04F,0.34F,1.0F)
+                : (((longitude_tile+latitude_tile)&1)==0
+                    ? make_float3(0.94F,0.72F,0.18F)
+                    : make_float3(0.26F,0.07F,0.025F));
+            color = multiply(sphere_base,
                 0.24F + 0.76F * fmaxf(0.0F,
                     dot(normal, normalize(make_float3(-0.48F, 0.84F, 0.34F)))));
             return true;
@@ -1525,13 +1867,57 @@ __device__ bool trace_opaque_scene(const Ray& ray, const OrientedBox& collider,
             wheel_overlay)) {
         distance = body.distance;
         const bool crust = soft_body.member_count != 0U;
-        color = shade_soft_body(ray, body,
-            arena == GalleryArena::ground || arena == GalleryArena::ground_box,
-            crust);
+        if (arena == GalleryArena::low_ceiling_box) {
+            // Context 4 uses the deformable graph for physics but presents the
+            // twenty fixtures as clean blue cylinders without a crust/member
+            // material overlay.
+            color = shade_colored_surface(ray, body,
+                make_float3(0.035F,0.30F,0.92F), false, false);
+        } else if (arena == GalleryArena::ground_box &&
+                   soft_body.surface_triangle_split != 0U) {
+            const bool sphere_surface =
+                body.triangle < soft_body.surface_triangle_split;
+            const bool goal_surface = !sphere_surface &&
+                (soft_body.secondary_surface_triangle_split == 0U ||
+                 body.triangle < soft_body.secondary_surface_triangle_split);
+            const bool ground_surface = !sphere_surface && !goal_surface;
+            color = shade_colored_surface(ray, body,
+                sphere_surface ? make_float3(0.035F,0.30F,0.92F)
+                               : make_float3(0.06F,0.64F,0.20F),
+                goal_surface, goal_surface ? 1 : (ground_surface ? 2 : 0));
+        } else if (arena == GalleryArena::cloth_basin) {
+            const bool goal_panel = body.uv.x > 2.0F/3.0F && body.uv.y > 2.0F/3.0F;
+            SoftBodyHit panel = body;
+            if (goal_panel) panel.uv = make_float2(
+                (body.uv.x-2.0F/3.0F)*3.0F,
+                (body.uv.y-2.0F/3.0F)*3.0F);
+            color = shade_colored_surface(ray, panel,
+                make_float3(0.08F,0.58F,0.20F), goal_panel, false);
+        } else if (arena == GalleryArena::rope_bridge) {
+            const int column=max(0,min(static_cast<int>(rope_bridge_columns)-1,
+                static_cast<int>(floorf(body.uv.x))));
+            const int row=max(0,min(static_cast<int>(rope_bridge_rows)-1,
+                static_cast<int>(floorf(body.uv.y))));
+            const bool outside=column==0 || column==
+                static_cast<int>(rope_bridge_columns)-1;
+            const bool painted=device_ground_cloth_paint_pixels != nullptr &&
+                device_ground_cloth_paint_pixels[
+                    row*rope_bridge_columns+column] != 0U;
+            color=shade_colored_surface(ray,body,
+                outside || painted ? make_float3(0.035F,0.30F,0.92F)
+                                   : make_float3(0.86F,0.06F,0.045F),
+                false,0);
+        } else {
+            color = shade_soft_body(ray, body,
+                arena == GalleryArena::ground || arena == GalleryArena::ground_box,
+                crust, arena == GalleryArena::enclosed_box);
+        }
         // Context 4 uses a cheap single-hit translucency cue: the polished
         // crust is alpha-composited with the nearest structural member behind
         // it. There are no reflection/refraction continuation rays.
-        if (crust && member.distance < maximum_distance && member.distance > body.distance)
+        if (crust && arena != GalleryArena::low_ceiling_box &&
+            arena != GalleryArena::ground_box &&
+            member.distance < maximum_distance && member.distance > body.distance)
             color = add(multiply(color, 0.58F),
                 multiply(shade_soft_member(ray, member), 0.42F));
         return true;
@@ -2147,14 +2533,287 @@ RayTracer::RayTracer()
 {
     check(cudaEventCreate(&render_begin_), "create render event");
     check(cudaEventCreate(&render_end_), "create render event");
+    check(cudaMalloc(&bowl_paint_pixels_,
+        bowl_paint_pixel_count * sizeof(std::uint32_t)), "allocate bowl paint pixels");
+    check(cudaMalloc(&bowl_painted_count_, sizeof(std::uint32_t)),
+        "allocate bowl paint count");
+    check(cudaMemset(bowl_paint_pixels_, 0,
+        bowl_paint_pixel_count * sizeof(std::uint32_t)), "clear bowl paint pixels");
+    check(cudaMemset(bowl_painted_count_, 0, sizeof(std::uint32_t)),
+        "clear bowl paint count");
+    check(cudaMemcpyToSymbol(device_bowl_paint_pixels, &bowl_paint_pixels_,
+        sizeof(bowl_paint_pixels_)), "bind bowl paint pixels");
+    check(cudaMalloc(&sphere_paint_pixels_,
+        sphere_paint_pixel_count * sizeof(std::uint32_t)),
+        "allocate sphere paint pixels");
+    check(cudaMalloc(&sphere_painted_count_, sizeof(std::uint32_t)),
+        "allocate sphere paint count");
+    check(cudaMemset(sphere_paint_pixels_, 0,
+        sphere_paint_pixel_count * sizeof(std::uint32_t)),
+        "clear sphere paint pixels");
+    check(cudaMemset(sphere_painted_count_, 0, sizeof(std::uint32_t)),
+        "clear sphere paint count");
+    check(cudaMemcpyToSymbol(device_sphere_paint_pixels, &sphere_paint_pixels_,
+        sizeof(sphere_paint_pixels_)), "bind sphere paint pixels");
+    check(cudaMalloc(&cloth_paint_pixels_,
+        cloth_paint_pixel_count * sizeof(std::uint32_t)),
+        "allocate cloth paint pixels");
+    check(cudaMemset(cloth_paint_pixels_, 0,
+        cloth_paint_pixel_count * sizeof(std::uint32_t)),
+        "clear cloth paint pixels");
+    check(cudaMemcpyToSymbol(device_cloth_paint_pixels, &cloth_paint_pixels_,
+        sizeof(cloth_paint_pixels_)), "bind cloth paint pixels");
+    check(cudaMalloc(&ground_cloth_paint_pixels_,
+        cloth_paint_pixel_count*sizeof(std::uint32_t)),
+        "allocate ground cloth paint pixels");
+    check(cudaMemset(ground_cloth_paint_pixels_,0,
+        cloth_paint_pixel_count*sizeof(std::uint32_t)),
+        "clear ground cloth paint pixels");
+    check(cudaMemcpyToSymbol(device_ground_cloth_paint_pixels,
+        &ground_cloth_paint_pixels_,sizeof(ground_cloth_paint_pixels_)),
+        "bind ground cloth paint pixels");
 }
 
 RayTracer::~RayTracer()
 {
     cudaEventDestroy(render_end_);
     cudaEventDestroy(render_begin_);
+    cudaFree(ground_cloth_paint_pixels_);
+    cudaFree(cloth_paint_pixels_);
+    cudaFree(sphere_painted_count_);
+    cudaFree(sphere_paint_pixels_);
+    cudaFree(bowl_painted_count_);
+    cudaFree(bowl_paint_pixels_);
     cudaFreeHost(host_pixels_);
     cudaFree(device_pixels_);
+}
+
+__global__ void update_bowl_paint_kernel(const float3* positions,
+    std::uint32_t count, float particle_radius, std::uint32_t* pixels,
+    std::uint32_t* painted_count)
+{
+    const std::uint32_t particle = blockIdx.x * blockDim.x + threadIdx.x;
+    if (particle >= count) return;
+    const float3 relative = subtract(positions[particle], bowl_center);
+    const float radius = length(relative);
+    const float contact_band = particle_radius + 0.025F;
+    if (!(radius > 0.0F) ||
+        fabsf(radius - bowl_inner_radius) > contact_band ||
+        relative.y > 0.0F) return;
+    const float3 direction = multiply(relative, 1.0F / radius);
+    constexpr float pi = 3.14159265358979323846F;
+    const float longitude = (atan2f(direction.z, direction.x) + pi) / (2.0F * pi);
+    const float latitude = acosf(fminf(1.0F,
+        fmaxf(0.0F, -direction.y))) / (0.5F * pi);
+    const std::uint32_t x = min(bowl_paint_width - 1U,
+        static_cast<std::uint32_t>(longitude * bowl_paint_width));
+    const std::uint32_t y = min(bowl_paint_height - 1U,
+        static_cast<std::uint32_t>(latitude * bowl_paint_height));
+    if (atomicCAS(pixels + y * bowl_paint_width + x, 0U, 1U) == 0U)
+        atomicAdd(painted_count, 1U);
+}
+
+__global__ void initialize_bowl_peg_footprints_kernel(
+    std::uint32_t* pixels, std::uint32_t* painted_count)
+{
+    const std::uint32_t texel = blockIdx.x*blockDim.x+threadIdx.x;
+    if (texel >= bowl_paint_pixel_count) return;
+    const std::uint32_t x = texel%bowl_paint_width;
+    const std::uint32_t y = texel/bowl_paint_width;
+    const float longitude = (static_cast<float>(x)+0.5F)/bowl_paint_width;
+    const float latitude = (static_cast<float>(y)+0.5F)/bowl_paint_height;
+    const float azimuth = longitude*(2.0F*pi)-pi;
+    const float polar = latitude*(0.5F*pi);
+    const float horizontal = sinf(polar);
+    const float3 point = add(bowl_center,multiply(make_float3(
+        horizontal*cosf(azimuth),-cosf(polar),horizontal*sinf(azimuth)),
+        bowl_inner_radius));
+    for (std::uint32_t peg=0U; peg<bowl_peg_count; ++peg) {
+        const float3 center = bowl_peg(peg);
+        const float dx = point.x-center.x;
+        const float dz = point.z-center.z;
+        if (dx*dx+dz*dz <=
+                (bowl_peg_radius+0.018F)*(bowl_peg_radius+0.018F)) {
+            pixels[texel]=1U;
+            atomicAdd(painted_count,1U);
+            return;
+        }
+    }
+}
+
+float RayTracer::update_bowl_paint(const float3* particle_positions,
+    std::uint32_t particle_count, float particle_radius, bool reset,
+    cudaStream_t stream)
+{
+    if (reset) {
+        check(cudaMemsetAsync(bowl_paint_pixels_, 0,
+            bowl_paint_pixel_count * sizeof(std::uint32_t), stream),
+            "reset bowl paint pixels");
+        check(cudaMemsetAsync(bowl_painted_count_, 0,
+            sizeof(std::uint32_t), stream), "reset bowl paint count");
+        initialize_bowl_peg_footprints_kernel<<<
+            (bowl_paint_pixel_count+255U)/256U,256U,0,stream>>>(
+                bowl_paint_pixels_,bowl_painted_count_);
+        check(cudaGetLastError(), "initialize bowl peg paint footprints");
+    }
+    if (particle_positions != nullptr && particle_count != 0U) {
+        update_bowl_paint_kernel<<<(particle_count + 255U) / 256U, 256U, 0, stream>>>(
+            particle_positions, particle_count, particle_radius,
+            bowl_paint_pixels_, bowl_painted_count_);
+        check(cudaGetLastError(), "update bowl paint pixels");
+    }
+    std::uint32_t painted{};
+    check(cudaMemcpyAsync(&painted, bowl_painted_count_, sizeof(painted),
+        cudaMemcpyDeviceToHost, stream), "download bowl paint count");
+    check(cudaStreamSynchronize(stream), "finish bowl paint update");
+    return static_cast<float>(painted) /
+        static_cast<float>(bowl_paint_pixel_count);
+}
+
+__global__ void update_sphere_paint_kernel(const float3* positions,
+    std::uint32_t count, float contact_radius, RigidSphereState sphere,
+    std::uint32_t* pixels, std::uint32_t* painted_count)
+{
+    const std::uint32_t item = blockIdx.x * blockDim.x + threadIdx.x;
+    if (item >= count) return;
+    const float3 delta = subtract(positions[item], sphere.center);
+    const float distance = length(delta);
+    const float contact_distance = sphere.radius + contact_radius + 0.012F;
+    if (!(distance > 1.0e-8F) || distance > contact_distance) return;
+    const float3 direction = inverse_rotate_quaternion(sphere.orientation,
+        multiply(delta, 1.0F / distance));
+    const float longitude = (atan2f(direction.z, direction.x) + pi) / (2.0F*pi);
+    const float latitude = acosf(fminf(1.0F, fmaxf(-1.0F, direction.y))) / pi;
+    const std::uint32_t x = min(sphere_paint_width-1U,
+        static_cast<std::uint32_t>(longitude*sphere_paint_width));
+    const std::uint32_t y = min(sphere_paint_height-1U,
+        static_cast<std::uint32_t>(latitude*sphere_paint_height));
+    if (atomicCAS(pixels + y*sphere_paint_width + x, 0U, 1U) == 0U)
+        atomicAdd(painted_count, 1U);
+}
+
+float RayTracer::update_sphere_paint(const float3* contact_positions,
+    std::uint32_t contact_count, float contact_radius, RigidSphereState sphere,
+    bool reset, cudaStream_t stream)
+{
+    if (reset) {
+        check(cudaMemsetAsync(sphere_paint_pixels_, 0,
+            sphere_paint_pixel_count*sizeof(std::uint32_t), stream),
+            "reset sphere paint pixels");
+        check(cudaMemsetAsync(sphere_painted_count_, 0,
+            sizeof(std::uint32_t), stream), "reset sphere paint count");
+    }
+    if (contact_positions != nullptr && contact_count != 0U) {
+        update_sphere_paint_kernel<<<(contact_count+255U)/256U,256U,0,stream>>>(
+            contact_positions, contact_count, contact_radius, sphere,
+            sphere_paint_pixels_, sphere_painted_count_);
+        check(cudaGetLastError(), "update sphere paint pixels");
+    }
+    std::uint32_t painted{};
+    check(cudaMemcpyAsync(&painted, sphere_painted_count_, sizeof(painted),
+        cudaMemcpyDeviceToHost, stream), "download sphere paint count");
+    check(cudaStreamSynchronize(stream), "finish sphere paint update");
+    return static_cast<float>(painted) /
+        static_cast<float>(sphere_paint_pixel_count);
+}
+
+__global__ void update_goal_cloth_paint_kernel(const float3* positions,
+    std::uint32_t count, float source_radius, std::uint32_t* goal_pixels,
+    std::uint32_t* ground_pixels)
+{
+    const std::uint32_t item = blockIdx.x*blockDim.x+threadIdx.x;
+    if (item >= count) return;
+    const float3 point = positions[item];
+    constexpr float half_width = 0.5F*23.0F*0.075F;
+    constexpr float bottom = course_floor_y;
+    constexpr float top = course_floor_y+23.0F*0.075F;
+    constexpr float plane_z = -2.35F;
+    if (fabsf(point.z-plane_z) <= source_radius+0.02F &&
+        point.x >= -half_width-source_radius && point.x <= half_width+source_radius &&
+        point.y >= bottom-source_radius && point.y <= top+source_radius) {
+        const float u = fminf(0.999999F, fmaxf(0.0F,
+            (point.x+half_width)/(2.0F*half_width)));
+        // make_cloth_grid assigns v=0 at its bottom row and v=1 at its top.
+        // Matching that convention prevents underside contacts from appearing
+        // mirrored onto the opposite vertical part of the goal sheet.
+        const float v = fminf(0.999999F, fmaxf(0.0F,
+            (point.y-bottom)/(top-bottom)));
+        goal_pixels[static_cast<std::uint32_t>(v*cloth_paint_height)*cloth_paint_width+
+            static_cast<std::uint32_t>(u*cloth_paint_width)] = 1U;
+    }
+    constexpr float ground_half = 0.5F*39.0F*0.075F;
+    constexpr float ground_center_z = -0.55F;
+    constexpr float ground_y = course_floor_y+0.025F;
+    if (fabsf(point.y-ground_y) <= source_radius+0.02F &&
+        fabsf(point.x) <= ground_half+source_radius &&
+        fabsf(point.z-ground_center_z) <= ground_half+source_radius) {
+        const float u = fminf(0.999999F,fmaxf(0.0F,
+            (point.x+ground_half)/(2.0F*ground_half)));
+        // The horizontal conversion maps the cloth's top row to minimum z,
+        // so its texture-v direction is reversed in world z.
+        const float v = fminf(0.999999F,fmaxf(0.0F,
+            (ground_center_z+ground_half-point.z)/(2.0F*ground_half)));
+        ground_pixels[static_cast<std::uint32_t>(v*cloth_paint_height)*cloth_paint_width+
+            static_cast<std::uint32_t>(u*cloth_paint_width)] = 1U;
+    }
+}
+
+void RayTracer::update_goal_cloth_paint(const float3* source_positions,
+    std::uint32_t source_count, float source_radius, bool reset,
+    cudaStream_t stream)
+{
+    if (reset) {
+        check(cudaMemsetAsync(cloth_paint_pixels_, 0,
+            cloth_paint_pixel_count*sizeof(std::uint32_t), stream),
+            "reset goal cloth paint pixels");
+        check(cudaMemsetAsync(ground_cloth_paint_pixels_, 0,
+            cloth_paint_pixel_count*sizeof(std::uint32_t), stream),
+            "reset ground cloth paint pixels");
+    }
+    if (source_positions != nullptr && source_count != 0U) {
+        update_goal_cloth_paint_kernel<<<(source_count+255U)/256U,256U,0,stream>>>(
+            source_positions, source_count, source_radius, cloth_paint_pixels_,
+            ground_cloth_paint_pixels_);
+        check(cudaGetLastError(), "update goal cloth paint pixels");
+    }
+}
+
+__global__ void update_rope_bridge_paint_kernel(
+    const float3* nodes, std::uint32_t node_count, RigidSphereState sphere,
+    std::uint32_t* pixels)
+{
+    const std::uint32_t tile=blockIdx.x*blockDim.x+threadIdx.x;
+    if (tile>=rope_bridge_columns*rope_bridge_rows ||
+        4U*tile+3U>=node_count) return;
+    float minimum_x=1.0e30F,maximum_x=-1.0e30F;
+    float minimum_z=1.0e30F,maximum_z=-1.0e30F,average_y=0.0F;
+    for (std::uint32_t corner=0U;corner<4U;++corner) {
+        const float3 point=nodes[4U*tile+corner];
+        minimum_x=fminf(minimum_x,point.x); maximum_x=fmaxf(maximum_x,point.x);
+        minimum_z=fminf(minimum_z,point.z); maximum_z=fmaxf(maximum_z,point.z);
+        average_y+=0.25F*point.y;
+    }
+    const float closest_x=fminf(maximum_x,fmaxf(minimum_x,sphere.center.x));
+    const float closest_z=fminf(maximum_z,fmaxf(minimum_z,sphere.center.z));
+    const float dx=sphere.center.x-closest_x;
+    const float dy=sphere.center.y-average_y;
+    const float dz=sphere.center.z-closest_z;
+    if (dx*dx+dy*dy+dz*dz <=
+            (sphere.radius+0.045F)*(sphere.radius+0.045F)) pixels[tile]=1U;
+}
+
+void RayTracer::update_rope_bridge_paint(const float3* bridge_nodes,
+    std::uint32_t node_count, RigidSphereState sphere, bool reset,
+    cudaStream_t stream)
+{
+    if (reset) check(cudaMemsetAsync(ground_cloth_paint_pixels_,0,
+        cloth_paint_pixel_count*sizeof(std::uint32_t),stream),
+        "reset rope bridge paint pixels");
+    if (bridge_nodes != nullptr && node_count != 0U) {
+        update_rope_bridge_paint_kernel<<<1,64,0,stream>>>(
+            bridge_nodes,node_count,sphere,ground_cloth_paint_pixels_);
+        check(cudaGetLastError(),"update rope bridge paint pixels");
+    }
 }
 
 void RayTracer::reserve(std::uint32_t width, std::uint32_t height)
@@ -2285,6 +2944,8 @@ float RayTracer::render_hybrid(
         launch.operator()<false, GalleryArena::water_wheel>();
     else if (arena == GalleryArena::rope_post)
         launch.operator()<false, GalleryArena::rope_post>();
+    else if (arena == GalleryArena::rope_bridge)
+        launch.operator()<false, GalleryArena::rope_bridge>();
     else launch.operator()<false, GalleryArena::none>();
     check(cudaPeekAtLastError(), "hybrid raytrace launch");
     check(cudaEventRecord(render_end_, stream), "record hybrid render end");

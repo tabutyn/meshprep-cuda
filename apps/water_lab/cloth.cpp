@@ -409,6 +409,89 @@ SoftBodyAsset make_soft_rope(std::uint32_t node_count, float spacing)
     return asset;
 }
 
+SoftBodyAsset make_rope_bridge()
+{
+    constexpr std::uint32_t columns = rope_bridge_columns;
+    constexpr std::uint32_t rows = rope_bridge_rows;
+    constexpr std::uint32_t corners = 4U;
+    SoftBodyAsset asset;
+    asset.nominal_spacing = rope_bridge_gap;
+    asset.voxel_radius = 0.035F;
+    asset.rest_voxels.reserve(columns * rows * corners);
+    asset.voxel_flags.reserve(columns * rows * corners);
+    asset.render_positions.reserve(columns * rows * corners);
+    asset.render_uvs.reserve(columns * rows * corners);
+    asset.render_bindings.reserve(columns * rows * corners);
+    const auto tile = [](std::uint32_t column, std::uint32_t row) {
+        return (row * columns + column) * corners;
+    };
+    const float first_x = -0.5F * rope_bridge_width +
+        0.5F * rope_bridge_tile_size;
+    const float first_z = 0.5F * rope_bridge_length -
+        0.5F * rope_bridge_tile_size;
+    constexpr float half = 0.5F * rope_bridge_tile_size;
+    for (std::uint32_t row = 0U; row < rows; ++row) {
+        for (std::uint32_t column = 0U; column < columns; ++column) {
+            const float center_x = first_x + column * rope_bridge_pitch;
+            const float center_z = first_z - row * rope_bridge_pitch;
+            const float3 points[corners]{
+                {center_x-half, rope_bridge_deck_y, center_z+half},
+                {center_x+half, rope_bridge_deck_y, center_z+half},
+                {center_x+half, rope_bridge_deck_y, center_z-half},
+                {center_x-half, rope_bridge_deck_y, center_z-half}};
+            for (std::uint32_t corner = 0U; corner < corners; ++corner) {
+                const std::uint32_t node = tile(column, row) + corner;
+                asset.rest_voxels.push_back(points[corner]);
+                asset.voxel_flags.push_back(soft_body_voxel_surface |
+                    ((row == 0U || row + 1U == rows)
+                        ? soft_body_voxel_pinned : 0U));
+                asset.render_positions.push_back(points[corner]);
+                asset.render_uvs.push_back(make_float2(
+                    static_cast<float>(column) + (corner == 1U || corner == 2U),
+                    static_cast<float>(row) + (corner >= 2U)));
+                asset.render_bindings.push_back({make_uint4(node,node,node,node),
+                    make_float4(1.0F,0.0F,0.0F,0.0F)});
+            }
+            const std::uint32_t base = tile(column, row);
+            asset.render_triangles.push_back(make_uint3(base, base+2U, base+1U));
+            asset.render_triangles.push_back(make_uint3(base, base+3U, base+2U));
+        }
+    }
+    std::vector<uint2> endpoints;
+    const auto connect = [&](std::uint32_t a, std::uint32_t b) {
+        endpoints.push_back(make_uint2(std::min(a,b), std::max(a,b)));
+    };
+    for (std::uint32_t row = 0U; row < rows; ++row) {
+        for (std::uint32_t column = 0U; column < columns; ++column) {
+            const std::uint32_t base = tile(column, row);
+            // Six in-tile braces keep each square nearly rigid.
+            connect(base, base+1U); connect(base+1U, base+2U);
+            connect(base+2U, base+3U); connect(base, base+3U);
+            connect(base, base+2U); connect(base+1U, base+3U);
+            if (column + 1U < columns) {
+                const std::uint32_t right = tile(column+1U, row);
+                connect(base+1U, right); connect(base+2U, right+3U);
+            }
+            if (row + 1U < rows) {
+                const std::uint32_t next = tile(column, row+1U);
+                connect(base+2U, next+1U); connect(base+3U, next);
+            }
+        }
+    }
+    std::sort(endpoints.begin(), endpoints.end(), [](uint2 a, uint2 b) {
+        return a.x < b.x || (a.x == b.x && a.y < b.y);
+    });
+    endpoints.erase(std::unique(endpoints.begin(), endpoints.end(), [](uint2 a, uint2 b) {
+        return a.x == b.x && a.y == b.y;
+    }), endpoints.end());
+    for (const uint2 edge : endpoints)
+        asset.edges.push_back({edge,
+            distance(asset.rest_voxels[edge.x], asset.rest_voxels[edge.y])});
+    rebuild_adjacency(asset);
+    validate_soft_body_asset(asset);
+    return asset;
+}
+
 SoftBodyAsset make_soft_cross(
     std::uint32_t span, std::uint32_t arm_width, float spacing)
 {

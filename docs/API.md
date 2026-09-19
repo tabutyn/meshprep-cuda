@@ -1,12 +1,69 @@
 # API contract
 
-The public API is declared in `<meshprep/meshprep.hpp>` under namespace `meshprep`.
+The public geometry API is declared in `<parallel_mater/geometry.hpp>` under
+namespace `parallel_mater`.
 
 Installed-package consumers must enable CUDA as a CMake project language so CUDA headers and runtime link flags are available.
 
-## Experimental simulation/render views
+## General physics
 
-`<meshprep/simulation.hpp>` adds the `meshprep::sim` namespace. Its component
+`<parallel_mater/physics.hpp>` exposes the gallery-independent
+`parallel_mater::physics::SoftBody` class. Link `ParallelMater::physics`. The class loads a
+versioned `.msb` fixed-topology volumetric lattice, owns all CUDA allocations,
+and supports up to 32 translated instances sharing one asset topology.
+
+`SoftBodyOptions` controls the fixed timestep, substeps, deterministic Jacobi
+constraint iterations, mass, stiffness, damping, fracture threshold, speed and
+projection bounds, hierarchy leaf size, optional non-bonded node collision,
+and per-instance origins. It does not contain a scene, camera, gameplay goal,
+or renderer.
+
+Initialization validates these public ranges: instances `[1,32]`, substeps
+`[1,32]`, constraint iterations `[1,256]`, stiffness `[100,160000]`, spring
+damping ratio `[0,4]`, velocity damping `[0,30]`, maximum projection fraction
+`(0,1]`, velocity response `[0,1]`, fracture persistence `[1,64]`, maximum
+speed `[0.5,30]`, strength multiplier `[0.0625,64]`, ground friction `[0,50]`,
+and hierarchy leaf size `[1,32]`. Timestep, mass, stiffness, break strain, and
+strength must be finite and positive; active origins and gravity must be finite.
+
+`step(gravity, timings, stream)` is the shortest complete update. Applications
+with custom collision or coupling use this sequence:
+
+1. `begin_frame()`;
+2. for every substep, `prepare_substep(dt, gravity)`, launch application CUDA
+   kernels using `nodes()`, then `finish_substep(dt, gravity)`;
+3. `finish_frame(timings)`.
+
+Prediction clears `external_impulses` and `position_corrections`. Coupling
+kernels write an impulse in N·s and/or a positional correction for each node.
+`finish_substep` consumes those arrays, applies graph constraints and fracture,
+and advances the body.
+
+`nodes()`, `bonds()`, and `surface()` return borrowed device views. The bond
+array is shared topology; `bond_active` is indexed by instance and permanently
+changes after fracture until `reset()`. The surface view includes positions,
+normals, UVs, active triangle flags, and the refitted hierarchy. Reacquire all
+views after a step, reset, initialization, or move.
+
+All owning operations catch implementation exceptions and return `Status`.
+Calls are synchronous before return in this release. Asset loading occurs only
+during initialization; no file I/O or device allocation occurs in `step()`.
+See `examples/soft_body.cu` for a minimal custom ground collider.
+
+The C++ API offers source compatibility within a tagged minor line; a stable C
+ABI is not promised. `.msb` assets have their own checked format version. This
+release accepts version 1 little-endian assets and rejects unknown versions,
+truncated data, invalid graph indices, malformed CSR, and invalid render
+bindings rather than attempting forward-compatible interpretation.
+
+## Optional gallery simulation/render views
+
+`<parallel_mater/game.hpp>` is the CUDA-free configuration and campaign entry point. It provides the
+nine `LevelDefinition` records, fluent `SimulationConfig`, validation, goal
+evaluation, and `Campaign`. Link `ParallelMater::game` when a native
+application only needs authored recipes and progression.
+
+`<parallel_mater/gallery.hpp>` adds the `parallel_mater::sim` namespace. Its component
 flags and numbered `ExampleContext` catalog describe the native integration
 fixtures without making the renderer depend on their concrete solvers.
 `ParticleRenderView`, `SurfaceRenderView`, `RigidBodyRenderView`, and
@@ -15,7 +72,8 @@ Reacquire them after every simulation step because an owning backend may move
 its allocations. `valid(FixedStepOptions)` checks the positive, finite
 timestep contract.
 
-The installed `meshprep::meshprep-simulation` target provides the movable
+When built with `PARALLEL_MATER_BUILD_GALLERY=ON`, the installed
+`ParallelMater::gallery` target provides the movable
 PIMPL `GallerySimulation`. Its `initialize`/`create`, fixed `step`, and `reset`
 operations return `Status`; `render_view()` borrows its current CUDA arrays.
 CUDA and geometry-library failures raised inside the adapted solvers retain
@@ -28,6 +86,24 @@ are procedural. This remains an experimental
 composition API rather than a stable ABI for each underlying solver. See
 `examples/simulation_contexts.cu` and `docs/SIMULATION_API_ARCHITECTURE.md`.
 
+`SimulationBuilder` is the concise native entry point. Omitted values retain
+the selected level preset; explicit fluent calls become overrides:
+
+```cpp
+parallel_mater::sim::GallerySimulation simulation;
+auto status = parallel_mater::sim::SimulationBuilder(
+        parallel_mater::sim::ExampleContext::particles_cloth)
+    .particles(10'000)
+    .cloth_detail(3)
+    .iterations(6)
+    .build(simulation);
+```
+
+`build`, `step`, `reset`, and `resize_particles` return `Status` and do not
+throw across the public boundary. Rendering views are borrowed and must be
+reacquired after every step. The configuration API contains no CUDA, GLFW, or
+OpenGL types; `SimulationBuilder` is the CUDA adapter.
+
 Each context selects one complete physics preset. The course uses four
 iterations and gravity `(0, -7.2, 0)`. Contexts 2–8 use four iterations and
 Earth gravity `(0, -9.81, 0)` by default; context 2 deliberately uses twice
@@ -35,8 +111,9 @@ that magnitude. Context 7 also starts under vertical Earth gravity; camera-relat
 arrow input supplies any horizontal component used to produce rolling.
 `GallerySimulationOptions::solver_iterations_override`, `gravity_override`,
 `particle_count_override` (256–100,000 active particle IDs), and
-`physical_skin_frequency_override` (2–45), and `rope_node_count_override`
-(8–512, context 8) are optional: leaving them empty selects that
+`physical_skin_frequency_override` (2–45), `rope_node_count_override`
+(8–512, context 8), and `cloth_detail_override` (1–8; contexts 3 and 5,
+preserving physical cloth size) are optional: leaving them empty selects that
 recipe, while assigning a value is an explicit departure from it.
 `GallerySimulation::resize_particles()` adjusts the active prefix in place;
 growth reinitializes new IDs at deterministic HCP spawn positions, and shrinkage
@@ -59,12 +136,14 @@ local endpoints are offset by `instance * nodes_per_instance`. The authored post
 1,000 nodes, including 500 interior nodes and 70 pinned foundation nodes. The
 procedural soft sphere has 1,000 nodes; context 7 merges it with a 576-node
 hanging cloth and a 1,600-node horizontal ground cloth. Context 6 uses two
-procedural connected 1,155-node, three-layer crosses. Each has a pinned 3x3x3
+procedural connected 855-node, three-layer crosses. Each has a pinned 3x3x3
 axle volume and four three-wide rim anchors on a common axis. Reacquire these views after stepping
 because the position buffers swap. No extra device allocation or download is
 performed by this getter.
 Context 8 exposes a procedural rope lattice and render tube plus three rigid
 views: its finite-mass sphere, ground, and center post.
+Context 9 exposes a procedural 4x10 bridge with forty rigid-looking tile
+surfaces, 372 live structural links, a soft sphere, and two fixed land views.
 
 ## Views and ownership
 
@@ -95,3 +174,9 @@ No public operation throws. `Status::code`, `Status::cuda_error`, and `Status::m
 ## Validation
 
 Calls reject null or empty mesh/AABB buffers, counts outside v0.1's 32-bit domain, non-finite coordinates, unordered AABB minima/maxima, out-of-range triangle indices, null sharp-edge storage with a nonzero count, self edges, out-of-range edge endpoints, and a hierarchy leaf capacity outside `[1, 32]`.
+
+## Compatibility names
+
+The former `<meshprep/...>` headers and `meshprep` namespace remain as a
+temporary source-compatibility layer. They refer to the same implementation;
+new applications should use the ParallelMater names above.

@@ -12,8 +12,8 @@ See [implementation and tests](../../docs/WATER_VISUAL_EFFECTS.md).
 
 The simulation advances exactly one fixed `1/60 s` tick per displayed frame. If
 rendering is slow, simulated time lags. It does not launch catch-up ticks. The
-course starts at 4×: gravity magnitude `7.2`, particle/skin speed caps `12`/`8`,
-and four physics iterations. Steering reaches at most 20 degrees and smoothly
+course starts at the authored 8× preset, with force, speed, and iteration
+limits scaled together. Steering reaches at most 20 degrees and smoothly
 returns to level. Bracket controls change acceleration, particle/skin speed
 caps, load-bearing material forces, and the substep floor together without
 changing the fixed physical time. Matching the force/gravity ratio prevents the
@@ -49,37 +49,39 @@ the old title, and verbose mouse instructions were removed.
 
 ## Numbered API gallery
 
-Keys `1` through `7` switch at a frame boundary between composable integration
-fixtures. They use the same public recipe catalog as
-`<meshprep/simulation.hpp>`:
+Keys `1` through `9` switch at a frame boundary between composable minigames.
+Completing a displayed objective holds the completion card for 1.5 seconds and
+then advances automatically; direct number-key selection remains available.
+They use the same public recipe catalog as `<parallel_mater/game.hpp>`:
 
 | Key | Fixture |
 | --- | --- |
 | `1` | Current water-skin obstacle course |
-| `2` | 15,000 particles and a heavy sphere settling among four inward capped-cylinder pegs in a widened bowl under 2× gravity |
-| `3` | A stationary heavy sphere that the user tilts through floor-aligned cloth in a closed box |
-| `4` | Rigid sphere striking the free bottom of a ceiling-hung breakable column; normal rendering composites a polished translucent crust over cream structural members |
-| `5` | Half-size adjustable-mass sphere and 2,500 particles caught by a doubled 3×3 cloth grid with invisible containment |
-| `6` | High inlet, eight one-way barrier fins, circular guide, axle-driven volume crosses, and separate inertial outer rims |
-| `7` | Gravity-driven 1,000-voxel soft sphere rolling over cloth suspended above a finite pit and into hanging cloth |
-| `8` | Finite-mass rigid sphere tethered by a procedural spring rope to a central rigid post |
+| `2` | Paint the bowl through persistent per-pixel water contact; four cylinder pegs and an invisible continuation above the rim keep water contained |
+| `3` | Start farther from a smooth-shaded cloth carrying a procedural `GOAL` texture; win on the first damaged connection |
+| `4` | Paint a checker-textured sphere blue by rolling it through twenty simple blue hanging cylinders below a low open grate |
+| `5` | Guide a small sphere and 2,500 particles through two rails aligned with the 3x3 cloth boundaries; only the far-right `GOAL` panel can tear |
+| `6` | Roll a rigid sphere from the front-left crown platform onto the extruded outer wheel while water drives the soft-cross axle/rim system |
+| `7` | Roll a blue 1,000-voxel soft sphere into a farther green `GOAL` cloth; contact paints it blue and damage wins |
+| `8` | Wrap the side-mounted procedural rope around the center post three complete turns |
+| `9` | Cross a suspended 4x10 rope bridge made from forty square tiles joined by paired short ropes |
 
 Contexts 2, 5, and 6 have no invisible membrane force. Contexts 2 and 5 use
 deterministically reduced particle reactions to move their finite-mass rigid
 spheres. Context 5 keeps one cloth perfectly horizontal and pins every node
 along four support lines per direction, producing nine flexible cells in a
-visible square beam grid. Its close
-perimeter is collision-only and reaches the room ceiling, so it contains
-particles without hiding the cloth. Particles already below its unilateral surface are not teleported
+visible square beam grid. Its closed perimeter and two low visible snake rails
+use ceiling-height collision volumes; only the far-right goal cloth is dynamic
+and tearable. Particles already below its unilateral surface are not teleported
 back to the visible side. Contexts 5 and 6 use direct
 particle-to-cloth/soft-cross contact with deterministic vertex gathering. The current
 `HybridDroplet` owner still carries a hidden adapter skin allocation and a
 small hierarchy/normal cost even where it is not a declared component. The
-timing table exposes that cost. Only context 1 uses course tilt gravity
-`(0,-7.2,0)`; context 2 uses `(0,-19.62,0)` and contexts 3–8 use Earth gravity
-`(0,-9.81,0)`, all with four
-iterations. No gallery recipe inherits invisible course rails.
-Contexts 1–8 accept camera-relative arrow-key gravity tilt. Context 7 starts
+timing table exposes that cost. Context 1 uses its authored 8× course preset;
+context 2 uses `(0,-19.62,0)`, and contexts 3–9 use Earth gravity
+`(0,-9.81,0)`. Non-course recipes default to four iterations. No gallery
+recipe inherits invisible course rails.
+Contexts 1–9 accept camera-relative arrow-key gravity tilt. Context 7 starts
 from rest under vertical gravity; its default friction is `10`, the live range
 is `0`–`50`, and friction is applied after graph projection so it remains active
 while steering supplies a horizontal gravity component. Ground cloth provides
@@ -88,44 +90,45 @@ pinned perimeter rests on the room floor while the free interior spans a
 2.6 m square opening and can droop 1.25 m into a finite rendered pit.
 Context 8 uses one pinned centerline endpoint, structural and bend links, a
 watertight six-sided render tube, and a mass-weighted bilateral attachment at
-the sphere. `L` changes rope node count from 8 to 512 and resets the scene;
+the sphere. The attachment is solved after the rope graph, so the committed
+rope endpoint—not an independent anchor-radius clamp—limits sphere travel. The
+default 4 m rope can wrap around the center post three times. Ground contact is
+resolved before the mass-shared endpoint attachment, whose upper-hemisphere
+direction prevents the rope from pulling a floor-supported sphere downward.
+`L` changes rope
+node count from 8 to 512 and resets the scene;
 `P` exposes solver iterations, bond strength, spring stiffness/damping, drag,
 speed, gravity, ground friction, and rigid-sphere mass.
-Context 2 starts at 15,000
-particles with repulsion `20`; its regression records free-surface height in
+Context 2 starts at 20,000 particles with repulsion `50`. Its bowl is red until
+individual persistent paint texels receive actual particle contact; contacted
+texels turn blue. Particle/debug view draws native points rather than ray
+tracing thousands of water spheres. Its regression records free-surface height in
 two unobstructed annuli,
 rim escape, finite state, and sphere motion rather than assuming the added
 rigid body preserves the earlier particle-only equilibrium.
-Context 6 replaces the retired horizontal cylinder gate with an upper feed
-whose endpoint is exactly 2.5 m above the lower collector, a vertical outlet,
-and a lower-left shell extended above the axle. Fins are rectangular, but
-contact is one-sided: water loads a finite barrier shell on the trailing face
-while the descending leading face is permeable. Existing paddle-volume overlap
-is still cleared after relative speed reaches zero, so a rising fin leaves a
-visible evacuated slot rather than carrying particles inside it. The barrier changes particle
-momentum before overlap and contributes its equal-and-opposite signed torque to
-the finite-inertia axle/fin rotor. Rigid radial spokes were removed. Each of the two
-1,155-node, three-layer crosses has a pinned 3x3x3 axle volume and 36 pinned tip
-voxels that follow a separate outer-rim rotor. Measured cross spring reactions
-apply equal-and-opposite torque to axle and rim; rim inertia and drag therefore
-push back through the soft cross. Particle IDs still recycle at the downhill sink.
-Context 5 centers the cloth under its emitter *after* rotating the authored
-vertical grid. Its 616-node graph is one continuous sheet at twice the former
-linear spacing, with a
-3×3 grid of panels bounded by 184 pinned support-line nodes. The contact uses the uppermost live cloth triangle under
+Context 6 keeps the fluid-driven central fin wheel and moves both soft crosses
+and their outer rims outward along the axle, clear of the feed and fins. The
+former ladder, tow rope, pulleys, and artificial sphere lift were removed. Two
+thin horizontal platforms sit 0.1 m below the wheel crown on the front stage
+plane, one on each side, with a central gap exposing the collidable outer rim.
+The rigid sphere starts on the left platform. Particle IDs still
+recycle at the downhill sink.
+Context 5 uses a 5,248-node detail-3 graph as one continuous sheet. Eight cells
+are fixed cloth-covered supports; the far-right goal cell retains its live,
+tearable interior. Contact uses the uppermost live cloth triangle under
 each particle's X/Z point, rather than the closest triangle in 3-D, plus the
 triangle's actual normal for the side-wall response. The contact transfers
 reactions into cloth voxels. A swept-side guard prevents particles already
 below the cloth from being projected through it. The sustained regression now
 also includes the dynamic sphere and closed box, so earlier particle-only
 counts are not presented as results for this scene.
-The standalone column fixture (4) starts at 8× bond strength and spring stiffness
-`80,000`. Its top cap is fixed just below the ceiling and its bottom is free;
+The cylinder-curtain fixture (4) starts at 8× bond strength and spring stiffness
+`80,000`. Each of twenty top caps is fixed just below the ceiling and its bottom is free;
 lower the
 strength in `P` or with `,` when testing fracture. The wheel crosses use a 16×
 break threshold and prescribed axle/rim anchors with dynamic interior nodes.
-The hanging-cloth fixtures pin every node of the top hanger row. Context 3 also
-pins its bottom row one spacing below the floor, so the sheet crosses the floor
+The hanging-cloth fixtures pin every node of the top hanger row. Contexts 3 and
+7 also pin the complete bottom row; context 3 buries it one spacing below the floor, so the sheet crosses the floor
 without exposing the anchors as an invisible collision bar. Its heavy sphere
 transfers equal-and-opposite reactions to the cloth rather than moving as a
 prescribed obstacle.
@@ -159,11 +162,11 @@ a median FPS benchmark.
 
 Controls:
 
-- `WASD` or arrow keys in contexts 1–8: tilt gravity relative to the camera. When the physics panel is
+- `WASD` or arrow keys in contexts 1–9: tilt gravity relative to the camera. When the physics panel is
   open, use `WASD` for steering because arrows edit its selected value.
 - `[` / `]` in context 1: decrease / increase acceleration, particle/skin speed caps, and
   their load-bearing material forces together by 1× from 1× to 8×, starting
-  at 4× in the water course. Other gallery contexts use their own gravity
+  at 8× in the water course. Other gallery contexts use their own gravity
   control in `P` and ignore these keys. The
   iteration floor follows
   `max(4, multiplier)` to retain bounded travel per substep; manually selected
@@ -186,7 +189,7 @@ Controls:
 - `V`: toggle filled surfaces and the combined particle/lattice view in the
   current context. Context 1 shows water particles and its skin wireframe;
   soft-body contexts additionally show simulated voxels and live bonds.
-- `1` through `7`: select the seven API gallery examples listed above.
+- `1` through `9`: select the nine API gallery examples listed above.
 - `F`: toggle surface foam.
 - `P`: toggle context-relevant live material and force parameters, including
   gravity, solver iterations, soft-body stiffness/damping/drag/speed, rigid mass,
@@ -195,8 +198,10 @@ Controls:
   supports `0`–`120`, and course boundary force supports up to `64,000`.
 - `L`: toggle reset-on-change simulation quantities. Particle contexts allow up
   to 100,000 particles, water skins expose physical and render frequencies, and
-  deformables expose up to 256 spring solves. Every accepted change rebuilds the
-  authored scene so high-resolution stress tests do not inherit stale state.
+  deformables expose up to 256 spring solves. Contexts 3 and 5 expose cloth
+  detail from 1× through 8× while preserving physical cloth dimensions;
+  context 8 exposes 8–512 rope nodes. Every accepted change rebuilds the authored
+  scene so high-resolution stress tests do not inherit stale state.
   Soft spring stiffness maps monotonically across `100`–`160,000`; `40,000` is
   the exact full-response point, while higher values perform proportionally
   more Jacobi passes instead of disappearing into a stiffness clamp.
@@ -214,7 +219,7 @@ Controls:
 The rectangle experiment remains available as:
 
 ```bash
-./build/meshprep-water-lab --scene lab
+./build/parallel-mater-lab --scene lab
 ```
 
 Lab controls retain Shift + left-drag for the dynamic rectangle target and
@@ -253,17 +258,18 @@ changes apply on the next tick without a reset.
 ## Build and run
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=86
-cmake --build build -j --target meshprep-water-lab meshprep-hybrid-tests
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=86 \
+  -DPARALLEL_MATER_BUILD_LAB=ON -DPARALLEL_MATER_BUILD_TESTS=ON
+cmake --build build -j --target parallel-mater-lab meshprep-hybrid-tests
 ctest --test-dir build --output-on-failure
 
 ./scripts/generate_softbody_assets.sh
 
-./build/meshprep-water-lab
-./build/meshprep-water-lab --context 7
-./build/meshprep-water-lab --scene lab
-./build/meshprep-water-lab --scene course --profile 120 --warmups 10
-./build/meshprep-water-lab --scene lab --profile 180 --warmups 10 --drive-box
+./build/parallel-mater-lab
+./build/parallel-mater-lab --context 7
+./build/parallel-mater-lab --scene lab
+./build/parallel-mater-lab --scene course --profile 120 --warmups 10
+./build/parallel-mater-lab --scene lab --profile 180 --warmups 10 --drive-box
 ```
 
 The timing HUD reports fluid and skin hierarchy work, fluid physics, skin
@@ -279,7 +285,7 @@ Press `M` immediately after an interesting event. Replay the resulting capture
 without advancing physics:
 
 ```bash
-./build/meshprep-water-lab --replay /tmp/meshprep-hybrid-captures/capture-TIMESTAMP-frame-N
+./build/parallel-mater-lab --replay /tmp/meshprep-hybrid-captures/capture-TIMESTAMP-frame-N
 ```
 
 Replay uses `Space` to play or pause recorded frames, Left/Right to step one

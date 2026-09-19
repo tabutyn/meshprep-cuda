@@ -25,15 +25,22 @@ jobs:
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_CUDA_ARCHITECTURES=86
-          -DMESHPREP_BUILD_BENCHMARKS=ON
+          -DPARALLEL_MATER_BUILD_TESTS=ON
+          -DPARALLEL_MATER_BUILD_EXAMPLES=ON
+          -DPARALLEL_MATER_BUILD_BENCHMARKS=ON
+          -DPARALLEL_MATER_BUILD_GALLERY=ON
+          -DPARALLEL_MATER_BUILD_LAB=ON
+          -DPARALLEL_MATER_BUILD_CAPTURE_TOOLS=ON
       - name: Build
         run: cmake --build build
+      - name: Run host tests and verify GPU tests skip cleanly
+        run: ctest --test-dir build --output-on-failure
       - name: Install
-        run: cmake --install build --prefix "$RUNNER_TEMP/meshprep-install"
+        run: cmake --install build --prefix "$RUNNER_TEMP/parallel-mater-install"
       - name: Build installed-package consumer
         run: >-
           cmake -S tests/package-consumer -B consumer-build -G Ninja
-          -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/meshprep-install"
+          -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/parallel-mater-install"
           -DCMAKE_CUDA_ARCHITECTURES=86
       - run: cmake --build consumer-build
 

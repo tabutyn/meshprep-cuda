@@ -550,6 +550,25 @@ __global__ void integrate_particles_kernel(
     const float3 old_position = positions[index];
     float3 velocity = add(velocities[index], multiply(forces[index], inverse_mass * dt));
     velocity = add(velocity, multiply(gravity, dt));
+    if (arena == GalleryArena::bowl) {
+        // The pairwise repulsion model is intentionally cheaper than an
+        // incompressible pressure solve. In a curved vessel its outer annulus
+        // otherwise finds a stable, visibly raised equilibrium. Apply a
+        // bounded hydrostatic equalization only to high, outer particles: it
+        // drives excess head inward while leaving the settled bulk and falling
+        // stream under ordinary gravity.
+        const float dx = old_position.x - bowl_center.x;
+        const float dz = old_position.z - bowl_center.z;
+        const float radial = sqrtf(dx * dx + dz * dz);
+        const float high = fmaxf(0.0F,
+            old_position.y - (bowl_center.y - 1.24F));
+        const float outer = fmaxf(0.0F, (radial - 0.82F) / 0.70F);
+        if (radial > 1.0e-6F && high > 0.0F && outer > 0.0F) {
+            const float acceleration = fminf(2.0F, 40.0F * high * outer);
+            velocity.x -= acceleration * dt * dx / radial;
+            velocity.z -= acceleration * dt * dz / radial;
+        }
+    }
     velocity = multiply(velocity, expf(-velocity_damping * dt));
     velocity = clamp_length(velocity, maximum_speed);
     float3 position = add(old_position, multiply(velocity, dt));
@@ -596,7 +615,7 @@ __global__ void contact_particles_rigid_sphere_kernel(
 __global__ void contact_particles_water_wheel_kernel(
     float3* positions, float3* velocities, std::uint32_t count,
     WaterWheelState wheel, float particle_radius, float particle_mass,
-    float dt, float maximum_speed, float* wheel_torque_impulses)
+    float maximum_speed, float* wheel_torque_impulses)
 {
     const std::uint32_t particle = blockIdx.x * blockDim.x + threadIdx.x;
     if (particle >= count) return;
@@ -665,19 +684,13 @@ __global__ void contact_particles_water_wheel_kernel(
         const float correction = fminf(hard_depth, 0.5F * particle_radius);
         position = add(position, multiply(normal, correction));
         const float3 old_velocity = velocity;
-        const float barrier_depth = fmaxf(0.0F,
-            particle_radius + water_wheel_fin_barrier_distance - separation);
-        const float activation = fminf(1.0F,
-            barrier_depth / water_wheel_fin_barrier_distance);
-        // The spring-like shell is speculative only while the particle moves
-        // into the trailing face. A resting overlap receives just enough speed
-        // to clear its geometric correction; repeatedly applying barrier
-        // acceleration there was the source of the upward water eruption.
+        // This is an inelastic velocity projection, not a spring. The former
+        // spring term plus correction/dt bias created separation velocity from
+        // resting overlap; the following fin then amplified that stored energy
+        // into the visible upward eruption.
         const float barrier_delta_speed = fminf(maximum_speed,
-            (approaching
-                ? activation * fmaxf(0.0F, -inward_speed) +
-                    water_wheel_fin_barrier_stiffness * barrier_depth * dt
-                : 0.0F) + correction / dt);
+            water_wheel_fin_response_delta(
+                tangent, inward_speed, particle_radius));
         velocity = clamp_length(add(velocity,
             multiply(normal, barrier_delta_speed)), maximum_speed);
         total_impulse = add(total_impulse,
@@ -1637,14 +1650,24 @@ HybridTimings HybridDroplet::step(
     SoftBodyCourse* soft_bodies,
     bool enable_rectangle_collider,
     RigidSphereState* rigid_sphere,
-    WaterWheelState* water_wheel)
+    WaterWheelState* water_wheel,
+    const float3* rigid_sphere_gravity_override)
 {
     nvtx3::scoped_range frame{"bounded_force/frame"};
     if (!finite3(rectangle_control_force) || !std::isfinite(rectangle_control_torque)) {
         throw std::invalid_argument("non-finite rectangle control force");
     }
+    if (rigid_sphere_gravity_override != nullptr &&
+        !finite3(*rigid_sphere_gravity_override)) {
+        throw std::invalid_argument("non-finite rigid sphere gravity override");
+    }
     if (rigid_sphere != nullptr && (!finite3(rigid_sphere->center) ||
-        !finite3(rigid_sphere->velocity) || !std::isfinite(rigid_sphere->radius) ||
+        !finite3(rigid_sphere->velocity) || !finite3(rigid_sphere->angular_velocity) ||
+        !std::isfinite(rigid_sphere->orientation.x) ||
+        !std::isfinite(rigid_sphere->orientation.y) ||
+        !std::isfinite(rigid_sphere->orientation.z) ||
+        !std::isfinite(rigid_sphere->orientation.w) ||
+        !std::isfinite(rigid_sphere->radius) ||
         !std::isfinite(rigid_sphere->mass) || rigid_sphere->radius <= 0.0F ||
         rigid_sphere->mass <= 0.0F)) {
         throw std::invalid_argument("invalid gallery rigid sphere");
@@ -1715,8 +1738,10 @@ HybridTimings HybridDroplet::step(
                 substep_options.fixed_dt, soft_body_gravity, stream);
         }
         if (rigid_sphere != nullptr) {
+            const float3 sphere_gravity = rigid_sphere_gravity_override != nullptr
+                ? *rigid_sphere_gravity_override : options_.gravity;
             rigid_sphere->velocity = add(rigid_sphere->velocity,
-                multiply(options_.gravity, substep_options.fixed_dt));
+                multiply(sphere_gravity, substep_options.fixed_dt));
             rigid_sphere->velocity = multiply(rigid_sphere->velocity,
                 expf(-0.25F * substep_options.fixed_dt));
             rigid_sphere->center = add(rigid_sphere->center,
@@ -1733,7 +1758,7 @@ HybridTimings HybridDroplet::step(
             contact_particles_water_wheel_kernel<<<particle_blocks, block_size, 0, stream>>>(
                 particle_positions_, particle_velocities_, options_.particle_count,
                 *water_wheel, options_.particle_radius, options_.particle_mass,
-                substep_options.fixed_dt, options_.maximum_particle_speed,
+                options_.maximum_particle_speed,
                 rectangle_torque_rows_);
             check(cudaGetLastError(), "launch fluid/water-wheel contact");
             check(cub::DeviceReduce::Sum(
@@ -1926,6 +1951,9 @@ HybridTimings HybridDroplet::step(
                     *rigid_sphere, substep_options.fixed_dt, stream);
                 project_gallery_contact(rigid_sphere->center, rigid_sphere->velocity,
                     rigid_sphere->radius, arena);
+                advance_rigid_sphere_rotation(*rigid_sphere, arena,
+                    soft_bodies->material().ground_friction,
+                    substep_options.fixed_dt);
             }
             check(cudaEventRecord(stage_end_[soft_contact_event], stream),
                 "record soft-body contact end");

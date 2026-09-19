@@ -31,6 +31,9 @@ struct ClothGridOptions {
 // the last node is the rigid-sphere attachment point used by context 8.
 [[nodiscard]] SoftBodyAsset make_soft_rope(
     std::uint32_t node_count = 32U, float spacing = 0.055F);
+// Forty independently braced 0.3 m deck tiles. Adjacent tile edges are joined
+// by two 0.2 m spring ropes, so an interior tile owns eight bridge ropes.
+[[nodiscard]] SoftBodyAsset make_rope_bridge();
 // Three-layer load-bearing cross used by the water wheel. A small central
 // volume is fixed to the axle and its four tips are fixed to the outer rim;
 // the material between them remains a connected, shear-braced soft graph.

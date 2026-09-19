@@ -79,7 +79,7 @@ void test_particle_tub_without_asset()
             frame.lattice_count == 0U &&
             frame.lattices == nullptr,
         "particle tub exposed undeclared components or omitted its arena");
-    require(frame.particle_systems[0].count == 15'000U,
+    require(frame.particle_systems[0].count == 20'000U,
         "particle tub exposed the wrong particle count");
     for (std::uint32_t peg = 0U; peg < waterlab::bowl_peg_count; ++peg) {
         const auto& body = frame.rigid_bodies[2U + peg];
@@ -105,7 +105,7 @@ void test_particle_tub_without_asset()
     require(std::isfinite(first.x) && std::isfinite(first.y) && std::isfinite(first.z),
         "particle tub produced a non-finite position");
     const auto stats = simulation.statistics();
-    require(stats.frame_index == 1U && stats.particle_count == 15'000U &&
+    require(stats.frame_index == 1U && stats.particle_count == 20'000U &&
             stats.surface_count == 0U &&
             stats.rigid_body_count == 2U + waterlab::bowl_peg_count &&
             stats.finite_failure_count == 0U,
@@ -122,7 +122,7 @@ void test_live_particle_resize()
     options.particle_count_override = 512U;
     meshprep::sim::GallerySimulation simulation;
     require(simulation.initialize(options).ok(), "small active particle prefix failed");
-    for (const std::uint32_t count : {2'048U, 256U, 15'000U, 3'000U}) {
+    for (const std::uint32_t count : {2'048U, 256U, 20'000U, 3'000U}) {
         require(simulation.resize_particles(count).ok(),
             "runtime particle spawn/removal failed");
         require(simulation.render_view().particle_systems[0].count == count &&
@@ -133,7 +133,7 @@ void test_live_particle_resize()
             "resized particle system became non-finite");
     }
     require(!simulation.resize_particles(255U).ok() &&
-            !simulation.resize_particles(15'001U).ok(),
+            !simulation.resize_particles(20'001U).ok(),
         "particle resize failed to enforce its reserved bounds");
 }
 
@@ -152,15 +152,33 @@ void test_procedural_soft_body_fluid()
 
     auto frame = simulation.render_view();
     require(frame.particle_system_count == 1U && frame.surface_count == 1U &&
-            frame.rigid_body_count == 7U + waterlab::water_wheel_fin_count &&
+            frame.rigid_body_count == 12U + waterlab::water_wheel_fin_count &&
             frame.lattice_count == 1U,
         "soft-body/fluid context exposed an undeclared component view");
+    const std::uint32_t first_platform=7U+waterlab::water_wheel_fin_count;
+    const auto& left_platform = frame.rigid_bodies[first_platform];
+    const auto& right_platform = frame.rigid_bodies[first_platform+1U];
+    require(left_platform.translation.z == waterlab::water_wheel_stage_z &&
+            right_platform.translation.z == waterlab::water_wheel_stage_z &&
+            left_platform.translation.x < waterlab::water_wheel_center.x &&
+            right_platform.translation.x > waterlab::water_wheel_center.x &&
+            left_platform.scale.z == waterlab::water_wheel_top_platform_half_depth &&
+            right_platform.scale.z == waterlab::water_wheel_top_platform_half_depth,
+        "public water-wheel recipe omitted or misplaced its two front platforms");
+    const auto& near_bumper=frame.rigid_bodies[first_platform+2U];
+    const auto& far_bumper=frame.rigid_bodies[first_platform+3U];
+    const auto& right_bumper=frame.rigid_bodies[first_platform+4U];
+    require(near_bumper.translation.z<waterlab::water_wheel_stage_z &&
+            far_bumper.translation.z>waterlab::water_wheel_stage_z &&
+            right_bumper.translation.x>waterlab::water_wheel_center.x+
+                waterlab::water_wheel_top_platform_outer_x,
+        "public water-wheel recipe omitted its stage bumper walls");
     require(frame.surfaces[0].mesh.vertex_count != 0U &&
             frame.surfaces[0].mesh.triangle_count != 0U &&
             frame.surfaces[0].triangle_active != nullptr,
         "soft-body render surface is incomplete");
     const auto& lattice = frame.lattices[0];
-    require(lattice.nodes_per_instance == 2'310U &&
+    require(lattice.nodes_per_instance == 1'710U &&
             lattice.node_count == lattice.nodes_per_instance * lattice.instance_count &&
             lattice.bonds_per_instance > 0U && lattice.node_radius > 0.0F,
         "public soft-body lattice omitted volume nodes or topology");
@@ -184,7 +202,7 @@ void test_procedural_soft_body_fluid()
     const auto stats = simulation.statistics();
     require(stats.frame_index == 1U && stats.particle_count == 2'000U &&
             stats.surface_count == 1U &&
-            stats.rigid_body_count == 7U + waterlab::water_wheel_fin_count &&
+            stats.rigid_body_count == 12U + waterlab::water_wheel_fin_count &&
             stats.finite_failure_count == 0U,
         "procedural water-wheel context statistics are inconsistent");
 
@@ -235,12 +253,14 @@ void test_every_public_recipe_steps_declared_components()
                     if (recipe.id == meshprep::sim::ExampleContext::particle_bowl)
                         return 2U + waterlab::bowl_peg_count;
                     if (recipe.id == meshprep::sim::ExampleContext::soft_body_fluid)
-                        return 7U + waterlab::water_wheel_fin_count;
+                        return 12U + waterlab::water_wheel_fin_count;
                     if (recipe.id == meshprep::sim::ExampleContext::particles_cloth)
                         return 15U;
                     if (recipe.id == meshprep::sim::ExampleContext::soft_body_cloth)
                         return 6U;
                     if (recipe.id == meshprep::sim::ExampleContext::rope_rigid)
+                        return 3U;
+                    if (recipe.id == meshprep::sim::ExampleContext::rope_bridge)
                         return 3U;
                     return 7U;
                 }()) &&
@@ -326,6 +346,7 @@ void test_explicit_physics_overrides()
     options.fixed_step.timestep = 1.0F / 120.0F;
     options.solver_iterations_override = 2U;
     options.gravity_override = make_float3(0.25F, -1.5F, 0.5F);
+    options.cloth_detail_override = 3U;
 
     meshprep::sim::GallerySimulation simulation;
     require(simulation.initialize(options).ok(),
@@ -337,19 +358,39 @@ void test_explicit_physics_overrides()
             exactly_equal(resolved.gravity, *options.gravity_override) &&
             !resolved.rigid_course_preset,
         "public gallery did not report exact resolved overrides");
+    const auto detailed_cloth = simulation.render_view().lattices[0];
+    require(detailed_cloth.nodes_per_instance == (27U * 3U + 1U) *
+            (21U * 3U + 1U),
+        "public cloth-detail override did not retessellate context 5");
     require(simulation.step().ok() && simulation.step().ok(),
         "overridden public gallery recipe failed repeated steps");
 
     options.solver_iterations_override = 0U;
     require(!simulation.initialize(options).ok(),
         "zero solver-iteration override was accepted");
-    options.solver_iterations_override = 9U;
+    options.solver_iterations_override =
+        waterlab::HybridDroplet::maximum_physics_iterations + 1U;
     require(!simulation.initialize(options).ok(),
         "out-of-range solver-iteration override was accepted");
     options.solver_iterations_override = 2U;
+    options.cloth_detail_override = 9U;
+    require(!simulation.initialize(options).ok(),
+        "out-of-range cloth-detail override was accepted");
+    options.cloth_detail_override = 3U;
     options.gravity_override = make_float3(NAN, 0.0F, 0.0F);
     require(!simulation.initialize(options).ok(),
         "non-finite gravity override was accepted");
+
+    meshprep::sim::GallerySimulationOptions hanging_options;
+    hanging_options.context = meshprep::sim::ExampleContext::cloth_rigid;
+    hanging_options.cloth_detail_override = 2U;
+    meshprep::sim::GallerySimulation hanging_cloth;
+    require(hanging_cloth.initialize(hanging_options).ok(),
+        "context-3 cloth-detail override was rejected");
+    const auto hanging_lattice = hanging_cloth.render_view().lattices[0];
+    require(hanging_lattice.nodes_per_instance == (27U * 2U + 1U) *
+            (29U * 2U + 1U),
+        "context-3 cloth-detail override did not retessellate the cloth");
 }
 
 meshprep::Status invoke_during_stream_capture(

@@ -582,6 +582,11 @@ void test_seeded_triangle_soup_against_cpu()
 
 int main()
 {
+    int device_count = 0;
+    if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count == 0) {
+        std::puts("SKIP: no CUDA device");
+        return 77;
+    }
     test_empty_input();
     test_triangle_and_degenerate_normals();
     test_smooth_and_sharp_quad();

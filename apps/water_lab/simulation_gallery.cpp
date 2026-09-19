@@ -43,6 +43,10 @@ HybridOptions make_context_physics(
         options.physical_skin_frequency = 10U;
         options.render_skin_frequency = 10U;
         options.particle_repulsion = 20.0F;
+        options = with_course_motion_multiplier(options, 8.0F);
+        // Preserve the authored material control while selecting the requested
+        // 8x motion preset; bracket changes continue scaling it from here.
+        options.particle_repulsion = 20.0F;
     }
     if (!course) {
         options.physics_iterations = 4U;
@@ -52,16 +56,17 @@ HybridOptions make_context_physics(
     }
     if (context == ExampleContext::particle_bowl) {
         options.gravity = make_float3(0.0F, -19.62F, 0.0F);
-        options.particle_count = 15'000U;
-        options.particle_capacity = 15'000U;
+        options.particle_count = 20'000U;
+        options.particle_capacity = 20'000U;
         options.particle_initial_center = make_float3(0.0F, 1.05F, -1.8F);
         // A lower-repulsion HCP fill retains a compact pile instead of
         // spreading across the bowl under the authored two-g load.
-        options.particle_repulsion = 20.0F;
+        options.particle_repulsion = 50.0F;
     } else if (context == ExampleContext::particles_cloth) {
         options.particle_count = 2'500U;
         options.particle_initial_center = make_float3(
-            catch_cloth_center.x, 0.85F, catch_cloth_center.z);
+            catch_cloth_center.x - 1.18F, 0.52F,
+            catch_cloth_center.z + 0.98F);
     } else if (context == ExampleContext::soft_body_fluid) {
         options.particle_count = 2'000U;
         const float spawn_x = water_wheel_entry_x - 2.15F;
@@ -99,6 +104,8 @@ HybridOptions make_context_physics(
         options.arena = GalleryArena::ground_box;
     else if (context == ExampleContext::rope_rigid)
         options.arena = GalleryArena::rope_post;
+    else if (context == ExampleContext::rope_bridge)
+        options.arena = GalleryArena::rope_bridge;
     options.particle_skin_coupling =
         context != ExampleContext::particle_bowl &&
         context != ExampleContext::particles_cloth &&
@@ -110,7 +117,8 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
     meshprep::sim::ExampleContext context,
     const HybridOptions& physics,
     std::string_view soft_body_asset_path,
-    std::uint32_t rope_node_count)
+    std::uint32_t rope_node_count,
+    std::uint32_t cloth_detail)
 {
     SoftBodyOptions options;
     options.fixed_dt = physics.fixed_dt;
@@ -119,7 +127,8 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         context == meshprep::sim::ExampleContext::soft_body_fluid ||
         context == meshprep::sim::ExampleContext::soft_body_cloth ||
         context == meshprep::sim::ExampleContext::particles_cloth ||
-        context == meshprep::sim::ExampleContext::rope_rigid)
+        context == meshprep::sim::ExampleContext::rope_rigid ||
+        context == meshprep::sim::ExampleContext::rope_bridge)
         options.spring_solver_iterations = 16U;
     options.maximum_speed = physics.maximum_skin_speed;
     // The cloth carries its own weight from two pins before any impact.
@@ -150,8 +159,8 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         // threshold keeps the tear local around the sphere instead of erasing
         // the entire hanging sheet.
         options.spring_stiffness = 4'000.0F;
-        options.strength_multiplier = 4.0F;
-        options.fracture_persistence_substeps = 32U;
+        options.strength_multiplier = 1.5F;
+        options.fracture_persistence_substeps = 16U;
     } else if (context == meshprep::sim::ExampleContext::particles_cloth) {
         // A 2,500-particle load is shared by sixteen support junctions. Use the same
         // converged fixed-graph solve as the anchored post instead of letting
@@ -159,23 +168,35 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         options.spring_stiffness = 4'500.0F;
         options.strength_multiplier = 4.0F;
         options.velocity_damping = 0.45F;
+    } else if (context == meshprep::sim::ExampleContext::soft_body_fluid) {
+        // Shared by the top stage and the extruded outer wheel. It controls
+        // rigid-ball rolling only; water and wheel gravity remain authored.
+        options.ground_friction = 10.0F;
     } else if (context == meshprep::sim::ExampleContext::rope_rigid) {
         options.spring_stiffness = 18'000.0F;
         options.strength_multiplier = 64.0F;
         options.spring_damping_ratio = 0.9F;
         options.velocity_damping = 0.35F;
         options.render_internal_members = true;
+    } else if (context == meshprep::sim::ExampleContext::rope_bridge) {
+        options.spring_stiffness = 32'000.0F;
+        options.strength_multiplier = 64.0F;
+        options.spring_damping_ratio = 0.92F;
+        options.velocity_damping = 0.55F;
+        options.render_internal_members = true;
     }
     options.course_board_collisions =
         context != meshprep::sim::ExampleContext::soft_body_fluid;
     options.arena = physics.arena;
     options.render_internal_members =
-        context == meshprep::sim::ExampleContext::soft_body_rigid ||
-        context == meshprep::sim::ExampleContext::rope_rigid;
+        context == meshprep::sim::ExampleContext::rope_rigid ||
+        context == meshprep::sim::ExampleContext::rope_bridge;
     options.fracture_before_projection =
-        context == meshprep::sim::ExampleContext::cloth_rigid;
+        context == meshprep::sim::ExampleContext::cloth_rigid ||
+        context == meshprep::sim::ExampleContext::particles_cloth;
     options.preserve_fractured_triangle_shape =
-        context == meshprep::sim::ExampleContext::cloth_rigid;
+        context == meshprep::sim::ExampleContext::cloth_rigid ||
+        context == meshprep::sim::ExampleContext::particles_cloth;
 
     using meshprep::sim::ExampleContext;
     if (context == ExampleContext::particle_bowl ||
@@ -191,20 +212,38 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         rope = translate_soft_body_asset(std::move(rope), rope_anchor);
         return std::make_unique<SoftBodyCourse>(std::move(rope), options);
     }
+    if (context == ExampleContext::rope_bridge) {
+        SoftBodyAsset bridge = make_rope_bridge();
+        // Diagnostic context: hold every tile corner and rope endpoint fixed.
+        // The rigid sphere still collides with the tile interiors, but cannot
+        // inject energy into bridge modes. This isolates whether the observed
+        // launch comes from rigid contact rather than bridge deformation.
+        for (std::uint32_t& flags : bridge.voxel_flags)
+            flags |= soft_body_voxel_pinned;
+        return std::make_unique<SoftBodyCourse>(std::move(bridge), options);
+    }
     if (context == ExampleContext::cloth_rigid ||
         context == ExampleContext::particles_cloth) {
+        cloth_detail = cloth_detail == 0U
+            ? default_cloth_detail(context)
+            : std::clamp(cloth_detail, 1U, 8U);
+        // Detail refines one physical sheet; it must not multiply its mass by
+        // detail squared. Keeping total areal mass constant also prevents a
+        // high-detail hanging cloth tearing under its own newly-added weight.
+        options.voxel_mass /= static_cast<float>(cloth_detail*cloth_detail);
+        options.spring_solver_iterations = std::min(256U,
+            std::max(options.spring_solver_iterations,16U*cloth_detail));
         ClothGridOptions cloth;
-        cloth.columns = context == ExampleContext::cloth_rigid
-            ? 28U : catch_cloth_columns;
-        cloth.rows = context == ExampleContext::cloth_rigid
-            ? 30U : catch_cloth_rows;
-        cloth.spacing = context == ExampleContext::cloth_rigid
-            ? 0.065F : catch_cloth_spacing;
+        const bool hanging = context == ExampleContext::cloth_rigid;
+        cloth.columns = 27U * cloth_detail + 1U;
+        cloth.rows = (hanging ? 29U : 21U) * cloth_detail + 1U;
+        cloth.spacing = (hanging ? 0.065F : 0.13F) /
+            static_cast<float>(cloth_detail);
         cloth.top_center = context == ExampleContext::particles_cloth
             ? make_float3(0.0F, 0.0F, 0.0F)
             : make_float3(0.0F,
                 course_floor_y + static_cast<float>(cloth.rows - 1U) * cloth.spacing,
-                -0.8F);
+                -1.40F);
         SoftBodyAsset asset = make_cloth_grid(cloth);
         if (context == ExampleContext::particles_cloth) {
             asset = rotate_cloth_to_horizontal(std::move(asset));
@@ -232,7 +271,13 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
                         std::end(support_rows), row) != std::end(support_rows);
                     const bool support_column = std::find(std::begin(support_columns),
                         std::end(support_columns), column) != std::end(support_columns);
-                    if (support_row || support_column)
+                    const bool goal_interior =
+                        column > 2U * (cloth.columns - 1U) / 3U &&
+                        row < (cloth.rows - 1U) / 3U && row > 0U &&
+                        column + 1U < cloth.columns && row + 1U < cloth.rows;
+                    // Eight panels are immovable cloth-covered supports. Only
+                    // the far-right goal panel has a live, tearable interior.
+                    if (support_row || support_column || !goal_interior)
                         asset.voxel_flags[row * cloth.columns + column] |=
                             soft_body_voxel_pinned;
                 }
@@ -267,15 +312,20 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         SoftBodyAsset sphere = make_soft_sphere();
         const float spacing = sphere.nominal_spacing;
         sphere = translate_soft_body_asset(std::move(sphere),
-            make_float3(0.0F, course_floor_y + 0.46F, -0.35F));
+            make_float3(0.0F, course_floor_y + 0.55F, -0.35F));
         ClothGridOptions cloth;
         cloth.columns = 24U;
         cloth.rows = 24U;
         cloth.spacing = spacing;
-        cloth.top_center = make_float3(0.0F, 1.05F, -1.8F);
+        cloth.top_center = make_float3(0.0F,
+            course_floor_y + static_cast<float>(cloth.rows - 1U) * spacing,
+            -2.35F);
         SoftBodyAsset curtain = make_cloth_grid(cloth);
-        for (std::uint32_t column = 0U; column < cloth.columns; ++column)
+        for (std::uint32_t column = 0U; column < cloth.columns; ++column) {
             curtain.voxel_flags[column] |= soft_body_voxel_pinned;
+            curtain.voxel_flags[(cloth.rows - 1U) * cloth.columns + column] |=
+                soft_body_voxel_pinned;
+        }
         curtain.file_flags |= soft_body_asset_free_body;
 
         // Add a second, horizontal cloth surface over the rigid ground. Its
@@ -309,6 +359,9 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         options.cross_source_nodes = 1'000U;
         options.cross_target_triangle_first =
             static_cast<std::uint32_t>(sphere.render_triangles.size());
+        options.surface_triangle_split = options.cross_target_triangle_first;
+        options.secondary_surface_triangle_split = options.surface_triangle_split +
+            static_cast<std::uint32_t>(curtain.render_triangles.size());
         SoftBodyAsset cloth_surfaces = merge_soft_body_assets(curtain, ground_cloth);
         auto result = std::make_unique<SoftBodyCourse>(
             merge_soft_body_assets(sphere, cloth_surfaces), options);
@@ -317,10 +370,15 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
     }
 
     if (context == ExampleContext::soft_body_fluid) {
-        SoftBodyAsset front = translate_soft_body_asset(make_soft_cross(), make_float3(
+        // A 31x31 cross reaches the 1.35 m rim without dominating the scene.
+        // The previous 41x41, 2 m-radius cross was larger than the useful
+        // wheel and added compliant mass well outside the water path.
+        SoftBodyAsset front = translate_soft_body_asset(
+            make_soft_cross(31U, 5U, 0.09F), make_float3(
             water_wheel_center.x, water_wheel_center.y,
             water_wheel_center.z + water_wheel_cross_offset));
-        SoftBodyAsset back = translate_soft_body_asset(make_soft_cross(), make_float3(
+        SoftBodyAsset back = translate_soft_body_asset(
+            make_soft_cross(31U, 5U, 0.09F), make_float3(
             water_wheel_center.x, water_wheel_center.y,
             water_wheel_center.z - water_wheel_cross_offset));
         SoftBodyAsset cross = merge_soft_body_assets(front, back);
@@ -336,8 +394,29 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
     SoftBodyAsset cylinder = load_soft_body_asset(std::string(soft_body_asset_path));
 
     if (context == ExampleContext::soft_body_rigid) {
-        // Hang the column from the room ceiling.  Only the authored top cap is
-        // prescribed; the lower end is free so the sphere can strike it.
+        // Context 4 is a 4x5 curtain of half-height, one-fifth-width cylinders.
+        // Scale the authored rest state before constructing its fixed graph so
+        // rest lengths, rendering and collision all describe the same object.
+        for (float3& point : cylinder.rest_voxels) {
+            point.x *= 0.20F;
+            point.y *= 0.50F;
+            point.z *= 0.20F;
+        }
+        for (float3& point : cylinder.render_positions) {
+            point.x *= 0.20F;
+            point.y *= 0.50F;
+            point.z *= 0.20F;
+        }
+        cylinder.voxel_radius *= 0.20F;
+        cylinder.nominal_spacing *= 0.20F;
+        for (SoftBodyEdge& edge : cylinder.edges) {
+            const float3 a = cylinder.rest_voxels[edge.vertices.x];
+            const float3 b = cylinder.rest_voxels[edge.vertices.y];
+            edge.rest_length = std::sqrt(
+                (a.x-b.x)*(a.x-b.x) + (a.y-b.y)*(a.y-b.y) +
+                (a.z-b.z)*(a.z-b.z));
+        }
+        options.instance_count = 20U;
         const float maximum_y = std::max_element(cylinder.rest_voxels.begin(),
             cylinder.rest_voxels.end(), [](float3 a, float3 b) {
                 return a.y < b.y;
@@ -350,8 +429,15 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
             }
         }
         const float ceiling = hanging_ceiling_y;
-        options.instance_origins[0] = make_float3(
-            0.0F, ceiling - 0.02F - maximum_y, -1.8F);
+        for (std::uint32_t row = 0U; row < 4U; ++row) {
+            for (std::uint32_t column = 0U; column < 5U; ++column) {
+                const std::uint32_t instance = row * 5U + column;
+                options.instance_origins[instance] = make_float3(
+                    -0.88F + 0.44F * static_cast<float>(column),
+                    ceiling - 0.02F - maximum_y,
+                    -2.46F + 0.44F * static_cast<float>(row));
+            }
+        }
     } else {
         // The authored bottom ring remains pinned in the obstacle course.
         options.instance_origins[0] = make_float3(
@@ -364,7 +450,8 @@ FluidDisplay default_context_display(meshprep::sim::ExampleContext context) noex
 {
     return context == meshprep::sim::ExampleContext::water_course ||
         context == meshprep::sim::ExampleContext::particle_bowl ||
-        context == meshprep::sim::ExampleContext::particles_cloth
+        context == meshprep::sim::ExampleContext::particles_cloth ||
+        context == meshprep::sim::ExampleContext::soft_body_fluid
         ? FluidDisplay::Surface : FluidDisplay::Particles;
 }
 
@@ -386,20 +473,32 @@ RigidSphereState initial_rigid_sphere(
         // Start far enough from the tensioned cloth to make the approach
         // legible. Its lower pinned row is buried below the floor rather than
         // protruding into the sphere's path as an invisible curb.
-        sphere.center = make_float3(0.0F, 0.18F, 1.0F);
+        sphere.center = make_float3(0.0F, 0.18F, 1.45F);
         sphere.velocity = make_float3(0.0F, 0.0F, 0.0F);
         sphere.mass = 250.0F;
     } else if (context == meshprep::sim::ExampleContext::particles_cloth) {
         sphere.radius = 0.17F;
         sphere.mass = 12.0F;
         sphere.center = make_float3(
-            catch_cloth_center.x, 1.35F, catch_cloth_center.z);
-        sphere.velocity = make_float3(0.0F, -1.20F, 0.0F);
+            catch_cloth_center.x - 1.18F, 0.58F,
+            catch_cloth_center.z + 0.98F);
+        sphere.velocity = make_float3(0.0F, -0.35F, 0.0F);
     } else if (context == meshprep::sim::ExampleContext::soft_body_rigid) {
         sphere.radius = 0.34F;
         sphere.mass = 80.0F;
         sphere.center = make_float3(-2.0F, course_floor_y + sphere.radius, -1.8F);
         sphere.velocity = make_float3(1.8F, 0.0F, 0.0F);
+    } else if (context == meshprep::sim::ExampleContext::soft_body_fluid) {
+        // Start on the right stage and cross over the wheel toward the open
+        // left exit. Bumper rails confine lateral motion to the stage.
+        sphere.radius = 0.26F;
+        sphere.mass = 24.0F;
+        sphere.center = make_float3(
+            0.5F * (water_wheel_center.x + water_wheel_top_platform_outer_x +
+                water_wheel_center.x + water_wheel_top_platform_gap_half_width),
+            water_wheel_top_platform_y + sphere.radius,
+            water_wheel_stage_z);
+        sphere.velocity = {};
     } else if (context == meshprep::sim::ExampleContext::rope_rigid) {
         rope_node_count = std::clamp(rope_node_count, 8U, 512U);
         const float node_radius = 0.36F * rope_length /
@@ -409,6 +508,13 @@ RigidSphereState initial_rigid_sphere(
         sphere.center = make_float3(
             rope_anchor.x + rope_length + sphere.radius + node_radius,
             rope_anchor.y, rope_anchor.z);
+        sphere.velocity = {};
+    } else if (context == meshprep::sim::ExampleContext::rope_bridge) {
+        sphere.radius = 0.34F;
+        sphere.mass = 45.0F;
+        sphere.center = make_float3(0.0F,
+            rope_bridge_land_y + sphere.radius,
+            rope_bridge_land_inner_z + 0.65F);
         sphere.velocity = {};
     } else {
         // A grazing track loads the breakable wall while not demanding that a

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-#include <meshprep/meshprep.hpp>
+#include <parallel_mater/geometry.hpp>
 
 #include <cuda_runtime.h>
 
@@ -20,18 +20,19 @@ int main()
     cudaMemcpy(device_positions, positions, sizeof(positions), cudaMemcpyHostToDevice);
     cudaMemcpy(device_triangles, triangles, sizeof(triangles), cudaMemcpyHostToDevice);
 
-    meshprep::Workspace workspace;
-    meshprep::NormalOutput normals;
-    meshprep::Hierarchy hierarchy;
-    const meshprep::DeviceMeshView mesh{device_positions, 3, device_triangles, 1};
-    const meshprep::Status normal_status =
-        meshprep::compute_normals(mesh, {}, workspace, normals);
-    const meshprep::Status hierarchy_status =
-        meshprep::build_hierarchy(mesh, {}, workspace, hierarchy);
+    parallel_mater::Workspace workspace;
+    parallel_mater::NormalOutput normals;
+    parallel_mater::Hierarchy hierarchy;
+    const parallel_mater::DeviceMeshView mesh{
+        device_positions, 3, device_triangles, 1};
+    const parallel_mater::Status normal_status =
+        parallel_mater::compute_normals(mesh, {}, workspace, normals);
+    const parallel_mater::Status hierarchy_status =
+        parallel_mater::build_hierarchy(mesh, {}, workspace, hierarchy);
     if (!normal_status || !hierarchy_status) {
         std::fprintf(
             stderr,
-            "meshprep failed: %s / %s\n",
+            "ParallelMater failed: %s / %s\n",
             normal_status.message,
             hierarchy_status.message);
         cudaFree(device_triangles);

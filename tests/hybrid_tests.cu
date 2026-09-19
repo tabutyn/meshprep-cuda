@@ -314,6 +314,77 @@ void test_wireframe_box_render()
     require(orange_pixels < 2'000U, "rectangle rendered as filled faces, not a wireframe");
 }
 
+void test_bowl_contact_paint()
+{
+    waterlab::RayTracer renderer;
+    float3* device_position{};
+    require(cudaMalloc(&device_position, sizeof(float3)) == cudaSuccess,
+        "failed to allocate bowl paint fixture");
+    const float3 center = waterlab::bowl_center;
+    require(cudaMemcpy(device_position, &center, sizeof(center),
+                cudaMemcpyHostToDevice) == cudaSuccess,
+        "failed to upload non-contact bowl fixture");
+    const float dry = renderer.update_bowl_paint(
+        device_position, 1U, 0.0225F, true);
+    require(dry > 0.0F,
+        "bowl did not initialize the permanently occluded peg footprints");
+    const float3 escaped = make_float3(waterlab::bowl_center.x,
+        waterlab::bowl_center.y - 2.0F * waterlab::bowl_inner_radius,
+        waterlab::bowl_center.z);
+    require(cudaMemcpy(device_position, &escaped, sizeof(escaped),
+                cudaMemcpyHostToDevice) == cudaSuccess,
+        "failed to upload escaped bowl fixture");
+    const float escaped_paint = renderer.update_bowl_paint(
+        device_position, 1U, 0.0225F, false);
+    require(escaped_paint == dry,
+        "escaped water painted a bowl pixel without surface contact");
+    const float3 contact = make_float3(waterlab::bowl_center.x,
+        waterlab::bowl_center.y - waterlab::bowl_inner_radius + 0.0225F,
+        waterlab::bowl_center.z);
+    require(cudaMemcpy(device_position, &contact, sizeof(contact),
+                cudaMemcpyHostToDevice) == cudaSuccess,
+        "failed to upload contacting bowl fixture");
+    const float first = renderer.update_bowl_paint(
+        device_position, 1U, 0.0225F, false);
+    const float repeated = renderer.update_bowl_paint(
+        device_position, 1U, 0.0225F, false);
+    require(first > dry && repeated == first,
+        "bowl contact pixels were not persistent and idempotent");
+    cudaFree(device_position);
+}
+
+void test_sphere_contact_paint()
+{
+    waterlab::RayTracer renderer;
+    float3* device_position{};
+    require(cudaMalloc(&device_position, sizeof(float3)) == cudaSuccess,
+        "failed to allocate sphere paint fixture");
+    waterlab::RigidSphereState sphere;
+    sphere.center = make_float3(0.4F, -0.2F, 0.3F);
+    sphere.radius = 0.40F;
+    const float3 separated = make_float3(2.0F, 2.0F, 2.0F);
+    require(cudaMemcpy(device_position, &separated, sizeof(separated),
+                cudaMemcpyHostToDevice) == cudaSuccess,
+        "failed to upload separated sphere paint fixture");
+    const float dry = renderer.update_sphere_paint(
+        device_position, 1U, 0.035F, sphere, true);
+    require(dry == 0.0F,
+        "sphere painted a texel without cylinder contact");
+    const float3 contact = make_float3(
+        sphere.center.x + sphere.radius + 0.02F,
+        sphere.center.y, sphere.center.z);
+    require(cudaMemcpy(device_position, &contact, sizeof(contact),
+                cudaMemcpyHostToDevice) == cudaSuccess,
+        "failed to upload contacting sphere paint fixture");
+    const float first = renderer.update_sphere_paint(
+        device_position, 1U, 0.035F, sphere, false);
+    const float repeated = renderer.update_sphere_paint(
+        device_position, 1U, 0.035F, sphere, false);
+    require(first > 0.0F && repeated == first,
+        "sphere contact paint was not persistent and texel-granular");
+    cudaFree(device_position);
+}
+
 std::size_t differing_pixels(
     const std::vector<uchar4>& left, const std::vector<uchar4>& right)
 {
@@ -484,12 +555,14 @@ void test_soft_post_occlusion()
     std::fill(detached.active_render_triangles.begin(), detached.active_render_triangles.end(), 0U);
     detached.statistics.broken_edge_count = static_cast<std::uint32_t>(detached.active_edges.size());
     soft_bodies.restore_state(detached);
-    for (const bool course : {false, true}) {
-        require(differing_pixels(
-                render(waterlab::FluidDisplay::Particles, {}, course),
-                render(waterlab::FluidDisplay::Particles, soft_bodies.render_view(), course)) > 500U,
-            "broken soft-body graph erased its material surface");
-    }
+    // Use the empty analytic scene for this comparison. Course mode already
+    // draws an opaque rigid post at this exact position, so adding the
+    // geometrically coincident soft post cannot be detected in its pixels.
+    require(differing_pixels(
+            render(waterlab::FluidDisplay::Particles, {}, false),
+            render(waterlab::FluidDisplay::Particles,
+                soft_bodies.render_view(), false)) > 500U,
+        "broken soft-body graph erased its material surface");
     cudaFree(device_bounds);
     cudaFree(device_point);
 }
@@ -525,6 +598,8 @@ int main()
         test_particle_only_mode();
         test_state_capture_restore();
         test_wireframe_box_render();
+        test_bowl_contact_paint();
+        test_sphere_contact_paint();
         test_fluid_visual_render_modes();
         test_soft_post_occlusion();
         std::puts("PASS meshprep-hybrid-tests");

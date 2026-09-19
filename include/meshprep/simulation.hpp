@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
+#include <meshprep/game.hpp>
 #include <meshprep/meshprep.hpp>
 
 #include <vector_types.h>
@@ -10,78 +11,10 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 
 namespace meshprep::sim {
-
-// Components are deliberately composable. Example contexts are recipes built
-// from these flags; they are not separate solver implementations.
-enum class Component : std::uint32_t {
-    none = 0,
-    fluid_particles = 1U << 0U,
-    water_skin = 1U << 1U,
-    cloth = 1U << 2U,
-    soft_body = 1U << 3U,
-    rigid_bodies = 1U << 4U,
-    hand_particles = 1U << 5U,
-};
-
-[[nodiscard]] constexpr Component operator|(Component left, Component right) noexcept
-{
-    return static_cast<Component>(
-        static_cast<std::uint32_t>(left) | static_cast<std::uint32_t>(right));
-}
-
-[[nodiscard]] constexpr bool has_component(Component set, Component component) noexcept
-{
-    return (static_cast<std::uint32_t>(set) & static_cast<std::uint32_t>(component)) != 0U;
-}
-
-enum class ExampleContext : std::uint8_t {
-    water_course = 1,
-    particle_bowl = 2,
-    cloth_rigid = 3,
-    soft_body_rigid = 4,
-    particles_cloth = 5,
-    soft_body_fluid = 6,
-    soft_body_cloth = 7,
-    rope_rigid = 8,
-};
-
-struct ExampleContextInfo {
-    ExampleContext id{};
-    char key{};
-    std::string_view slug{};
-    std::string_view title{};
-    Component components{};
-};
-
-inline constexpr std::array<ExampleContextInfo, 8> example_contexts{{
-    {ExampleContext::water_course, '1', "water-course", "Water obstacle course",
-        Component::fluid_particles | Component::water_skin | Component::rigid_bodies},
-    {ExampleContext::particle_bowl, '2', "particle-bowl", "Particles in a hemispherical bowl",
-        Component::fluid_particles | Component::rigid_bodies},
-    {ExampleContext::cloth_rigid, '3', "cloth-rigid", "Rolling rigid sphere and hanging cloth",
-        Component::cloth | Component::rigid_bodies},
-    {ExampleContext::soft_body_rigid, '4', "soft-body-rigid", "Rolling rigid sphere and soft post",
-        Component::soft_body | Component::rigid_bodies},
-    {ExampleContext::particles_cloth, '5', "particles-cloth", "Rigid sphere, particles, and catching cloth",
-        Component::fluid_particles | Component::cloth | Component::rigid_bodies},
-    {ExampleContext::soft_body_fluid, '6', "soft-body-fluid", "Water wheel with a soft axle cross",
-        Component::soft_body | Component::fluid_particles | Component::rigid_bodies},
-    {ExampleContext::soft_body_cloth, '7', "soft-body-cloth", "Rolling soft sphere and cloth",
-        Component::soft_body | Component::cloth | Component::rigid_bodies},
-    {ExampleContext::rope_rigid, '8', "rope-rigid", "Rigid sphere tethered to a center post",
-        Component::soft_body | Component::rigid_bodies},
-}};
-
-[[nodiscard]] constexpr const ExampleContextInfo* find_example_context(char key) noexcept
-{
-    for (const auto& context : example_contexts) {
-        if (context.key == key) return &context;
-    }
-    return nullptr;
-}
 
 // Read-only CUDA views form the rendering boundary. Simulation implementations
 // retain ownership and may replace their allocations between frames; callers
@@ -171,6 +104,9 @@ struct GallerySimulationOptions {
     std::optional<std::uint32_t> particle_count_override{};
     std::optional<std::uint32_t> physical_skin_frequency_override{};
     std::optional<std::uint32_t> rope_node_count_override{};
+    // Multiplies each authored cloth interval in contexts 3 and 5 while
+    // preserving the fixture's physical dimensions. Range: 1..8.
+    std::optional<std::uint32_t> cloth_detail_override{};
     std::string_view soft_body_asset_path{};
 };
 
@@ -240,6 +176,34 @@ public:
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
+};
+
+// Fluent convenience layer for applications. Portable values live in
+// SimulationConfig; CUDA-specific gravity, asset path, stream, and ownership
+// enter only at build(). Existing GallerySimulationOptions remains available
+// for callers that prefer aggregate initialization.
+class SimulationBuilder {
+public:
+    explicit SimulationBuilder(ExampleContext context) noexcept
+        : config_(SimulationConfig::for_level(context)) {}
+
+    SimulationBuilder& timestep(float value) noexcept;
+    SimulationBuilder& iterations(std::uint32_t value) noexcept;
+    SimulationBuilder& particles(std::uint32_t value) noexcept;
+    SimulationBuilder& skin_frequency(std::uint32_t value) noexcept;
+    SimulationBuilder& rope_nodes(std::uint32_t value) noexcept;
+    SimulationBuilder& cloth_detail(std::uint32_t value) noexcept;
+    SimulationBuilder& gravity(float3 value) noexcept;
+    SimulationBuilder& soft_body_asset(std::string path);
+
+    [[nodiscard]] const SimulationConfig& config() const noexcept { return config_; }
+    [[nodiscard]] Status build(
+        GallerySimulation& output, cudaStream_t stream = nullptr) const noexcept;
+
+private:
+    SimulationConfig config_{};
+    std::optional<float3> gravity_{};
+    std::string asset_path_{};
 };
 
 } // namespace meshprep::sim

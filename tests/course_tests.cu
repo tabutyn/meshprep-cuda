@@ -83,8 +83,8 @@ void test_course_preset() {
         "course preset did not select stable substeps");
     require(waterlab::HybridDroplet::maximum_physics_iterations == 16U,
         "interactive physics iteration ceiling is not 16");
-    require(waterlab::course_peg_count == waterlab::SoftBodyOptions::maximum_instances,
-        "course post layout and soft-body instance capacity disagree");
+    require(waterlab::course_peg_count == 8U,
+        "authored rigid course no longer contains eight pegs");
     require_close(waterlab::course_motion_scale,4.0F,0.0F,"course did not start at 4x");
     require_close(course.gravity.y,-waterlab::course_gravity_magnitude,0.0F,
         "course gravity was not scaled");

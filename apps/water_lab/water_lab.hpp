@@ -38,6 +38,7 @@ struct OrientedBox {
     float3 center{1.45F, 0.0F, 0.0F};
     float3 half_extents{0.30F, 0.65F, 0.42F};
     float yaw{};
+    float4 sphere_orientation{0.0F, 0.0F, 0.0F, 1.0F};
 };
 
 struct Camera {
@@ -53,6 +54,34 @@ public:
     ~RayTracer();
     RayTracer(const RayTracer&) = delete;
     RayTracer& operator=(const RayTracer&) = delete;
+
+    // Marks persistent bowl texels only where fluid particle centers are
+    // within one particle radius of the inner hemisphere.
+    [[nodiscard]] float update_bowl_paint(
+        const float3* particle_positions,
+        std::uint32_t particle_count,
+        float particle_radius,
+        bool reset = false,
+        cudaStream_t stream = nullptr);
+    [[nodiscard]] float update_sphere_paint(
+        const float3* contact_positions,
+        std::uint32_t contact_count,
+        float contact_radius,
+        RigidSphereState sphere,
+        bool reset = false,
+        cudaStream_t stream = nullptr);
+    void update_goal_cloth_paint(
+        const float3* source_positions,
+        std::uint32_t source_count,
+        float source_radius,
+        bool reset = false,
+        cudaStream_t stream = nullptr);
+    void update_rope_bridge_paint(
+        const float3* bridge_nodes,
+        std::uint32_t node_count,
+        RigidSphereState sphere,
+        bool reset = false,
+        cudaStream_t stream = nullptr);
 
     [[nodiscard]] float render_hybrid(
         meshprep::DeviceMeshView skin,
@@ -80,6 +109,12 @@ private:
     uchar4* host_pixels_{};
     cudaEvent_t render_begin_{};
     cudaEvent_t render_end_{};
+    std::uint32_t* bowl_paint_pixels_{};
+    std::uint32_t* bowl_painted_count_{};
+    std::uint32_t* sphere_paint_pixels_{};
+    std::uint32_t* sphere_painted_count_{};
+    std::uint32_t* cloth_paint_pixels_{};
+    std::uint32_t* ground_cloth_paint_pixels_{};
     std::size_t pixel_capacity_{};
 };
 

@@ -1,16 +1,17 @@
 # SPDX-License-Identifier: MIT
 cmake_minimum_required(VERSION 3.25)
-project(meshprep-cuda VERSION 0.1.0 LANGUAGES CXX CUDA)
+project(ParallelMater VERSION 0.2.0 LANGUAGES CXX CUDA)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-option(MESHPREP_BUILD_TESTS "Build GPU correctness tests" ON)
-option(MESHPREP_BUILD_EXAMPLES "Build examples" ON)
-option(MESHPREP_BUILD_BENCHMARKS "Build benchmarks" ON)
-option(MESHPREP_BUILD_WATER_LAB "Build the native CUDA/OpenGL water lab when dependencies exist" ON)
-option(MESHPREP_BUILD_CAPTURE_TOOLS "Build headless capture audit tools" ON)
-option(MESHPREP_ENABLE_NVTX "Annotate public operations with NVTX ranges" ON)
+option(PARALLEL_MATER_BUILD_TESTS "Build GPU correctness tests" OFF)
+option(PARALLEL_MATER_BUILD_EXAMPLES "Build examples" OFF)
+option(PARALLEL_MATER_BUILD_BENCHMARKS "Build benchmarks" OFF)
+option(PARALLEL_MATER_BUILD_GALLERY "Build the optional eight-context gallery API" OFF)
+option(PARALLEL_MATER_BUILD_LAB "Build the native CUDA/OpenGL simulation lab" OFF)
+option(PARALLEL_MATER_BUILD_CAPTURE_TOOLS "Build headless capture audit tools" OFF)
+option(PARALLEL_MATER_ENABLE_NVTX "Annotate public operations with NVTX ranges" ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -25,11 +26,31 @@ if(NOT CMAKE_CUDA_ARCHITECTURES)
 endif()
 
 if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 12.6)
-    message(FATAL_ERROR "meshprep-cuda requires CUDA Toolkit 12.6 or newer")
+    message(FATAL_ERROR "ParallelMater requires CUDA Toolkit 12.6 or newer")
+endif()
+
+if(PARALLEL_MATER_BUILD_GALLERY OR PARALLEL_MATER_BUILD_LAB)
+    # Recipe, validation, and campaign layer used only by the optional gallery
+    # and native application. It has no rendering or CUDA-runtime dependency.
+    add_library(meshprep-game src/game.cpp)
+    add_library(meshprep::meshprep-game ALIAS meshprep-game)
+    add_library(ParallelMater::game ALIAS meshprep-game)
+    target_include_directories(
+        meshprep-game
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+    target_compile_features(meshprep-game PUBLIC cxx_std_20)
+    target_compile_options(meshprep-game PRIVATE -Wall -Wextra -Wpedantic)
+    set_target_properties(meshprep-game PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        OUTPUT_NAME parallel-mater-game
+        EXPORT_NAME game)
 endif()
 
 add_library(meshprep-cuda src/meshprep.cu)
 add_library(meshprep::meshprep-cuda ALIAS meshprep-cuda)
+add_library(ParallelMater::geometry ALIAS meshprep-cuda)
 target_include_directories(
     meshprep-cuda
     PUBLIC
@@ -37,7 +58,7 @@ target_include_directories(
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_compile_features(meshprep-cuda PUBLIC cxx_std_20)
 target_compile_definitions(
-    meshprep-cuda PRIVATE MESHPREP_ENABLE_NVTX=$<BOOL:${MESHPREP_ENABLE_NVTX}>)
+    meshprep-cuda PRIVATE MESHPREP_ENABLE_NVTX=$<BOOL:${PARALLEL_MATER_ENABLE_NVTX}>)
 target_compile_options(
     meshprep-cuda
     PRIVATE
@@ -48,55 +69,97 @@ set_target_properties(
     PROPERTIES
         POSITION_INDEPENDENT_CODE ON
         CUDA_SEPARABLE_COMPILATION OFF
-        EXPORT_NAME meshprep-cuda)
+        OUTPUT_NAME parallel-mater-geometry
+        EXPORT_NAME geometry)
 
-# Headless simulation composition. It intentionally excludes GLFW, OpenGL,
-# the ray tracer, HUD, capture tools, and fluid-visual reconstruction.
+# General-purpose fixed-topology soft-body solver. Applications own scene
+# policy, contacts, rendering, input, and their CUDA coupling kernels.
 add_library(
-    meshprep-simulation
-    src/simulation.cpp
-    apps/water_lab/simulation_gallery.cpp
-    apps/water_lab/cloth.cpp
-    apps/water_lab/geodesic_sphere.cpp
-    apps/water_lab/soft_body.cu
-    apps/water_lab/hybrid_kernels.cu)
-add_library(meshprep::meshprep-simulation ALIAS meshprep-simulation)
-target_link_libraries(meshprep-simulation PUBLIC meshprep::meshprep-cuda)
+    meshprep-physics
+    src/physics.cpp
+    apps/water_lab/soft_body.cu)
+add_library(meshprep::physics ALIAS meshprep-physics)
+add_library(ParallelMater::physics ALIAS meshprep-physics)
+target_link_libraries(meshprep-physics PUBLIC ParallelMater::geometry)
 target_include_directories(
-    meshprep-simulation
+    meshprep-physics
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/apps/water_lab)
-target_compile_features(meshprep-simulation PUBLIC cxx_std_20)
+target_compile_features(meshprep-physics PUBLIC cxx_std_20)
 target_compile_options(
-    meshprep-simulation
+    meshprep-physics
     PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic>
         $<$<COMPILE_LANGUAGE:CUDA>:-O3;--generate-line-info;--expt-relaxed-constexpr>)
 set_target_properties(
-    meshprep-simulation
+    meshprep-physics
     PROPERTIES
         POSITION_INDEPENDENT_CODE ON
         CUDA_SEPARABLE_COMPILATION OFF
-        EXPORT_NAME meshprep-simulation)
+        OUTPUT_NAME parallel-mater-physics
+        EXPORT_NAME physics)
 
-if(MESHPREP_BUILD_EXAMPLES)
-    add_executable(meshprep-example examples/basic.cu)
-    target_link_libraries(meshprep-example PRIVATE meshprep::meshprep-cuda)
-
-    add_executable(meshprep-simulation-contexts examples/simulation_contexts.cu)
-    target_link_libraries(meshprep-simulation-contexts PRIVATE meshprep::meshprep-simulation)
+if(PARALLEL_MATER_BUILD_GALLERY OR PARALLEL_MATER_BUILD_LAB)
+    # Optional headless gallery/example composition. It intentionally excludes
+    # GLFW, OpenGL, the ray tracer, HUD, capture tools, and visual reconstruction.
+    add_library(
+        meshprep-simulation
+        src/simulation.cpp
+        apps/water_lab/simulation_gallery.cpp
+        apps/water_lab/cloth.cpp
+        apps/water_lab/geodesic_sphere.cpp
+        apps/water_lab/hybrid_kernels.cu)
+    add_library(meshprep::meshprep-simulation ALIAS meshprep-simulation)
+    add_library(ParallelMater::gallery ALIAS meshprep-simulation)
+    target_link_libraries(
+        meshprep-simulation PUBLIC ParallelMater::physics ParallelMater::game)
+    target_include_directories(
+        meshprep-simulation
+        PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/apps/water_lab)
+    target_compile_features(meshprep-simulation PUBLIC cxx_std_20)
+    target_compile_options(
+        meshprep-simulation
+        PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic>
+            $<$<COMPILE_LANGUAGE:CUDA>:-O3;--generate-line-info;--expt-relaxed-constexpr>)
+    set_target_properties(
+        meshprep-simulation
+        PROPERTIES
+            POSITION_INDEPENDENT_CODE ON
+            CUDA_SEPARABLE_COMPILATION OFF
+            OUTPUT_NAME parallel-mater-gallery
+            EXPORT_NAME gallery)
 endif()
 
-if(MESHPREP_BUILD_BENCHMARKS)
+if(PARALLEL_MATER_BUILD_EXAMPLES)
+    add_executable(parallel-mater-geometry-example examples/basic.cu)
+    target_link_libraries(
+        parallel-mater-geometry-example PRIVATE ParallelMater::geometry)
+
+    add_executable(parallel-mater-soft-body-example examples/soft_body.cu)
+    target_link_libraries(
+        parallel-mater-soft-body-example PRIVATE ParallelMater::physics)
+
+    if(TARGET meshprep-simulation)
+        add_executable(parallel-mater-gallery-example examples/simulation_contexts.cu)
+        target_link_libraries(
+            parallel-mater-gallery-example PRIVATE ParallelMater::gallery)
+    endif()
+endif()
+
+if(PARALLEL_MATER_BUILD_BENCHMARKS)
     add_executable(meshprep-benchmark benchmarks/benchmark.cu)
     target_link_libraries(meshprep-benchmark PRIVATE meshprep::meshprep-cuda)
     target_compile_options(
         meshprep-benchmark PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O3;--generate-line-info>)
 endif()
 
-if(MESHPREP_BUILD_BENCHMARKS OR MESHPREP_BUILD_TESTS)
+if(PARALLEL_MATER_BUILD_BENCHMARKS OR PARALLEL_MATER_BUILD_TESTS)
     add_executable(
         meshprep-contact-experiment
         apps/water_lab/contact_experiment.cpp
@@ -112,7 +175,7 @@ if(MESHPREP_BUILD_BENCHMARKS OR MESHPREP_BUILD_TESTS)
         meshprep-contact-experiment PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
 endif()
 
-if(MESHPREP_BUILD_CAPTURE_TOOLS)
+if(PARALLEL_MATER_BUILD_CAPTURE_TOOLS)
     add_executable(
         meshprep-soft-body-capture-audit
         apps/water_lab/soft_body_capture_audit.cpp
@@ -130,34 +193,48 @@ if(MESHPREP_BUILD_CAPTURE_TOOLS)
         meshprep-soft-body-capture-audit PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
 endif()
 
-if(MESHPREP_BUILD_TESTS)
+if(PARALLEL_MATER_BUILD_TESTS)
     enable_testing()
-    if(MESHPREP_BUILD_CAPTURE_TOOLS)
+    if(PARALLEL_MATER_BUILD_CAPTURE_TOOLS)
         add_test(NAME meshprep-skin-contact-reference
             COMMAND meshprep-soft-body-capture-audit --skin-contact-self-test)
     endif()
-    add_executable(meshprep-simulation-api-tests tests/simulation_api_tests.cpp)
-    target_link_libraries(meshprep-simulation-api-tests PRIVATE meshprep::meshprep-simulation)
-    target_compile_options(meshprep-simulation-api-tests PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic>)
-    add_test(NAME meshprep-simulation-api-tests COMMAND meshprep-simulation-api-tests)
+    if(TARGET meshprep-simulation)
+        add_executable(meshprep-simulation-api-tests tests/simulation_api_tests.cpp)
+        target_link_libraries(meshprep-simulation-api-tests PRIVATE meshprep::meshprep-simulation)
+        target_compile_options(meshprep-simulation-api-tests PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic>)
+        add_test(NAME meshprep-simulation-api-tests COMMAND meshprep-simulation-api-tests)
 
-    add_executable(meshprep-simulation-runtime-tests tests/simulation_runtime_tests.cu)
-    target_link_libraries(
-        meshprep-simulation-runtime-tests PRIVATE meshprep::meshprep-simulation)
-    target_compile_definitions(meshprep-simulation-runtime-tests PRIVATE
-        MESHPREP_SIMULATION_TEST_ASSET="${CMAKE_CURRENT_SOURCE_DIR}/assets/softbody/checker_cylinder.msb")
-    target_compile_options(meshprep-simulation-runtime-tests PRIVATE
-        $<$<COMPILE_LANGUAGE:CUDA>:-O3;--generate-line-info>)
-    set_target_properties(meshprep-simulation-runtime-tests
-        PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
-    add_test(NAME meshprep-simulation-runtime-tests
-        COMMAND meshprep-simulation-runtime-tests)
-    set_tests_properties(meshprep-simulation-runtime-tests PROPERTIES SKIP_RETURN_CODE 77)
+        add_executable(meshprep-simulation-runtime-tests tests/simulation_runtime_tests.cu)
+        target_link_libraries(
+            meshprep-simulation-runtime-tests PRIVATE meshprep::meshprep-simulation)
+        target_compile_definitions(meshprep-simulation-runtime-tests PRIVATE
+            MESHPREP_SIMULATION_TEST_ASSET="${CMAKE_CURRENT_SOURCE_DIR}/assets/softbody/checker_cylinder.msb")
+        target_compile_options(meshprep-simulation-runtime-tests PRIVATE
+            $<$<COMPILE_LANGUAGE:CUDA>:-O3;--generate-line-info>)
+        set_target_properties(meshprep-simulation-runtime-tests
+            PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
+        add_test(NAME meshprep-simulation-runtime-tests
+            COMMAND meshprep-simulation-runtime-tests)
+        set_tests_properties(meshprep-simulation-runtime-tests PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
 
     add_executable(meshprep-tests tests/meshprep_tests.cu)
     target_link_libraries(meshprep-tests PRIVATE meshprep::meshprep-cuda)
     add_test(NAME meshprep-tests COMMAND meshprep-tests)
+    set_tests_properties(meshprep-tests PROPERTIES SKIP_RETURN_CODE 77)
+
+    add_executable(meshprep-physics-tests tests/physics_tests.cu)
+    target_link_libraries(meshprep-physics-tests PRIVATE meshprep::physics)
+    target_compile_definitions(meshprep-physics-tests PRIVATE
+        MESHPREP_PHYSICS_TEST_ASSET="${CMAKE_CURRENT_SOURCE_DIR}/assets/softbody/checker_cylinder.msb")
+    target_compile_options(meshprep-physics-tests PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:-O3;--generate-line-info>)
+    set_target_properties(meshprep-physics-tests
+        PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
+    add_test(NAME meshprep-physics-tests COMMAND meshprep-physics-tests)
+    set_tests_properties(meshprep-physics-tests PROPERTIES SKIP_RETURN_CODE 77)
 
     add_executable(meshprep-triangle-contact-tests tests/triangle_contact_tests.cu)
     target_compile_options(meshprep-triangle-contact-tests PRIVATE
@@ -265,58 +342,91 @@ if(MESHPREP_BUILD_TESTS)
     endif()
 endif()
 
-if(MESHPREP_BUILD_WATER_LAB)
+if(PARALLEL_MATER_BUILD_LAB)
     find_package(OpenGL QUIET)
     find_package(glfw3 3.3 QUIET)
     if(OpenGL_FOUND AND TARGET glfw)
-        add_executable(
-            meshprep-water-lab
-            apps/water_lab/main.cpp
-            apps/water_lab/cloth.cpp
-            apps/water_lab/simulation_gallery.cpp
-            apps/water_lab/geodesic_sphere.cpp
+        add_library(
+            parallel-mater-gallery-runtime
             apps/water_lab/fluid_surface.cu
             apps/water_lab/fluid_visuals.cu
-            apps/water_lab/soft_body.cu
-            apps/water_lab/water_kernels.cu
-            apps/water_lab/hybrid_kernels.cu)
+            apps/water_lab/water_kernels.cu)
         target_link_libraries(
-            meshprep-water-lab PRIVATE meshprep::meshprep-cuda glfw OpenGL::GL)
-        target_compile_definitions(meshprep-water-lab PRIVATE
+            parallel-mater-gallery-runtime PUBLIC ParallelMater::gallery)
+        target_include_directories(parallel-mater-gallery-runtime
+            PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/apps/water_lab)
+        target_compile_definitions(parallel-mater-gallery-runtime PRIVATE
             MESHPREP_SOFT_BODY_ASSET_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/softbody/checker_cylinder.msb")
         target_compile_options(
-            meshprep-water-lab
+            parallel-mater-gallery-runtime
             PRIVATE
                 $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic>
                 $<$<COMPILE_LANGUAGE:CUDA>:-O3;--generate-line-info;--expt-relaxed-constexpr>)
         set_target_properties(
-            meshprep-water-lab PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
+            parallel-mater-gallery-runtime PROPERTIES
+                POSITION_INDEPENDENT_CODE ON
+                CUDA_SEPARABLE_COMPILATION OFF)
+
+        add_executable(parallel-mater-lab apps/water_lab/main.cpp)
+        target_link_libraries(
+            parallel-mater-lab PRIVATE parallel-mater-gallery-runtime
+            glfw OpenGL::GL)
+        target_compile_definitions(parallel-mater-lab PRIVATE
+            MESHPREP_SOFT_BODY_ASSET_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/softbody/checker_cylinder.msb")
+        target_compile_options(parallel-mater-lab PRIVATE
+            -Wall -Wextra -Wpedantic)
     else()
-        message(STATUS "meshprep-water-lab disabled: OpenGL and glfw3 3.3 are required")
+        message(STATUS "parallel-mater-lab disabled: OpenGL and glfw3 3.3 are required")
     endif()
 endif()
 
-install(TARGETS meshprep-cuda meshprep-simulation EXPORT meshprep-cuda-targets)
-install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+set(meshprep_install_targets meshprep-cuda meshprep-physics)
+if(TARGET meshprep-game)
+    list(APPEND meshprep_install_targets meshprep-game)
+endif()
+if(TARGET meshprep-simulation)
+    list(APPEND meshprep_install_targets meshprep-simulation)
+endif()
+install(TARGETS ${meshprep_install_targets} EXPORT ParallelMaterTargets)
+install(FILES
+    include/meshprep/meshprep.hpp
+    include/meshprep/physics.hpp
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/meshprep)
+install(FILES
+    include/parallel_mater/geometry.hpp
+    include/parallel_mater/physics.hpp
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/parallel_mater)
+if(TARGET meshprep-game)
+    install(FILES include/meshprep/game.hpp
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/meshprep)
+    install(FILES include/parallel_mater/game.hpp
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/parallel_mater)
+endif()
+if(TARGET meshprep-simulation)
+    install(FILES include/meshprep/simulation.hpp
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/meshprep)
+    install(FILES include/parallel_mater/gallery.hpp
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/parallel_mater)
+endif()
 install(
     FILES LICENSE THIRD_PARTY_NOTICES.md
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/meshprep-cuda)
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/ParallelMater)
 install(
-    EXPORT meshprep-cuda-targets
-    FILE meshprep-cuda-targets.cmake
-    NAMESPACE meshprep::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/meshprep-cuda)
+    EXPORT ParallelMaterTargets
+    FILE ParallelMaterTargets.cmake
+    NAMESPACE ParallelMater::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ParallelMater)
 
 configure_package_config_file(
-    cmake/meshprep-cuda-config.cmake.in
-    ${CMAKE_CURRENT_BINARY_DIR}/meshprep-cuda-config.cmake
-    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/meshprep-cuda)
+    cmake/ParallelMaterConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/ParallelMaterConfig.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ParallelMater)
 write_basic_package_version_file(
-    ${CMAKE_CURRENT_BINARY_DIR}/meshprep-cuda-config-version.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/ParallelMaterConfigVersion.cmake
     VERSION ${PROJECT_VERSION}
     COMPATIBILITY SameMajorVersion)
 install(
     FILES
-        ${CMAKE_CURRENT_BINARY_DIR}/meshprep-cuda-config.cmake
-        ${CMAKE_CURRENT_BINARY_DIR}/meshprep-cuda-config-version.cmake
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/meshprep-cuda)
+        ${CMAKE_CURRENT_BINARY_DIR}/ParallelMaterConfig.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/ParallelMaterConfigVersion.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ParallelMater)

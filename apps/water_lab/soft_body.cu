@@ -280,6 +280,94 @@ __host__ __device__ float length(float3 value)
     return sqrtf(dot(value, value));
 }
 
+float4 quaternion_product(float4 a, float4 b)
+{
+    return make_float4(
+        a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y,
+        a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x,
+        a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w,
+        a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z);
+}
+
+bool sphere_has_support(const RigidSphereState& sphere, GalleryArena arena)
+{
+    constexpr float tolerance = 0.035F;
+    if (arena == GalleryArena::enclosed_box || arena == GalleryArena::ground_box ||
+        arena == GalleryArena::cloth_basin || arena == GalleryArena::low_ceiling_box) {
+        const float floor = gallery_box_center.y - gallery_box_half_extents.y;
+        return sphere.center.y <= floor + sphere.radius + tolerance;
+    }
+    if (arena == GalleryArena::ground || arena == GalleryArena::rope_post)
+        return sphere.center.y <= course_floor_y + sphere.radius + tolerance;
+    if (arena == GalleryArena::rope_bridge) {
+        const bool above_land = fabsf(sphere.center.z) >=
+            rope_bridge_land_inner_z - sphere.radius;
+        const float support = above_land ? rope_bridge_land_y : rope_bridge_deck_y;
+        return sphere.center.y <= support + sphere.radius + 0.12F;
+    }
+    if (arena == GalleryArena::water_wheel) {
+        if (water_wheel_top_platform_contact(sphere.center, sphere.radius)) return true;
+        const float dx=sphere.center.x-water_wheel_center.x;
+        const float dy=sphere.center.y-water_wheel_center.y;
+        const float radial=sqrtf(dx*dx+dy*dy);
+        const float radial_excess=fabsf(radial-water_wheel_radius)-0.065F;
+        const float axial_excess=fabsf(sphere.center.z-water_wheel_stage_z)-
+            water_wheel_outer_disk_half_thickness;
+        const float rim_distance=sqrtf(fmaxf(radial_excess,0.0F)*
+            fmaxf(radial_excess,0.0F)+fmaxf(axial_excess,0.0F)*
+            fmaxf(axial_excess,0.0F))+fminf(fmaxf(radial_excess,axial_excess),0.0F);
+        if (rim_distance<=sphere.radius+0.035F) return true;
+        float support{};
+        return water_wheel_support_height(sphere.center.x, support) &&
+            sphere.center.y <= support + sphere.radius + tolerance;
+    }
+    return false;
+}
+
+void advance_rigid_sphere_rotation_impl(
+    RigidSphereState& sphere, GalleryArena arena, float friction, float dt)
+{
+    if (sphere_has_support(sphere, arena) && friction > 0.0F) {
+        const float3 normal = make_float3(0.0F, 1.0F, 0.0F);
+        const float normal_speed = dot(sphere.velocity, normal);
+        const float3 tangent = subtract(sphere.velocity,
+            multiply(normal, normal_speed));
+        const float3 rolling = multiply(cross(normal, tangent),
+            1.0F / fmaxf(sphere.radius, 1.0e-5F));
+        const float response = 1.0F - expf(-friction * dt);
+        sphere.angular_velocity = add(
+            multiply(sphere.angular_velocity, 1.0F - response),
+            multiply(rolling, response));
+        // Coulomb-like loss is deliberately small: friction mainly transfers
+        // translation into spin rather than acting as an invisible brake.
+        const float drag = fmaxf(0.0F, 1.0F - 0.015F * friction * dt);
+        sphere.velocity.x *= drag;
+        sphere.velocity.z *= drag;
+    } else {
+        sphere.angular_velocity = multiply(sphere.angular_velocity,
+            expf(-0.05F * dt));
+    }
+    const float4 omega = make_float4(sphere.angular_velocity.x,
+        sphere.angular_velocity.y, sphere.angular_velocity.z, 0.0F);
+    const float4 derivative = quaternion_product(omega, sphere.orientation);
+    sphere.orientation.x += 0.5F * dt * derivative.x;
+    sphere.orientation.y += 0.5F * dt * derivative.y;
+    sphere.orientation.z += 0.5F * dt * derivative.z;
+    sphere.orientation.w += 0.5F * dt * derivative.w;
+    const float magnitude = sqrtf(sphere.orientation.x*sphere.orientation.x +
+        sphere.orientation.y*sphere.orientation.y +
+        sphere.orientation.z*sphere.orientation.z +
+        sphere.orientation.w*sphere.orientation.w);
+    if (magnitude > 1.0e-8F && std::isfinite(magnitude)) {
+        sphere.orientation.x /= magnitude;
+        sphere.orientation.y /= magnitude;
+        sphere.orientation.z /= magnitude;
+        sphere.orientation.w /= magnitude;
+    } else {
+        sphere.orientation = make_float4(0.0F,0.0F,0.0F,1.0F);
+    }
+}
+
 __device__ bool finite3(float3 value)
 {
     return isfinite(value.x) && isfinite(value.y) && isfinite(value.z);
@@ -407,40 +495,56 @@ __global__ void contact_rigid_sphere_kernel(
 
 __global__ void tether_rigid_sphere_kernel(
     float3* positions, float3* velocities, const std::uint32_t* flags,
-    std::uint32_t endpoint, RigidSphereState sphere, float attachment_distance,
-    float node_mass, float maximum_correction, float dt, float maximum_speed,
-    float3* result)
+    std::uint32_t endpoint, RigidSphereState sphere,
+    float attachment_distance, float node_mass,
+    float maximum_rope_reach, float maximum_correction, float dt,
+    float maximum_speed, float3* result)
 {
     if (blockIdx.x != 0U || threadIdx.x != 0U) return;
     result[0] = {};
     result[1] = {};
-    if ((flags[endpoint] & soft_body_voxel_pinned) != 0U) return;
+    if (endpoint == 0U || (flags[endpoint] & soft_body_voxel_pinned) != 0U) return;
     const float3 node_position = positions[endpoint];
-    const float3 delta = subtract(sphere.center, node_position);
-    const float distance = length(delta);
-    if (!(distance > 1.0e-8F) || !isfinite(distance)) return;
-    const float3 normal = multiply(delta, 1.0F / distance);
-    const float node_inverse_mass = 1.0F / node_mass;
-    const float sphere_inverse_mass = 1.0F / sphere.mass;
-    const float inverse_mass_sum = node_inverse_mass + sphere_inverse_mass;
-    const float constraint = distance - attachment_distance;
-    const float multiplier = -constraint / inverse_mass_sum;
-    const float3 sphere_correction = clamp_length(
-        multiply(normal, sphere_inverse_mass * multiplier), maximum_correction);
+    const float3 separation = subtract(node_position, sphere.center);
+    const float distance = length(separation);
+    // A rope may pull but never push. The former bilateral material-point
+    // constraint kept applying corrections while the ball rested on the
+    // floor, injecting the observed perpetual spin.
+    if (!(distance > attachment_distance) || !isfinite(distance)) return;
+    const float3 direction = multiply(separation, 1.0F/distance);
+    const float excess = distance - attachment_distance;
+    const float sphere_inverse_mass = 1.0F/sphere.mass;
+    const float node_inverse_mass = 1.0F/node_mass;
+    const float inverse_sum = sphere_inverse_mass + node_inverse_mass;
+    const float sphere_share = sphere_inverse_mass/inverse_sum;
+    const float node_share = node_inverse_mass/inverse_sum;
+    float3 sphere_correction = clamp_length(
+        multiply(direction, excess*sphere_share), maximum_correction);
     const float3 node_correction = clamp_length(
-        multiply(normal, -node_inverse_mass * multiplier), maximum_correction);
+        multiply(direction, -excess*node_share), maximum_correction);
     positions[endpoint] = add(node_position, node_correction);
-
-    const float relative_speed = dot(
-        subtract(sphere.velocity, velocities[endpoint]), normal);
-    const float velocity_multiplier = -relative_speed / inverse_mass_sum;
-    const float3 sphere_velocity_change = multiply(
-        normal, sphere_inverse_mass * velocity_multiplier);
+    const float separating_speed = dot(
+        subtract(velocities[endpoint], sphere.velocity), direction);
+    const float damped_speed = fmaxf(0.0F, separating_speed)*0.85F;
+    float3 sphere_velocity_change = multiply(
+        direction, damped_speed*sphere_share);
     const float3 node_velocity_change = multiply(
-        normal, -node_inverse_mass * velocity_multiplier);
+        direction, -damped_speed*node_share);
     velocities[endpoint] = clamp_length(add(velocities[endpoint],
         add(node_velocity_change, multiply(node_correction, 1.0F / dt))),
         maximum_speed);
+    const float3 corrected_center=add(sphere.center,sphere_correction);
+    const float3 anchor_to_sphere=subtract(corrected_center,positions[0U]);
+    const float reach=length(anchor_to_sphere);
+    if (reach>maximum_rope_reach && reach>1.0e-8F) {
+        const float3 reach_direction=multiply(anchor_to_sphere,1.0F/reach);
+        sphere_correction=add(sphere_correction,multiply(
+            reach_direction,maximum_rope_reach-reach));
+        const float outward=dot(add(sphere.velocity,sphere_velocity_change),
+            reach_direction);
+        if (outward>0.0F) sphere_velocity_change=add(sphere_velocity_change,
+            multiply(reach_direction,-outward));
+    }
     result[0] = sphere_correction;
     result[1] = sphere_velocity_change;
 }
@@ -1079,6 +1183,12 @@ __global__ void emit_member_bounds(const float3* positions,
 
 } // namespace
 
+void advance_rigid_sphere_rotation(
+    RigidSphereState& sphere, GalleryArena arena, float friction, float dt)
+{
+    advance_rigid_sphere_rotation_impl(sphere,arena,friction,dt);
+}
+
 void validate_soft_body_asset(const SoftBodyAsset& asset)
 {
     const std::uint32_t voxel_count = checked_count(asset.rest_voxels.size(), "voxel count");
@@ -1386,6 +1496,7 @@ struct SoftBodyCourse::Impl {
     std::uint32_t* cross_contact_keys{};
     float3* cross_contact_values{};
     std::vector<float3> host_rigid_sphere_impulses;
+    std::vector<float3> host_contact_positions;
     std::uint32_t* flags{};
     SoftBodyEdge* edges{};
     std::uint32_t* neighbor_offsets{};
@@ -1520,6 +1631,8 @@ struct SoftBodyCourse::Impl {
             asset.render_triangles.size(), options.instance_count, "instance render triangles");
         total_voxels = static_cast<std::uint32_t>(voxel_total);
         host_rigid_sphere_impulses.resize(total_voxels);
+        if (options.arena == GalleryArena::rope_bridge)
+            host_contact_positions.resize(total_voxels);
         total_edges = static_cast<std::uint32_t>(edge_total);
         total_render_vertices = static_cast<std::uint32_t>(render_vertex_total);
         total_render_triangles = static_cast<std::uint32_t>(render_triangle_total);
@@ -2180,6 +2293,7 @@ void SoftBodyCourse::contact_rigid_sphere_substep(
 {
     if (!impl_) throw std::logic_error("moved-from soft-body course");
     if (!finite(sphere.center) || !finite(sphere.velocity) ||
+        !finite(sphere.angular_velocity) || !finite(sphere.orientation) ||
         !finite(sphere.radius) || !finite(sphere.mass) ||
         sphere.radius <= 0.0F || sphere.mass <= 0.0F ||
         !finite(dt) || dt <= 0.0F) {
@@ -2208,6 +2322,11 @@ void SoftBodyCourse::contact_rigid_sphere_substep(
         state.rigid_sphere_impulses,
         static_cast<std::size_t>(state.total_voxels) * sizeof(float3),
         cudaMemcpyDeviceToHost, stream), "download deterministic sphere reactions");
+    if (state.options.arena == GalleryArena::rope_bridge) {
+        check(cudaMemcpyAsync(state.host_contact_positions.data(),state.positions,
+            static_cast<std::size_t>(state.total_voxels)*sizeof(float3),
+            cudaMemcpyDeviceToHost,stream),"download bridge contact surface");
+    }
     check(cudaStreamSynchronize(stream), "finish sphere contact reactions");
     float3 total_impulse{};
     for (const float3 impulse : state.host_rigid_sphere_impulses)
@@ -2216,10 +2335,47 @@ void SoftBodyCourse::contact_rigid_sphere_substep(
     // deterministic reaction to the finite-mass sphere position as well as
     // its velocity; velocity-only response allowed a heavy sphere to remain
     // geometrically past the cloth and then fall through on the next substep.
-    sphere.center = add(sphere.center,
-        multiply(total_impulse, dt / sphere.mass));
-    sphere.velocity = add(sphere.velocity,
-        multiply(total_impulse, 1.0F / sphere.mass));
+    // A fixed rope-bridge diagnostic is resolved by the one-sided tile
+    // support below. Summing one full pinned-node impulse per nearby tile
+    // corner multiplied the reaction and was itself able to launch the ball.
+    // Dynamic scenes retain their equal-and-opposite node reaction.
+    if (state.options.arena != GalleryArena::rope_bridge) {
+        sphere.center = add(sphere.center,
+            multiply(total_impulse, dt / sphere.mass));
+        sphere.velocity = add(sphere.velocity,
+            multiply(total_impulse, 1.0F / sphere.mass));
+    }
+    if (state.options.arena == GalleryArena::rope_bridge) {
+        // Node spheres transfer force to the ropes; this one-sided tile pass
+        // closes the square interiors so a fast sphere cannot tunnel between
+        // four corner samples. It follows the deformed tile heights.
+        float support = -std::numeric_limits<float>::infinity();
+        constexpr std::uint32_t corners = 4U;
+        const float margin = 0.70F*sphere.radius;
+        for (std::uint32_t tile=0U;
+             tile<rope_bridge_columns*rope_bridge_rows;++tile) {
+            float minimum_x=std::numeric_limits<float>::infinity();
+            float maximum_x=-minimum_x;
+            float minimum_z=minimum_x;
+            float maximum_z=-minimum_x;
+            float average_y{};
+            for (std::uint32_t corner=0U;corner<corners;++corner) {
+                const float3 point=state.host_contact_positions[tile*corners+corner];
+                minimum_x=std::min(minimum_x,point.x);
+                maximum_x=std::max(maximum_x,point.x);
+                minimum_z=std::min(minimum_z,point.z);
+                maximum_z=std::max(maximum_z,point.z);
+                average_y+=0.25F*point.y;
+            }
+            if (sphere.center.x>=minimum_x-margin && sphere.center.x<=maximum_x+margin &&
+                sphere.center.z>=minimum_z-margin && sphere.center.z<=maximum_z+margin)
+                support=std::max(support,average_y);
+        }
+        if (std::isfinite(support) && sphere.center.y<support+sphere.radius) {
+            sphere.center.y=support+sphere.radius;
+            if (sphere.velocity.y<0.0F) sphere.velocity.y=0.0F;
+        }
+    }
     const float speed = length(sphere.velocity);
     if (speed > 3.0F) sphere.velocity = multiply(sphere.velocity, 3.0F / speed);
 }
@@ -2229,6 +2385,7 @@ SoftBodyTimings SoftBodyCourse::step_with_rigid_sphere(
 {
     if (!impl_) throw std::logic_error("moved-from soft-body course");
     if (!finite(sphere.center) || !finite(sphere.velocity) ||
+        !finite(sphere.angular_velocity) || !finite(sphere.orientation) ||
         !finite(sphere.radius) || !finite(sphere.mass) ||
         sphere.radius <= 0.0F || sphere.mass <= 0.0F || !finite(gravity)) {
         throw std::invalid_argument("invalid rolling rigid sphere");
@@ -2247,6 +2404,10 @@ SoftBodyTimings SoftBodyCourse::step_with_rigid_sphere(
                 ? GalleryArena::ground : state.options.arena);
         prepare_substep(dt, gravity, stream);
         contact_rigid_sphere_substep(sphere, dt, stream);
+        advance_rigid_sphere_rotation(sphere,
+            state.options.arena == GalleryArena::none
+                ? GalleryArena::ground : state.options.arena,
+            state.options.ground_friction, dt);
         finish_substep(dt, gravity, stream);
     }
     return finish_frame(stream);
@@ -2258,6 +2419,7 @@ SoftBodyTimings SoftBodyCourse::step_with_tethered_rigid_sphere(
 {
     if (!impl_) throw std::logic_error("moved-from soft-body course");
     if (!finite(sphere.center) || !finite(sphere.velocity) ||
+        !finite(sphere.angular_velocity) || !finite(sphere.orientation) ||
         !finite(sphere.radius) || !finite(sphere.mass) ||
         sphere.radius <= 0.0F || sphere.mass <= 0.0F || !finite(gravity) ||
         !finite(attachment_distance) || attachment_distance <= 0.0F ||
@@ -2265,9 +2427,15 @@ SoftBodyTimings SoftBodyCourse::step_with_tethered_rigid_sphere(
         throw std::invalid_argument("invalid tethered rigid sphere");
     }
     auto& state = *impl_;
+    if (endpoint_node >= state.asset.rest_voxels.size()) {
+        throw std::invalid_argument("tether endpoint is outside its authored rope");
+    }
     begin_frame(stream);
     const float dt = state.options.fixed_dt /
         static_cast<float>(state.options.solver_substeps);
+    const float3 rest_reach=subtract(state.asset.rest_voxels[endpoint_node],
+        state.asset.rest_voxels[0U]);
+    const float maximum_rope_reach=length(rest_reach)+attachment_distance;
     for (std::uint32_t substep = 0U;
          substep < state.options.solver_substeps; ++substep) {
         sphere.velocity = add(sphere.velocity, multiply(gravity, dt));
@@ -2277,10 +2445,14 @@ SoftBodyTimings SoftBodyCourse::step_with_tethered_rigid_sphere(
             sphere.radius, state.options.arena);
         prepare_substep(dt, gravity, stream);
         contact_rigid_sphere_substep(sphere, dt, stream);
+        finish_substep(dt, gravity, stream);
+        // Attach after graph projection so the committed rope endpoint and
+        // sphere agree at the end of every substep.
         tether_rigid_sphere_kernel<<<1, 1, 0, stream>>>(
             state.positions, state.velocities, state.flags, endpoint_node,
             sphere, attachment_distance, state.options.voxel_mass,
-            state.asset.voxel_radius, dt, state.options.maximum_speed,
+            maximum_rope_reach,4.0F * state.asset.voxel_radius,
+            dt, state.options.maximum_speed,
             state.rigid_sphere_impulses);
         check(cudaGetLastError(), "launch rope/sphere tether constraint");
         check(cudaMemcpyAsync(state.host_rigid_sphere_impulses.data(),
@@ -2289,10 +2461,13 @@ SoftBodyTimings SoftBodyCourse::step_with_tethered_rigid_sphere(
         check(cudaStreamSynchronize(stream), "finish rope/sphere tether reaction");
         sphere.center = add(sphere.center, state.host_rigid_sphere_impulses[0]);
         sphere.velocity = add(sphere.velocity, state.host_rigid_sphere_impulses[1]);
+        project_gallery_contact(sphere.center, sphere.velocity,
+            sphere.radius, state.options.arena);
+        advance_rigid_sphere_rotation(sphere, state.options.arena,
+            state.options.ground_friction, dt);
         const float sphere_speed = length(sphere.velocity);
         if (sphere_speed > 3.0F)
             sphere.velocity = multiply(sphere.velocity, 3.0F / sphere_speed);
-        finish_substep(dt, gravity, stream);
     }
     return finish_frame(stream);
 }
@@ -2647,7 +2822,9 @@ SoftBodyRenderView SoftBodyCourse::render_view() const noexcept
             ? static_cast<std::uint32_t>(impl_->asset.rest_voxels.size()) : 0U,
         impl_->options.render_internal_members
             ? static_cast<std::uint32_t>(impl_->asset.edges.size()) : 0U,
-        members.node_count, members.max_depth, 0.11F * impl_->asset.voxel_radius};
+        members.node_count, members.max_depth, 0.11F * impl_->asset.voxel_radius,
+        impl_->options.surface_triangle_split,
+        impl_->options.secondary_surface_triangle_split};
 }
 
 meshprep::DeviceMeshView SoftBodyCourse::render_mesh() const noexcept

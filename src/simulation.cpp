@@ -81,7 +81,10 @@ void check_cuda(cudaError_t status, const char* operation)
              *options.physical_skin_frequency_override <= 45U)) &&
         (!options.rope_node_count_override.has_value() ||
             (*options.rope_node_count_override >= 8U &&
-             *options.rope_node_count_override <= 512U));
+             *options.rope_node_count_override <= 512U)) &&
+        (!options.cloth_detail_override.has_value() ||
+            (*options.cloth_detail_override >= 1U &&
+             *options.cloth_detail_override <= 8U));
 }
 
 [[nodiscard]] const ExampleContextInfo* context_info(ExampleContext context) noexcept
@@ -127,6 +130,12 @@ struct GallerySimulation::Impl {
             waterlab::gallery::default_rope_nodes);
     }
 
+    [[nodiscard]] std::uint32_t cloth_detail() const noexcept
+    {
+        return options_.cloth_detail_override.value_or(
+            waterlab::gallery::default_cloth_detail(options_.context));
+    }
+
     explicit Impl(GallerySimulationOptions requested, cudaStream_t stream)
         : options_(requested), asset_path_(requested.soft_body_asset_path)
     {
@@ -165,7 +174,8 @@ struct GallerySimulation::Impl {
         }
         if (deformable) {
             deformable_ = waterlab::gallery::make_context_deformable(
-                options_.context, physics, asset_path_, rope_node_count());
+                options_.context, physics, asset_path_, rope_node_count(),
+                cloth_detail());
             if (!deformable_) {
                 throw std::runtime_error("gallery recipe omitted a declared deformable");
             }
@@ -273,7 +283,8 @@ struct GallerySimulation::Impl {
             rigid_count_ = 2U + waterlab::bowl_peg_count;
             return;
         }
-        if (options_.context == ExampleContext::rope_rigid) {
+        if (options_.context == ExampleContext::rope_rigid ||
+            options_.context == ExampleContext::rope_bridge) {
             constexpr std::array<float3, 8U> cube_vertices{{
                 {-1.0F, -1.0F, -1.0F}, {1.0F, -1.0F, -1.0F},
                 {1.0F, 1.0F, -1.0F}, {-1.0F, 1.0F, -1.0F},
@@ -306,12 +317,25 @@ struct GallerySimulation::Impl {
             const DeviceMeshView cube{rigid_vertices_.get() + cube_vertex_first,
                 cube_vertices.size(), rigid_triangles_.get() + cube_triangle_first,
                 cube_triangles.size()};
-            rigid_views_[1] = {cube,
-                {0.0F, waterlab::course_floor_y - 0.05F, -1.2F}, {0,0,0,1},
-                {3.1F, 0.05F, 2.7F}};
-            rigid_views_[2] = {cube, waterlab::rope_post_center, {0,0,0,1},
-                {waterlab::rope_post_radius, 0.5F * waterlab::rope_post_height,
-                 waterlab::rope_post_radius}};
+            if (options_.context == ExampleContext::rope_rigid) {
+                rigid_views_[1] = {cube,
+                    {0.0F, waterlab::course_floor_y - 0.05F, -1.2F}, {0,0,0,1},
+                    {3.1F, 0.05F, 2.7F}};
+                rigid_views_[2] = {cube, waterlab::rope_post_center, {0,0,0,1},
+                    {waterlab::rope_post_radius, 0.5F * waterlab::rope_post_height,
+                     waterlab::rope_post_radius}};
+            } else {
+                for (std::uint32_t side = 0U; side < 2U; ++side) {
+                    const float sign = side == 0U ? -1.0F : 1.0F;
+                    const float inner = sign * waterlab::rope_bridge_land_inner_z;
+                    const float outer = sign * waterlab::rope_bridge_land_outer_z;
+                    rigid_views_[1U+side] = {cube,
+                        {0.0F,waterlab::rope_bridge_land_y-0.06F,
+                         0.5F*(inner+outer)}, {0,0,0,1},
+                        {waterlab::rope_bridge_land_half_width,0.06F,
+                         0.5F*std::fabs(outer-inner)}};
+                }
+            }
             rigid_count_ = 3U;
             return;
         }
@@ -567,7 +591,49 @@ struct GallerySimulation::Impl {
                      waterlab::water_wheel_outer_disk_half_thickness /
                         waterlab::water_wheel_half_depth}};
             }
-            rigid_count_ = 7U + waterlab::water_wheel_fin_count;
+            const std::uint32_t first_platform = axle_view + 3U;
+            for (std::uint32_t side = 0U; side < 2U; ++side) {
+                const float sign = side == 0U ? -1.0F : 1.0F;
+                const float inner = waterlab::water_wheel_center.x + sign *
+                    waterlab::water_wheel_top_platform_gap_half_width;
+                const float outer = waterlab::water_wheel_center.x + sign *
+                    waterlab::water_wheel_top_platform_outer_x;
+                rigid_views_[first_platform + side] = {cube,
+                    {0.5F * (inner + outer),
+                     waterlab::water_wheel_top_platform_y - 0.035F,
+                     waterlab::water_wheel_stage_z},
+                    {0,0,0,1},
+                    {0.5F * std::fabs(outer - inner), 0.035F,
+                     waterlab::water_wheel_top_platform_half_depth}};
+            }
+            const std::uint32_t first_bumper=first_platform+2U;
+            for (std::uint32_t side=0U;side<2U;++side) {
+                const float sign=side==0U ? -1.0F : 1.0F;
+                rigid_views_[first_bumper+side]={cube,
+                    {waterlab::water_wheel_center.x,
+                     waterlab::water_wheel_top_platform_y+
+                        waterlab::water_wheel_top_bumper_height,
+                     waterlab::water_wheel_stage_z+sign*(
+                        waterlab::water_wheel_top_platform_half_depth+
+                        waterlab::water_wheel_top_bumper_thickness)},
+                    {0,0,0,1},
+                    {waterlab::water_wheel_top_platform_outer_x,
+                     waterlab::water_wheel_top_bumper_height,
+                     waterlab::water_wheel_top_bumper_thickness}};
+            }
+            rigid_views_[first_bumper+2U]={cube,
+                {waterlab::water_wheel_center.x+
+                    waterlab::water_wheel_top_platform_outer_x+
+                    waterlab::water_wheel_top_bumper_thickness,
+                 waterlab::water_wheel_top_platform_y+
+                    waterlab::water_wheel_top_bumper_height,
+                 waterlab::water_wheel_stage_z},
+                {0,0,0,1},
+                {waterlab::water_wheel_top_bumper_thickness,
+                 waterlab::water_wheel_top_bumper_height,
+                 waterlab::water_wheel_top_platform_half_depth+
+                    2.0F*waterlab::water_wheel_top_bumper_thickness}};
+            rigid_count_ = 12U + waterlab::water_wheel_fin_count;
             return;
         }
         // The course exposes the same board, rails, and capped posts as the
@@ -768,7 +834,8 @@ struct GallerySimulation::Impl {
         } else if (deformable_) {
             const bool rolling_rigid = options_.context == ExampleContext::cloth_rigid ||
                 options_.context == ExampleContext::soft_body_rigid ||
-                options_.context == ExampleContext::rope_rigid;
+                options_.context == ExampleContext::rope_rigid ||
+                options_.context == ExampleContext::rope_bridge;
             waterlab::SoftBodyTimings timing{};
             if (options_.context == ExampleContext::rope_rigid) {
                 const auto lattice = deformable_->lattice_view();
@@ -804,7 +871,8 @@ struct GallerySimulation::Impl {
             options_.context == ExampleContext::soft_body_rigid ||
             options_.context == ExampleContext::particle_bowl ||
             options_.context == ExampleContext::particles_cloth ||
-            options_.context == ExampleContext::rope_rigid) {
+            options_.context == ExampleContext::rope_rigid ||
+            options_.context == ExampleContext::rope_bridge) {
             rigid_sphere_ = waterlab::gallery::initial_rigid_sphere(
                 options_.context, rope_node_count());
         }
@@ -826,7 +894,7 @@ struct GallerySimulation::Impl {
     DeviceBuffer<uint3> rigid_triangles_;
     std::array<ParticleRenderView, 1U> particle_views_{};
     std::array<SurfaceRenderView, 2U> surface_views_{};
-    std::array<RigidBodyRenderView, 7U + waterlab::water_wheel_fin_count> rigid_views_{};
+    std::array<RigidBodyRenderView, 12U + waterlab::water_wheel_fin_count> rigid_views_{};
     std::array<LatticeRenderView, 1U> lattice_views_{};
     std::uint32_t particle_count_{};
     std::uint32_t surface_count_{};
@@ -971,6 +1039,72 @@ FrameRenderView GallerySimulation::render_view() const noexcept
         impl_->rigid_count_,
         impl_->lattice_count_ == 0U ? nullptr : impl_->lattice_views_.data(),
         impl_->lattice_count_};
+}
+
+SimulationBuilder& SimulationBuilder::timestep(float value) noexcept
+{
+    config_.timestep(value);
+    return *this;
+}
+
+SimulationBuilder& SimulationBuilder::iterations(std::uint32_t value) noexcept
+{
+    config_.iterations(value);
+    return *this;
+}
+
+SimulationBuilder& SimulationBuilder::particles(std::uint32_t value) noexcept
+{
+    config_.particles(value);
+    return *this;
+}
+
+SimulationBuilder& SimulationBuilder::skin_frequency(std::uint32_t value) noexcept
+{
+    config_.skin_frequency(value);
+    return *this;
+}
+
+SimulationBuilder& SimulationBuilder::rope_nodes(std::uint32_t value) noexcept
+{
+    config_.rope_nodes(value);
+    return *this;
+}
+
+SimulationBuilder& SimulationBuilder::cloth_detail(std::uint32_t value) noexcept
+{
+    config_.cloth_resolution(value);
+    return *this;
+}
+
+SimulationBuilder& SimulationBuilder::gravity(float3 value) noexcept
+{
+    gravity_ = value;
+    return *this;
+}
+
+SimulationBuilder& SimulationBuilder::soft_body_asset(std::string path)
+{
+    asset_path_ = std::move(path);
+    return *this;
+}
+
+Status SimulationBuilder::build(
+    GallerySimulation& output, cudaStream_t stream) const noexcept
+{
+    const ConfigError error = validate(config_);
+    if (error != ConfigError::none) return invalid(describe(error).data());
+    GallerySimulationOptions options;
+    options.context = config_.context;
+    options.fixed_step.timestep = config_.fixed_timestep;
+    options.solver_iterations_override = config_.solver_iterations;
+    options.gravity_override = gravity_;
+    options.particle_count_override = config_.particle_count;
+    options.physical_skin_frequency_override = config_.physical_skin_frequency;
+    options.rope_node_count_override = config_.rope_node_count;
+    options.cloth_detail_override = config_.cloth_detail;
+    options.soft_body_asset_path = asset_path_;
+    return output.initialize(options, stream);
 }
 
 } // namespace meshprep::sim

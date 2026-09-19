@@ -22,18 +22,47 @@ __device__ bool finite3(float3 p)
     return isfinite(p.x) && isfinite(p.y) && isfinite(p.z);
 }
 
+__device__ std::uint32_t grid_dimension(float extent, float pitch)
+{
+    return min(256U, max(2U,
+        static_cast<std::uint32_t>(ceilf(extent / pitch)) + 1U));
+}
+
 __global__ void initialize_grid(const meshprep::HierarchyNode* nodes, float radius,
     std::uint32_t resolution, FluidSurfaceGrid* descriptor, std::uint32_t* errors)
 {
     const auto root = nodes[0];
     FluidSurfaceGrid grid{};
-    grid.dimensions = make_uint3(resolution, resolution, resolution);
     grid.support_radius = radius;
-    grid.minimum = make_float3(root.bounds_min.x-radius, root.bounds_min.y-radius, root.bounds_min.z-radius);
-    const float scale = 1.0F/static_cast<float>(resolution-1U);
-    grid.cell_size = make_float3((root.bounds_max.x-root.bounds_min.x+2*radius)*scale,
-        (root.bounds_max.y-root.bounds_min.y+2*radius)*scale,
-        (root.bounds_max.z-root.bounds_min.z+2*radius)*scale);
+    grid.minimum = make_float3(root.bounds_min.x-radius,
+        root.bounds_min.y-radius, root.bounds_min.z-radius);
+    const float3 extent = make_float3(
+        root.bounds_max.x-root.bounds_min.x+2.0F*radius,
+        root.bounds_max.y-root.bounds_min.y+2.0F*radius,
+        root.bounds_max.z-root.bounds_min.z+2.0F*radius);
+
+    // Spend the same resolution^3 sample budget according to the current
+    // particle-bounds aspect ratio. A long, thin stream previously received
+    // only `resolution` samples along its length and appeared as a handful of
+    // stationary slabs. Isotropic target spacing gives that axis more cells
+    // while reducing unused cells across the narrow stream.
+    const std::uint32_t maximum_samples = resolution*resolution*resolution;
+    float pitch = cbrtf(extent.x*extent.y*extent.z /
+        static_cast<float>(maximum_samples));
+    pitch = fmaxf(pitch, 1.0e-6F);
+    for (;;) {
+        grid.dimensions = make_uint3(grid_dimension(extent.x, pitch),
+            grid_dimension(extent.y, pitch), grid_dimension(extent.z, pitch));
+        const std::uint64_t samples =
+            static_cast<std::uint64_t>(grid.dimensions.x)*grid.dimensions.y*
+            grid.dimensions.z;
+        if (samples <= maximum_samples) break;
+        pitch *= 1.025F;
+    }
+    grid.cell_size = make_float3(
+        extent.x/static_cast<float>(grid.dimensions.x-1U),
+        extent.y/static_cast<float>(grid.dimensions.y-1U),
+        extent.z/static_cast<float>(grid.dimensions.z-1U));
     if (!finite3(grid.minimum) || !finite3(grid.cell_size) ||
         !(grid.cell_size.x>0) || !(grid.cell_size.y>0) || !(grid.cell_size.z>0)) {
         grid.cell_size = {};
@@ -79,6 +108,10 @@ __global__ void build_field(const float3* positions, std::uint32_t particle_coun
     if (i >= sample_count) return;
     const auto grid = *descriptor;
     if (!(grid.cell_size.x>0)) return;
+    const std::uint64_t active_samples =
+        static_cast<std::uint64_t>(grid.dimensions.x)*grid.dimensions.y*
+        grid.dimensions.z;
+    if (i >= active_samples) return;
     const std::uint32_t x = i%grid.dimensions.x;
     const std::uint32_t y = (i/grid.dimensions.x)%grid.dimensions.y;
     const std::uint32_t z = i/(grid.dimensions.x*grid.dimensions.y);
