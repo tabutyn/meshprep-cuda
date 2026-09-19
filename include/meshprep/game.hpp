@@ -110,7 +110,7 @@ inline constexpr std::array<LevelDefinition, 9> levels{{
     {ExampleContext::soft_body_rigid, GoalKind::paint_surface,
         "Cover the rolling sphere in blue paint from the cylinders.", 1.0F},
     {ExampleContext::particles_cloth, GoalKind::reach_hole,
-        "Guide the sphere and water through the snake to the top-right hole.", 1.0F},
+        "Pilot the boat and water into the green goal cube.", 1.0F},
     {ExampleContext::soft_body_fluid, GoalKind::ride_lift,
         "Cross the water wheel from the right stage to the left exit.", 1.0F},
     {ExampleContext::soft_body_cloth, GoalKind::damage_cloth,

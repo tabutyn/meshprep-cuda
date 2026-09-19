@@ -178,7 +178,7 @@ void test_procedural_soft_body_fluid()
             frame.surfaces[0].triangle_active != nullptr,
         "soft-body render surface is incomplete");
     const auto& lattice = frame.lattices[0];
-    require(lattice.nodes_per_instance == 1'710U &&
+    require(lattice.nodes_per_instance == 870U &&
             lattice.node_count == lattice.nodes_per_instance * lattice.instance_count &&
             lattice.bonds_per_instance > 0U && lattice.node_radius > 0.0F,
         "public soft-body lattice omitted volume nodes or topology");
@@ -200,7 +200,7 @@ void test_procedural_soft_body_fluid()
 
     require(simulation.step().ok(), "asset-backed context fixed step failed");
     const auto stats = simulation.statistics();
-    require(stats.frame_index == 1U && stats.particle_count == 2'000U &&
+    require(stats.frame_index == 1U && stats.particle_count == 322U &&
             stats.surface_count == 1U &&
             stats.rigid_body_count == 12U + waterlab::water_wheel_fin_count &&
             stats.finite_failure_count == 0U,

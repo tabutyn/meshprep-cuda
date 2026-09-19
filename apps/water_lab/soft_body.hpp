@@ -121,6 +121,8 @@ struct SoftBodyOptions {
     // separate hierarchy.  This is presentation geometry only; the spring
     // graph remains the single source of topology and fracture state.
     bool render_internal_members{};
+    std::uint32_t rope_bridge_columns{waterlab::rope_bridge_columns};
+    std::uint32_t rope_bridge_rows{waterlab::rope_bridge_rows};
     std::array<float3, maximum_instances> instance_origins{};
 };
 
@@ -177,6 +179,8 @@ struct SoftBodyRenderView {
     float member_half_width{};
     std::uint32_t surface_triangle_split{};
     std::uint32_t secondary_surface_triangle_split{};
+    std::uint32_t rope_bridge_columns{};
+    std::uint32_t rope_bridge_rows{};
 };
 
 // Borrowed CUDA arrays for the complete volume and actual spring graph.
@@ -288,6 +292,8 @@ public:
     void set_solver_substeps(std::uint32_t substeps);
     void set_spring_solver_iterations(std::uint32_t iterations);
     void set_material(SoftBodyMaterial material);
+    void set_voxel_mass(float mass);
+    [[nodiscard]] float voxel_mass() const noexcept;
     [[nodiscard]] SoftBodyMaterial material() const noexcept;
     [[nodiscard]] std::uint32_t spring_solver_iterations() const noexcept;
     void set_uniform_velocity(

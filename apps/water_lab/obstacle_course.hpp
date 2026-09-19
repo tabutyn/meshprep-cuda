@@ -160,6 +160,9 @@ inline constexpr float cloth_snake_gap_width =
     2.0F * cloth_basin_inner_half_extents.x / 3.0F;
 inline constexpr float cloth_snake_wall_top = 0.30F;
 inline constexpr float cloth_snake_collision_top = 2.20F;
+inline constexpr float3 cloth_goal_center{
+    cloth_basin_center.x + 1.38F, 0.55F, cloth_basin_center.z - 1.00F};
+inline constexpr float3 cloth_goal_half_extents{0.32F, 0.48F, 0.32F};
 __host__ __device__ inline float cloth_snake_wall_z(std::uint32_t wall)
 {
     const float panel_depth = 2.0F * cloth_basin_inner_half_extents.y / 3.0F;
@@ -183,11 +186,12 @@ inline constexpr float water_wheel_cross_offset = 1.35F;
 inline constexpr float water_wheel_axle_half_length = 1.70F;
 inline constexpr float water_wheel_outer_disk_offset = water_wheel_cross_offset;
 inline constexpr float water_wheel_outer_disk_half_thickness = 0.30F;
+inline constexpr float water_wheel_outer_disk_radius = 0.675F;
 inline constexpr float water_wheel_stage_z =
     water_wheel_center.z + water_wheel_cross_offset;
 inline constexpr float water_wheel_top_platform_y =
-    water_wheel_center.y + water_wheel_radius - 0.10F;
-inline constexpr float water_wheel_top_platform_gap_half_width = 0.62F;
+    water_wheel_center.y + water_wheel_outer_disk_radius - 0.10F;
+inline constexpr float water_wheel_top_platform_gap_half_width = 0.34F;
 inline constexpr float water_wheel_top_platform_outer_x = 3.10F;
 inline constexpr float water_wheel_top_platform_half_depth = 0.30F;
 inline constexpr float water_wheel_top_bumper_thickness = 0.055F;
@@ -487,7 +491,7 @@ __host__ __device__ inline void project_gallery_contact(
         const float dx = p.x - water_wheel_center.x;
         const float dy = p.y - water_wheel_center.y;
         const float radial = sqrtf(dx * dx + dy * dy);
-        const float radial_offset = radial-water_wheel_radius;
+        const float radial_offset = radial-water_wheel_outer_disk_radius;
         const float axial_offset = p.z-water_wheel_stage_z;
         constexpr float rim_half_width=0.065F;
         const float radial_excess=fabsf(radial_offset)-rim_half_width;

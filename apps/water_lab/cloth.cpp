@@ -409,10 +409,142 @@ SoftBodyAsset make_soft_rope(std::uint32_t node_count, float spacing)
     return asset;
 }
 
-SoftBodyAsset make_rope_bridge()
+SoftBodyAsset make_y_rope_cage(std::uint32_t node_count,float total_length)
 {
-    constexpr std::uint32_t columns = rope_bridge_columns;
-    constexpr std::uint32_t rows = rope_bridge_rows;
+    if (node_count<16U || node_count>512U || !std::isfinite(total_length) ||
+        total_length<=0.0F)
+        throw std::invalid_argument("Y rope requires 16-512 nodes and finite length");
+    const std::uint32_t trunk_nodes=std::max(8U,node_count/2U);
+    const std::uint32_t branch_nodes=std::max(5U,(node_count-trunk_nodes)/2U+1U);
+    const float trunk_length=0.5F*total_length;
+    const float branch_length=0.5F*total_length;
+    const float trunk_spacing=trunk_length/static_cast<float>(trunk_nodes-1U);
+    const float branch_spacing=branch_length/static_cast<float>(branch_nodes-1U);
+    const float inverse_direction=1.0F/std::sqrt(1.0F+0.55F*0.55F);
+    const float3 primary_direction=make_float3(inverse_direction,0.0F,
+        0.55F*inverse_direction);
+    const float3 secondary_direction=make_float3(inverse_direction,0.0F,
+        -0.55F*inverse_direction);
+    const float3 junction=make_float3(trunk_length,0.0F,0.0F);
+    const auto vector_add=[](float3 a,float3 b) {
+        return make_float3(a.x+b.x,a.y+b.y,a.z+b.z);
+    };
+    const auto vector_scale=[](float3 value,float scale) {
+        return make_float3(value.x*scale,value.y*scale,value.z*scale);
+    };
+    const auto vector_length=[](float3 value) {
+        return std::sqrt(value.x*value.x+value.y*value.y+value.z*value.z);
+    };
+
+    SoftBodyAsset asset;
+    asset.nominal_spacing=std::min(trunk_spacing,branch_spacing);
+    asset.voxel_radius=0.36F*asset.nominal_spacing;
+    const auto add_node=[&](float3 point) {
+        const std::uint32_t id=static_cast<std::uint32_t>(asset.rest_voxels.size());
+        asset.rest_voxels.push_back(point);
+        asset.voxel_flags.push_back(soft_body_voxel_surface);
+        return id;
+    };
+    const auto add_edge=[&](std::uint32_t a,std::uint32_t b) {
+        asset.edges.push_back({make_uint2(std::min(a,b),std::max(a,b)),
+            distance(asset.rest_voxels[a],asset.rest_voxels[b])});
+    };
+    for (std::uint32_t node=0U;node<trunk_nodes;++node)
+        add_node(make_float3(trunk_spacing*node,0.0F,0.0F));
+    asset.voxel_flags.front()|=soft_body_voxel_pinned;
+    for (std::uint32_t node=0U;node+1U<trunk_nodes;++node) add_edge(node,node+1U);
+    for (std::uint32_t node=0U;node+2U<trunk_nodes;++node) add_edge(node,node+2U);
+
+    const std::uint32_t secondary_first=static_cast<std::uint32_t>(
+        asset.rest_voxels.size());
+    for (std::uint32_t node=1U;node<branch_nodes;++node)
+        add_node(vector_add(junction,
+            vector_scale(secondary_direction,branch_spacing*node)));
+    add_edge(trunk_nodes-1U,secondary_first);
+    for (std::uint32_t node=secondary_first;
+         node+1U<asset.rest_voxels.size();++node) add_edge(node,node+1U);
+
+    const float3 cage_center=vector_add(junction,
+        vector_scale(secondary_direction,branch_length));
+    const std::uint32_t cage_first=static_cast<std::uint32_t>(asset.rest_voxels.size());
+    constexpr float phi=1.61803398875F;
+    constexpr float inv_phi=1.0F/phi;
+    const float3 raw[20]{
+        {-1,-1,-1},{-1,-1,1},{-1,1,-1},{-1,1,1},
+        {1,-1,-1},{1,-1,1},{1,1,-1},{1,1,1},
+        {0,-inv_phi,-phi},{0,-inv_phi,phi},{0,inv_phi,-phi},{0,inv_phi,phi},
+        {-inv_phi,-phi,0},{-inv_phi,phi,0},{inv_phi,-phi,0},{inv_phi,phi,0},
+        {-phi,0,-inv_phi},{-phi,0,inv_phi},{phi,0,-inv_phi},{phi,0,inv_phi}};
+    constexpr float cage_radius=0.42F;
+    for (float3 point:raw)
+        add_node(vector_add(cage_center,
+            vector_scale(point,cage_radius/vector_length(point))));
+    std::vector<uint2> cage_edges;
+    for (std::uint32_t a=0U;a<20U;++a) {
+        std::vector<std::pair<float,std::uint32_t>> nearest;
+        for (std::uint32_t b=0U;b<20U;++b) if (a!=b)
+            nearest.emplace_back(distance(raw[a],raw[b]),b);
+        std::partial_sort(nearest.begin(),nearest.begin()+3U,nearest.end());
+        for (std::uint32_t slot=0U;slot<3U;++slot)
+            cage_edges.push_back(make_uint2(std::min(a,nearest[slot].second),
+                std::max(a,nearest[slot].second)));
+    }
+    std::sort(cage_edges.begin(),cage_edges.end(),[](uint2 a,uint2 b) {
+        return a.x<b.x || (a.x==b.x && a.y<b.y);
+    });
+    cage_edges.erase(std::unique(cage_edges.begin(),cage_edges.end(),
+        [](uint2 a,uint2 b){return a.x==b.x && a.y==b.y;}),cage_edges.end());
+    for (uint2 edge:cage_edges) add_edge(cage_first+edge.x,cage_first+edge.y);
+    const std::uint32_t secondary_end=cage_first-1U;
+    for (std::uint32_t link=0U;link<3U;++link)
+        add_edge(secondary_end,cage_first+link);
+
+    const std::uint32_t primary_first=static_cast<std::uint32_t>(
+        asset.rest_voxels.size());
+    for (std::uint32_t node=1U;node<branch_nodes;++node)
+        add_node(vector_add(junction,
+            vector_scale(primary_direction,branch_spacing*node)));
+    add_edge(trunk_nodes-1U,primary_first);
+    for (std::uint32_t node=primary_first;
+         node+1U<asset.rest_voxels.size();++node) add_edge(node,node+1U);
+
+    std::sort(asset.edges.begin(),asset.edges.end(),[](const SoftBodyEdge& a,
+        const SoftBodyEdge& b) {
+        return a.vertices.x<b.vertices.x ||
+            (a.vertices.x==b.vertices.x && a.vertices.y<b.vertices.y);
+    });
+    asset.edges.erase(std::unique(asset.edges.begin(),asset.edges.end(),
+        [](const SoftBodyEdge& a,const SoftBodyEdge& b) {
+            return a.vertices.x==b.vertices.x && a.vertices.y==b.vertices.y;
+        }),asset.edges.end());
+    rebuild_adjacency(asset);
+
+    const HostSurfaceMesh glass=make_geodesic_sphere(6U,0.31F);
+    for (const float3 point:glass.positions) {
+        const float3 placed=vector_add(cage_center,point);
+        asset.render_positions.push_back(placed);
+        asset.render_uvs.push_back(make_float2(
+            0.5F+atan2f(point.z,point.x)/(2.0F*3.14159265358979323846F),
+            acosf(std::clamp(point.y/0.31F,-1.0F,1.0F))/
+                3.14159265358979323846F));
+        float best=INFINITY;
+        std::uint32_t owner=cage_first;
+        for (std::uint32_t node=0U;node<20U;++node) {
+            const float d=distance(placed,asset.rest_voxels[cage_first+node]);
+            if (d<best) { best=d; owner=cage_first+node; }
+        }
+        asset.render_bindings.push_back({make_uint4(owner,owner,owner,owner),
+            make_float4(1,0,0,0)});
+    }
+    asset.render_triangles=glass.triangles;
+    validate_soft_body_asset(asset);
+    return asset;
+}
+
+SoftBodyAsset make_rope_bridge(std::uint32_t columns, std::uint32_t rows)
+{
+    if (columns < 2U || columns > 16U || rows < 2U || rows > 64U)
+        throw std::invalid_argument("rope bridge dimensions must be 2..16 by 2..64");
     constexpr std::uint32_t corners = 4U;
     SoftBodyAsset asset;
     asset.nominal_spacing = rope_bridge_gap;
@@ -422,12 +554,14 @@ SoftBodyAsset make_rope_bridge()
     asset.render_positions.reserve(columns * rows * corners);
     asset.render_uvs.reserve(columns * rows * corners);
     asset.render_bindings.reserve(columns * rows * corners);
-    const auto tile = [](std::uint32_t column, std::uint32_t row) {
+    const auto tile = [columns](std::uint32_t column, std::uint32_t row) {
         return (row * columns + column) * corners;
     };
-    const float first_x = -0.5F * rope_bridge_width +
+    const float width=columns*rope_bridge_tile_size+(columns-1U)*rope_bridge_gap;
+    const float bridge_length=rows*rope_bridge_tile_size+(rows-1U)*rope_bridge_gap;
+    const float first_x = -0.5F * width +
         0.5F * rope_bridge_tile_size;
-    const float first_z = 0.5F * rope_bridge_length -
+    const float first_z = 0.5F * bridge_length -
         0.5F * rope_bridge_tile_size;
     constexpr float half = 0.5F * rope_bridge_tile_size;
     for (std::uint32_t row = 0U; row < rows; ++row) {

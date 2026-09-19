@@ -75,7 +75,9 @@ struct ContextPhysicsOverrides {
     const HybridOptions& physics,
     std::string_view soft_body_asset_path,
     std::uint32_t rope_node_count = default_rope_nodes,
-    std::uint32_t cloth_detail = 0U);
+    std::uint32_t cloth_detail = 0U,
+    std::uint32_t bridge_columns = rope_bridge_columns,
+    std::uint32_t bridge_rows = rope_bridge_rows);
 
 [[nodiscard]] FluidDisplay default_context_display(
     meshprep::sim::ExampleContext context) noexcept;

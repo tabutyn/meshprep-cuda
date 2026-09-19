@@ -84,7 +84,13 @@ void check_cuda(cudaError_t status, const char* operation)
              *options.rope_node_count_override <= 512U)) &&
         (!options.cloth_detail_override.has_value() ||
             (*options.cloth_detail_override >= 1U &&
-             *options.cloth_detail_override <= 8U));
+             *options.cloth_detail_override <= 8U)) &&
+        (!options.bridge_columns_override.has_value() ||
+            (*options.bridge_columns_override >= 2U &&
+             *options.bridge_columns_override <= 16U)) &&
+        (!options.bridge_rows_override.has_value() ||
+            (*options.bridge_rows_override >= 2U &&
+             *options.bridge_rows_override <= 64U));
 }
 
 [[nodiscard]] const ExampleContextInfo* context_info(ExampleContext context) noexcept
@@ -171,11 +177,20 @@ struct GallerySimulation::Impl {
 
         if (particles || water_skin) {
             hybrid_ = std::make_unique<waterlab::HybridDroplet>(physics);
+            if (options_.context==ExampleContext::soft_body_fluid &&
+                physics.particle_count>256U) {
+                staged_particle_target_=physics.particle_count;
+                hybrid_->resize_particles(256U,stream);
+            }
         }
         if (deformable) {
             deformable_ = waterlab::gallery::make_context_deformable(
                 options_.context, physics, asset_path_, rope_node_count(),
-                cloth_detail());
+                cloth_detail(),
+                options_.bridge_columns_override.value_or(
+                    waterlab::rope_bridge_columns),
+                options_.bridge_rows_override.value_or(
+                    waterlab::rope_bridge_rows));
             if (!deformable_) {
                 throw std::runtime_error("gallery recipe omitted a declared deformable");
             }
@@ -586,8 +601,10 @@ struct GallerySimulation::Impl {
                      waterlab::water_wheel_center.z + sign *
                         waterlab::water_wheel_outer_disk_offset},
                     {0,0,0,1},
-                    {waterlab::water_wheel_radius / waterlab::water_wheel_hub_radius,
-                     waterlab::water_wheel_radius / waterlab::water_wheel_hub_radius,
+                    {waterlab::water_wheel_outer_disk_radius /
+                         waterlab::water_wheel_hub_radius,
+                     waterlab::water_wheel_outer_disk_radius /
+                         waterlab::water_wheel_hub_radius,
                      waterlab::water_wheel_outer_disk_half_thickness /
                         waterlab::water_wheel_half_depth}};
             }
@@ -822,14 +839,23 @@ struct GallerySimulation::Impl {
     {
         float gpu_time = 0.0F;
         if (hybrid_) {
+            if (staged_particle_target_>hybrid_->options().particle_count) {
+                staged_spawn_frame_=std::min(300U,staged_spawn_frame_+1U);
+                const std::uint32_t range=staged_particle_target_-256U;
+                hybrid_->resize_particles(std::min(staged_particle_target_,
+                    256U+(range*staged_spawn_frame_+299U)/300U),stream);
+            }
             const bool dynamic_sphere =
                 options_.context == ExampleContext::particle_bowl ||
-                options_.context == ExampleContext::particles_cloth;
+                options_.context == ExampleContext::particles_cloth ||
+                options_.context == ExampleContext::soft_body_fluid;
             const auto timing = hybrid_->step(
                 {}, 0.0F, stream, deformable_.get(), false,
                 dynamic_sphere ? &rigid_sphere_ : nullptr,
                 options_.context == ExampleContext::soft_body_fluid
-                    ? &water_wheel_ : nullptr);
+                    ? &water_wheel_ : nullptr,
+                options_.context == ExampleContext::soft_body_fluid
+                    ? &resolved_physics_.gravity : nullptr);
             gpu_time = timing.gpu_total_ms();
         } else if (deformable_) {
             const bool rolling_rigid = options_.context == ExampleContext::cloth_rigid ||
@@ -857,7 +883,13 @@ struct GallerySimulation::Impl {
 
     void reset(cudaStream_t stream)
     {
-        if (hybrid_) hybrid_->reset(stream);
+        if (hybrid_) {
+            hybrid_->reset(stream);
+            if (staged_particle_target_>256U) {
+                hybrid_->resize_particles(256U,stream);
+                staged_spawn_frame_=0U;
+            }
+        }
         if (deformable_) {
             if (options_.context == ExampleContext::soft_body_fluid) {
                 deformable_->set_pinned_rotation_z(
@@ -890,6 +922,8 @@ struct GallerySimulation::Impl {
     std::unique_ptr<waterlab::SoftBodyCourse> deformable_;
     waterlab::RigidSphereState rigid_sphere_{};
     waterlab::WaterWheelState water_wheel_{};
+    std::uint32_t staged_particle_target_{};
+    std::uint32_t staged_spawn_frame_{};
     DeviceBuffer<float3> rigid_vertices_;
     DeviceBuffer<uint3> rigid_triangles_;
     std::array<ParticleRenderView, 1U> particle_views_{};

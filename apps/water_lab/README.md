@@ -44,7 +44,7 @@ failed the water geometry gates, so course mode retains four as its minimum. See
 
 The camera begins behind and above the droplet. It follows the droplet while
 preserving orbit and pan changes. The compact on-screen panel contains only
-state plus the `Z/X/C/V/B/R/T/P/L/M/[ ]` shortcuts; course progress, tilt text,
+state plus the `Z/X/C/V/K/B/R/T/P/L/M/[ ]` shortcuts; course progress, tilt text,
 the old title, and verbose mouse instructions were removed.
 
 ## Numbered API gallery
@@ -60,20 +60,19 @@ They use the same public recipe catalog as `<parallel_mater/game.hpp>`:
 | `2` | Paint the bowl through persistent per-pixel water contact; four cylinder pegs and an invisible continuation above the rim keep water contained |
 | `3` | Start farther from a smooth-shaded cloth carrying a procedural `GOAL` texture; win on the first damaged connection |
 | `4` | Paint a checker-textured sphere blue by rolling it through twenty simple blue hanging cylinders below a low open grate |
-| `5` | Guide a small sphere and 2,500 particles through two rails aligned with the 3x3 cloth boundaries; only the far-right `GOAL` panel can tear |
-| `6` | Roll a rigid sphere from the front-left crown platform onto the extruded outer wheel while water drives the soft-cross axle/rim system |
+| `5` | Pilot a boat and 20,000 shallow-spawned particles through two rails into a transparent green goal volume above nine equivalent cloth cells |
+| `6` | Roll a checker sphere across the compact outer wheel while 20,000 water particles spawn over five seconds and drive its soft crosses |
 | `7` | Roll a blue 1,000-voxel soft sphere into a farther green `GOAL` cloth; contact paints it blue and damage wins |
-| `8` | Wrap the side-mounted procedural rope around the center post three complete turns |
-| `9` | Cross a suspended 4x10 rope bridge made from forty square tiles joined by paired short ropes |
+| `8` | Wrap the checker sphere around the post while a Y branch suspends a glass sphere inside a dodecahedral rope cage |
+| `9` | Cross a dynamic MxN rope bridge; edit both dimensions in `P` to benchmark larger grids |
 
 Contexts 2, 5, and 6 have no invisible membrane force. Contexts 2 and 5 use
 deterministically reduced particle reactions to move their finite-mass rigid
 spheres. Context 5 keeps one cloth perfectly horizontal and pins every node
 along four support lines per direction, producing nine flexible cells in a
 visible square beam grid. Its closed perimeter and two low visible snake rails
-use ceiling-height collision volumes; only the far-right goal cloth is dynamic
-and tearable. Particles already below its unilateral surface are not teleported
-back to the visible side. Contexts 5 and 6 use direct
+use ceiling-height collision volumes; all nine cloth cells share identical
+physics and the goal is an independent transparent volume. Contexts 5 and 6 use direct
 particle-to-cloth/soft-cross contact with deterministic vertex gathering. The current
 `HybridDroplet` owner still carries a hidden adapter skin allocation and a
 small hierarchy/normal cost even where it is not a declared component. The
@@ -81,6 +80,13 @@ timing table exposes that cost. Context 1 uses its authored 8× course preset;
 context 2 uses `(0,-19.62,0)`, and contexts 3–9 use Earth gravity
 `(0,-9.81,0)`. Non-course recipes default to four iterations. No gallery
 recipe inherits invisible course rails.
+`K` toggles an alternative raster path: particles are projected, stably sorted
+back-to-front, and drawn as round semi-transparent billboards. It skips the
+implicit surface reconstruction and ray/sphere particle traversal, making it a
+useful fallback for thin streams and high particle counts.
+Context 3 defaults to friction `5`; cloth contact and every room plane exchange
+bounded tangential linear/angular impulse with the sphere, so a rolling ball can
+climb briefly when its rotating surface grips a wall.
 Contexts 1–9 accept camera-relative arrow-key gravity tilt. Context 7 starts
 from rest under vertical gravity; its default friction is `10`, the live range
 is `0`–`50`, and friction is applied after graph projection so it remains active
@@ -88,15 +94,14 @@ while steering supplies a horizontal gravity component. Ground cloth provides
 a visible deformable rolling surface before the two-sided hanging barrier. Its
 pinned perimeter rests on the room floor while the free interior spans a
 2.6 m square opening and can droop 1.25 m into a finite rendered pit.
-Context 8 uses one pinned centerline endpoint, structural and bend links, a
-watertight six-sided render tube, and a mass-weighted bilateral attachment at
-the sphere. The attachment is solved after the rope graph, so the committed
-rope endpoint—not an independent anchor-radius clamp—limits sphere travel. The
-default 4 m rope can wrap around the center post three times. Ground contact is
+Context 8 uses one pinned Y rope, structural and bend links, a direct
+mass-weighted attachment for the checker sphere, and a second branch ending in
+a dodecahedral cage around a glass surface. The attachment is solved after the
+rope graph, so the committed rope endpoint limits sphere travel. Ground contact is
 resolved before the mass-shared endpoint attachment, whose upper-hemisphere
 direction prevents the rope from pulling a floor-supported sphere downward.
 `L` changes rope
-node count from 8 to 512 and resets the scene;
+node count from 16 to 512 and resets the scene;
 `P` exposes solver iterations, bond strength, spring stiffness/damping, drag,
 speed, gravity, ground friction, and rigid-sphere mass.
 Context 2 starts at 20,000 particles with repulsion `50`. Its bowl is red until

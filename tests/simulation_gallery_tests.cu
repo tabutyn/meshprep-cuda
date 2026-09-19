@@ -94,6 +94,10 @@ void host_catalog_test()
         if (context == ExampleContext::particle_bowl)
             require(options.particle_count == 20'000U,
                 "context 2 did not retain its 20k fluid preset");
+        if (context == ExampleContext::particles_cloth ||
+            context == ExampleContext::soft_body_fluid)
+            require(options.particle_count == 20'000U,
+                "fluid gallery context did not retain its 20k particle preset");
         if (context == ExampleContext::soft_body_cloth)
             require(options.arena == waterlab::GalleryArena::ground_box,
                 "context 7 omitted its closed frictional arena");
@@ -245,13 +249,13 @@ void host_catalog_test()
                 waterlab::water_wheel_center.z), 0.10F),
         "context 6 crown platforms are not aligned with the front soft rim");
     point = make_float3(waterlab::water_wheel_center.x +
-            waterlab::water_wheel_radius + 0.05F,
+            waterlab::water_wheel_outer_disk_radius + 0.05F,
         waterlab::water_wheel_center.y, waterlab::water_wheel_stage_z);
     velocity = make_float3(-1.0F, 0.0F, 0.0F);
     waterlab::project_gallery_contact(
         point, velocity, 0.10F, waterlab::GalleryArena::water_wheel);
     require(point.x >= waterlab::water_wheel_center.x +
-                waterlab::water_wheel_radius + 0.065F + 0.10F - 1.0e-5F &&
+                waterlab::water_wheel_outer_disk_radius + 0.065F + 0.10F - 1.0e-5F &&
             velocity.x >= -1.0e-6F,
         "context 6 front wheel rim is not a rigid-sphere collider");
     point=make_float3(waterlab::water_wheel_center.x+2.0F,
@@ -299,8 +303,8 @@ void gpu_fixture_test()
         {0U, 0U}, {0U, 0U}, {1U, 840U}, {20U, 20'000U},
         {1U, waterlab::gallery::catch_cloth_columns *
             waterlab::gallery::catch_cloth_rows},
-        {1U, 1'710U}, {1U, 3'176U},
-        {1U, waterlab::gallery::default_rope_nodes},
+        {1U, 870U}, {1U, 3'176U},
+        {1U, 84U},
         {1U, waterlab::rope_bridge_columns * waterlab::rope_bridge_rows * 4U},
     }};
 
@@ -320,6 +324,8 @@ void gpu_fixture_test()
             "gallery context created the wrong deformable instance/voxel count");
 
         if (context == ExampleContext::cloth_rigid) {
+            require(deformable->material().ground_friction==5.0F,
+                "context 3 did not select its friction-5 contact preset");
             const auto voxels = deformable->voxel_view();
             std::vector<std::uint32_t> flags(voxels.voxel_count);
             require(cudaMemcpy(flags.data(), voxels.flags,
@@ -396,7 +402,7 @@ void gpu_fixture_test()
 
         if (context == ExampleContext::rope_rigid) {
             const auto lattice = deformable->lattice_view();
-            require(lattice.voxels_per_instance ==
+            require(lattice.voxels_per_instance >
                         waterlab::gallery::default_rope_nodes &&
                     deformable->render_view().member_count ==
                         deformable->statistics().total_edge_count,
@@ -422,9 +428,8 @@ void gpu_fixture_test()
                     return (flag & waterlab::soft_body_voxel_pinned) != 0U;
                 });
             require(pinned == static_cast<std::ptrdiff_t>(
-                        waterlab::rope_bridge_columns*
-                        waterlab::rope_bridge_rows*4U),
-                "rope-bridge diagnostic must hold every tile and rope node fixed");
+                        2U*waterlab::rope_bridge_columns*4U),
+                "rope bridge must pin only its two land-connected end rows");
         }
 
         if (context == ExampleContext::particles_cloth) {
@@ -443,16 +448,9 @@ void gpu_fixture_test()
                 waterlab::gallery::catch_cloth_columns / 2U +
                 (waterlab::gallery::catch_cloth_rows / 2U) *
                     waterlab::gallery::catch_cloth_columns;
-            constexpr std::uint32_t goal_columns =
-                waterlab::gallery::catch_cloth_columns - 2U -
-                2U * (waterlab::gallery::catch_cloth_columns - 1U) / 3U;
-            constexpr std::uint32_t goal_rows =
-                waterlab::gallery::catch_cloth_rows - 2U -
-                2U * (waterlab::gallery::catch_cloth_rows - 1U) / 3U;
             constexpr std::uint32_t expected_pins =
-                waterlab::gallery::catch_cloth_columns *
-                    waterlab::gallery::catch_cloth_rows -
-                goal_columns * goal_rows;
+                4U*waterlab::gallery::catch_cloth_rows+
+                4U*waterlab::gallery::catch_cloth_columns-16U;
             require(pinned == expected_pins &&
                     std::fabs(basin.positions[center].y -
                         basin.positions[0U].y) < 1.0e-5F &&
@@ -816,9 +814,10 @@ void gpu_mixed_context_hold_test()
                 particles.statistics().soft_body_contact_count,
                 particles.statistics().maximum_soft_body_penetration);
             std::fprintf(stderr,
-                "cloth peak contact depth %.3f, inverted triangles %u/%zu, minimum area %.7f\n",
+                "cloth peak contact depth %.3f, inverted triangles %u/%zu, minimum area %.7f, boat bottom %.3f, cloth support %.3f\n",
                 deepest_contact, inverted_triangles,
-                render_triangles.size(), minimum_area);
+                render_triangles.size(), minimum_area,
+                sphere.center.y-sphere.radius, sphere_support_y);
             require(genuinely_beneath == 0U && spilled_past_rim == 0U &&
                     inverted_triangles == 0U &&
                     minimum_area > 0.70F * 0.5F *
@@ -1076,9 +1075,12 @@ void gpu_rolling_rigid_cloth_test()
         [](float3 a, float3 b) { return a.z < b.z; });
     const auto active_count = std::count(active.begin(), active.end(), 1U);
     const auto lattice = deformable->lattice_view();
+    std::vector<float3> lattice_positions(lattice.voxel_count);
     std::vector<waterlab::SoftBodyEdge> lattice_edges(lattice.edges_per_instance);
     std::vector<std::uint8_t> lattice_active(lattice.edges_per_instance);
-    require(cudaMemcpy(lattice_edges.data(), lattice.edges,
+    require(cudaMemcpy(lattice_positions.data(), lattice.positions,
+                lattice_positions.size()*sizeof(float3),cudaMemcpyDeviceToHost)==cudaSuccess &&
+            cudaMemcpy(lattice_edges.data(), lattice.edges,
                 lattice_edges.size() * sizeof(waterlab::SoftBodyEdge),
                 cudaMemcpyDeviceToHost) == cudaSuccess &&
             cudaMemcpy(lattice_active.data(), lattice.active_edges,
@@ -1095,6 +1097,12 @@ void gpu_rolling_rigid_cloth_test()
     const auto edge_length = [](float3 a, float3 b) {
         return std::hypot(std::hypot(a.x-b.x, a.y-b.y), a.z-b.z);
     };
+    float maximum_edge_strain{};
+    for (const auto edge : lattice_edges) {
+        maximum_edge_strain=std::max(maximum_edge_strain,
+            edge_length(lattice_positions[edge.vertices.x],
+                lattice_positions[edge.vertices.y])/edge.rest_length-1.0F);
+    }
     std::uint32_t rigid_dangling_triangles{};
     for (const uint3 triangle : render_triangles) {
         const std::uint32_t anchor[3]{render_bindings[triangle.x].voxels.x,
@@ -1119,11 +1127,12 @@ void gpu_rolling_rigid_cloth_test()
                 cudaMemcpyDeviceToHost) == cudaSuccess,
         "hanging cloth hierarchy root was unreadable");
     std::fprintf(stderr,
-        "rigid/cloth: center z %.3f, y %.3f..%.3f, z %.3f..%.3f, root y %.3f..%.3f, active %zu/%zu, broken %u, dangling %u\n",
+        "rigid/cloth: center z %.3f, y %.3f..%.3f, z %.3f..%.3f, root y %.3f..%.3f, active %zu/%zu, broken %u, dangling %u, max strain %.4f\n",
         sphere.center.z, minimum->y, maximum->y,
         minimum_z->z, maximum_z->z, root.bounds_min.y, root.bounds_max.y,
         static_cast<std::size_t>(active_count), active.size(),
-        deformable->statistics().broken_edge_count, rigid_dangling_triangles);
+        deformable->statistics().broken_edge_count, rigid_dangling_triangles,
+        maximum_edge_strain);
     require(sphere.center.z < -1.0F &&
             maximum->y - minimum->y > 1.0F &&
             minimum_z->z < -0.90F &&

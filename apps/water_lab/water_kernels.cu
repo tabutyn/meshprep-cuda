@@ -1417,8 +1417,8 @@ __device__ bool intersect_gallery_opaque(
             }
         }
         constexpr float rim_half_width = 0.065F;
-        const float rim_inner = water_wheel_radius - rim_half_width;
-        const float rim_outer = water_wheel_radius + rim_half_width;
+        const float rim_inner = water_wheel_outer_disk_radius - rim_half_width;
+        const float rim_outer = water_wheel_outer_disk_radius + rim_half_width;
         for (int side = -1; side <= 1; side += 2) {
             const float rim_z = water_wheel_center.z +
                 static_cast<float>(side) * water_wheel_outer_disk_offset;
@@ -1551,7 +1551,16 @@ __device__ bool intersect_gallery_opaque(
                 collider.half_extents.x, hit_any ? distance : maximum_distance,
                 sphere_distance, sphere_normal)) {
             distance = sphere_distance;
-            color = multiply(make_float3(0.94F, 0.47F, 0.12F),
+            const float3 material_normal=inverse_rotate_quaternion(
+                collider.sphere_orientation,sphere_normal);
+            const int longitude=static_cast<int>(floorf(
+                (atan2f(material_normal.z,material_normal.x)+pi)/(2.0F*pi)*16.0F));
+            const int latitude=static_cast<int>(floorf(
+                acosf(fminf(1.0F,fmaxf(-1.0F,material_normal.y)))/pi*8.0F));
+            const float3 base=((longitude+latitude)&1)==0
+                ? make_float3(0.94F,0.72F,0.18F)
+                : make_float3(0.07F,0.09F,0.13F);
+            color = multiply(base,
                 0.24F + 0.76F * fmaxf(0.0F,
                     dot(sphere_normal,
                         normalize(make_float3(-0.48F, 0.84F, 0.34F)))));
@@ -1591,7 +1600,16 @@ __device__ bool intersect_gallery_opaque(
         if (intersect_particle_sphere(ray, collider.center, collider.half_extents.x,
                 best, hit, hit_normal)) {
             distance = hit;
-            color = multiply(make_float3(0.94F, 0.47F, 0.12F),
+            const float3 material_normal=inverse_rotate_quaternion(
+                collider.sphere_orientation,hit_normal);
+            const int longitude=static_cast<int>(floorf(
+                (atan2f(material_normal.z,material_normal.x)+pi)/(2.0F*pi)*16.0F));
+            const int latitude=static_cast<int>(floorf(
+                acosf(fminf(1.0F,fmaxf(-1.0F,material_normal.y)))/pi*8.0F));
+            const float3 base=((longitude+latitude)&1)==0
+                ? make_float3(0.92F,0.92F,0.92F)
+                : make_float3(0.045F,0.055F,0.075F);
+            color = multiply(base,
                 0.24F + 0.76F * fmaxf(0.0F,
                     dot(hit_normal, normalize(make_float3(-0.48F, 0.84F, 0.34F)))));
             return true;
@@ -1813,9 +1831,40 @@ __device__ bool intersect_gallery_opaque(
                 color = multiply(make_float3(0.16F, 0.34F, 0.50F),
                     0.32F + 0.68F * fabsf(divider_normal.y));
             }
+
+            // Context 5 uses a compact boat hull while retaining the stable
+            // finite-mass sphere proxy for collision.  Three overlapping
+            // boxes give it an unmistakable bow, deck, and cabin silhouette.
+            float boat_distance = wall ? distance : maximum_distance;
+            float3 boat_normal{};
+            bool boat = false;
+            const float radius = collider.half_extents.x;
+            const auto boat_part = [&](float3 center, float3 half) {
+                float candidate{};
+                float3 candidate_normal{};
+                if (intersect_box(ray, center, half, boat_distance,
+                        candidate, candidate_normal)) {
+                    boat = true;
+                    boat_distance = candidate;
+                    boat_normal = candidate_normal;
+                }
+            };
+            boat_part(add(collider.center,make_float3(0.0F,-0.15F*radius,0.0F)),
+                make_float3(1.55F*radius,0.42F*radius,0.78F*radius));
+            boat_part(add(collider.center,make_float3(-0.20F*radius,0.32F*radius,0.0F)),
+                make_float3(0.72F*radius,0.30F*radius,0.58F*radius));
+            boat_part(add(collider.center,make_float3(1.15F*radius,-0.04F*radius,0.0F)),
+                make_float3(0.40F*radius,0.25F*radius,0.60F*radius));
+            if (boat) {
+                distance=boat_distance;
+                color=multiply(make_float3(0.92F,0.38F,0.055F),
+                    0.28F+0.72F*fmaxf(0.0F,dot(boat_normal,
+                        normalize(make_float3(-0.48F,0.84F,0.34F)))));
+                wall=true;
+            }
         }
         float sphere_distance{};
-        if (arena != GalleryArena::ground_box &&
+        if (arena != GalleryArena::ground_box && arena != GalleryArena::cloth_basin &&
             intersect_particle_sphere(ray, collider.center, collider.half_extents.x,
                 wall ? distance : maximum_distance, sphere_distance, normal)) {
             distance = sphere_distance;
@@ -1886,23 +1935,27 @@ __device__ bool trace_opaque_scene(const Ray& ray, const OrientedBox& collider,
                                : make_float3(0.06F,0.64F,0.20F),
                 goal_surface, goal_surface ? 1 : (ground_surface ? 2 : 0));
         } else if (arena == GalleryArena::cloth_basin) {
-            const bool goal_panel = body.uv.x > 2.0F/3.0F && body.uv.y > 2.0F/3.0F;
-            SoftBodyHit panel = body;
-            if (goal_panel) panel.uv = make_float2(
-                (body.uv.x-2.0F/3.0F)*3.0F,
-                (body.uv.y-2.0F/3.0F)*3.0F);
-            color = shade_colored_surface(ray, panel,
-                make_float3(0.08F,0.58F,0.20F), goal_panel, false);
+            color = shade_colored_surface(ray, body,
+                make_float3(0.08F,0.58F,0.20F), false, false);
+        } else if (arena == GalleryArena::rope_post) {
+            const float3 glass_surface=shade_colored_surface(ray,body,
+                make_float3(0.30F,0.82F,1.0F),false,false);
+            const float facing=fabsf(dot(body.normal,ray.direction));
+            const float fresnel=0.04F+0.96F*powf(1.0F-facing,5.0F);
+            color=add(add(multiply(make_float3(0.045F,0.075F,0.105F),0.68F),
+                multiply(glass_surface,0.22F)),
+                multiply(make_float3(0.72F,0.94F,1.0F),0.45F*fresnel));
         } else if (arena == GalleryArena::rope_bridge) {
-            const int column=max(0,min(static_cast<int>(rope_bridge_columns)-1,
+            const int columns=static_cast<int>(soft_body.rope_bridge_columns);
+            const int rows=static_cast<int>(soft_body.rope_bridge_rows);
+            const int column=max(0,min(columns-1,
                 static_cast<int>(floorf(body.uv.x))));
-            const int row=max(0,min(static_cast<int>(rope_bridge_rows)-1,
+            const int row=max(0,min(rows-1,
                 static_cast<int>(floorf(body.uv.y))));
-            const bool outside=column==0 || column==
-                static_cast<int>(rope_bridge_columns)-1;
+            const bool outside=column==0 || column==columns-1;
             const bool painted=device_ground_cloth_paint_pixels != nullptr &&
                 device_ground_cloth_paint_pixels[
-                    row*rope_bridge_columns+column] != 0U;
+                    row*columns+column] != 0U;
             color=shade_colored_surface(ray,body,
                 outside || painted ? make_float3(0.035F,0.30F,0.92F)
                                    : make_float3(0.86F,0.06F,0.045F),
@@ -2444,7 +2497,8 @@ __global__ void render_fluid_kernel(
     if (x >= width || y >= height) return;
     const Ray ray = camera_ray(camera, x, y, width, height);
     const bool wire_display = visuals.display == FluidDisplay::Wireframe;
-    const Hit skin = (wire_display || visuals.display == FluidDisplay::Particles)
+    const Hit skin = (wire_display || visuals.display == FluidDisplay::Particles ||
+        visuals.display == FluidDisplay::Billboards)
         ? Hit{1.0e30F, UINT32_MAX, {}}
         : trace_closest(ray, positions, vertex_normals, corner_normal_indices,
             triangles, nodes, primitive_indices, node_count);
@@ -2515,6 +2569,20 @@ __global__ void render_fluid_kernel(
     } else {
         color = obstacle_valid ? obstacle_color
             : environment<obstacle_course, arena>(ray.origin, ray.direction, collider, soft_body);
+    }
+    if constexpr (arena == GalleryArena::cloth_basin) {
+        float goal_distance{};
+        float3 goal_normal{};
+        const float foreground=fminf(nearest_fluid,
+            obstacle_valid ? obstacle_distance : 1.0e30F);
+        if (intersect_box(ray,cloth_goal_center,cloth_goal_half_extents,
+                foreground+1.0e-4F,goal_distance,goal_normal)) {
+            const float edge_light=0.55F+0.45F*(1.0F-fabsf(
+                dot(goal_normal,ray.direction)));
+            const float3 goal_color=multiply(make_float3(0.08F,1.0F,0.30F),
+                edge_light);
+            color=add(multiply(color,0.66F),multiply(goal_color,0.34F));
+        }
     }
     // The cap is a thin film over the same composed scene, not another copy
     // of the water/skin/obstacle shading paths.
@@ -2780,10 +2848,10 @@ void RayTracer::update_goal_cloth_paint(const float3* source_positions,
 
 __global__ void update_rope_bridge_paint_kernel(
     const float3* nodes, std::uint32_t node_count, RigidSphereState sphere,
-    std::uint32_t* pixels)
+    std::uint32_t columns, std::uint32_t rows, std::uint32_t* pixels)
 {
     const std::uint32_t tile=blockIdx.x*blockDim.x+threadIdx.x;
-    if (tile>=rope_bridge_columns*rope_bridge_rows ||
+    if (tile>=columns*rows ||
         4U*tile+3U>=node_count) return;
     float minimum_x=1.0e30F,maximum_x=-1.0e30F;
     float minimum_z=1.0e30F,maximum_z=-1.0e30F,average_y=0.0F;
@@ -2803,15 +2871,17 @@ __global__ void update_rope_bridge_paint_kernel(
 }
 
 void RayTracer::update_rope_bridge_paint(const float3* bridge_nodes,
-    std::uint32_t node_count, RigidSphereState sphere, bool reset,
+    std::uint32_t node_count, RigidSphereState sphere,
+    std::uint32_t columns, std::uint32_t rows, bool reset,
     cudaStream_t stream)
 {
     if (reset) check(cudaMemsetAsync(ground_cloth_paint_pixels_,0,
         cloth_paint_pixel_count*sizeof(std::uint32_t),stream),
         "reset rope bridge paint pixels");
     if (bridge_nodes != nullptr && node_count != 0U) {
-        update_rope_bridge_paint_kernel<<<1,64,0,stream>>>(
-            bridge_nodes,node_count,sphere,ground_cloth_paint_pixels_);
+        const std::uint32_t count=columns*rows;
+        update_rope_bridge_paint_kernel<<<(count+63U)/64U,64,0,stream>>>(
+            bridge_nodes,node_count,sphere,columns,rows,ground_cloth_paint_pixels_);
         check(cudaGetLastError(),"update rope bridge paint pixels");
     }
 }

@@ -13,7 +13,9 @@ namespace waterlab {
 
 // Keep Wireframe second so one V press from the default surface view enters
 // the geometry diagnostic requested by the interactive workflow.
-enum class FluidDisplay : std::uint32_t { Surface, Wireframe, Particles };
+enum class FluidDisplay : std::uint32_t {
+    Surface, Wireframe, Particles, Billboards
+};
 
 struct FoamParticle {
     float4 position_age{};

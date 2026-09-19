@@ -80,6 +80,8 @@ public:
         const float3* bridge_nodes,
         std::uint32_t node_count,
         RigidSphereState sphere,
+        std::uint32_t columns,
+        std::uint32_t rows,
         bool reset = false,
         cudaStream_t stream = nullptr);
 

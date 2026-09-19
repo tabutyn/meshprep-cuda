@@ -99,11 +99,12 @@ void test_standalone_solver()
     material.spring_stiffness *= 1.1F;
     require(body.set_material(material).ok(), "live material update failed");
     require(body.set_constraint_iterations(6U) && body.set_substeps(3U) &&
-            body.set_strength_multiplier(1.25F),
+            body.set_strength_multiplier(1.25F) && body.set_node_mass(0.075F),
         "live solver controls failed");
     require(body.options().constraint_iterations == 6U &&
             body.options().substeps == 3U &&
-            body.options().strength_multiplier == 1.25F,
+            body.options().strength_multiplier == 1.25F &&
+            body.options().node_mass == 0.075F && body.node_mass() == 0.075F,
         "live solver controls were not reflected in options");
     require(body.reset() && body.statistics().frame_index == 0U,
         "standalone reset failed");

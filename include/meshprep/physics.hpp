@@ -166,10 +166,12 @@ public:
     [[nodiscard]] Status set_constraint_iterations(
         std::uint32_t iterations) noexcept;
     [[nodiscard]] Status set_strength_multiplier(float multiplier) noexcept;
+    [[nodiscard]] Status set_node_mass(float mass) noexcept;
 
     [[nodiscard]] bool initialized() const noexcept;
     [[nodiscard]] SoftBodyOptions options() const noexcept;
     [[nodiscard]] SoftBodyMaterial material() const noexcept;
+    [[nodiscard]] float node_mass() const noexcept;
     [[nodiscard]] SoftBodyNodeView nodes() const noexcept;
     [[nodiscard]] SoftBodyBondView bonds() const noexcept;
     [[nodiscard]] SoftBodySurfaceView surface() const noexcept;

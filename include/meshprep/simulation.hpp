@@ -107,6 +107,9 @@ struct GallerySimulationOptions {
     // Multiplies each authored cloth interval in contexts 3 and 5 while
     // preserving the fixture's physical dimensions. Range: 1..8.
     std::optional<std::uint32_t> cloth_detail_override{};
+    // Context 9 procedural bridge dimensions.  Empty selects 4x10.
+    std::optional<std::uint32_t> bridge_columns_override{};
+    std::optional<std::uint32_t> bridge_rows_override{};
     std::string_view soft_body_asset_path{};
 };
 

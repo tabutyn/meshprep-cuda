@@ -267,6 +267,15 @@ Status SoftBody::set_strength_multiplier(float multiplier) noexcept
     }, "invalid soft-body strength multiplier");
 }
 
+Status SoftBody::set_node_mass(float mass) noexcept
+{
+    if (!impl_) return invalid("soft body is not initialized");
+    return invoke([&] {
+        impl_->solver.set_voxel_mass(mass);
+        impl_->options.node_mass = mass;
+    }, "invalid soft-body node mass");
+}
+
 bool SoftBody::initialized() const noexcept { return impl_ != nullptr; }
 
 SoftBodyOptions SoftBody::options() const noexcept
@@ -280,6 +289,11 @@ SoftBodyMaterial SoftBody::material() const noexcept
     const auto value = impl_->solver.material();
     return {value.spring_stiffness, value.spring_damping_ratio,
         value.velocity_damping, value.maximum_speed, value.ground_friction};
+}
+
+float SoftBody::node_mass() const noexcept
+{
+    return impl_ ? impl_->options.node_mass : 0.0F;
 }
 
 SoftBodyNodeView SoftBody::nodes() const noexcept

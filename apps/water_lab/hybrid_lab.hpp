@@ -75,6 +75,9 @@ struct HybridOptions {
     std::uint32_t particle_capacity{10'000U};
     float3 particle_initial_center{};
     GalleryArena arena{GalleryArena::none};
+    // Appended after capture-v6 fields so older capture prefixes retain their
+    // arena value and default to an unscaled HCP cloud.
+    float3 particle_initial_scale{1.0F, 1.0F, 1.0F};
 };
 
 // Keep the gravity-loaded game's material preset separate from the lab and

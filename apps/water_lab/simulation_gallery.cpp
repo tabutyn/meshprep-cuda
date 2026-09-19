@@ -63,12 +63,15 @@ HybridOptions make_context_physics(
         // spreading across the bowl under the authored two-g load.
         options.particle_repulsion = 50.0F;
     } else if (context == ExampleContext::particles_cloth) {
-        options.particle_count = 2'500U;
+        options.particle_count = 20'000U;
+        options.particle_capacity = 20'000U;
         options.particle_initial_center = make_float3(
-            catch_cloth_center.x - 1.18F, 0.52F,
-            catch_cloth_center.z + 0.98F);
+            catch_cloth_center.x - 0.90F, 0.70F,
+            catch_cloth_center.z + 0.58F);
+        options.particle_initial_scale = make_float3(1.10F, 0.46F, 0.90F);
     } else if (context == ExampleContext::soft_body_fluid) {
-        options.particle_count = 2'000U;
+        options.particle_count = 20'000U;
+        options.particle_capacity = 20'000U;
         const float spawn_x = water_wheel_entry_x - 2.15F;
         options.particle_initial_center = make_float3(
             spawn_x, water_wheel_inlet_height(spawn_x) + 0.32F, 0.0F);
@@ -118,7 +121,9 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
     const HybridOptions& physics,
     std::string_view soft_body_asset_path,
     std::uint32_t rope_node_count,
-    std::uint32_t cloth_detail)
+    std::uint32_t cloth_detail,
+    std::uint32_t bridge_columns,
+    std::uint32_t bridge_rows)
 {
     SoftBodyOptions options;
     options.fixed_dt = physics.fixed_dt;
@@ -155,14 +160,15 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         options.unbonded_voxel_collisions = true;
         options.velocity_damping = 0.45F;
     } else if (context == meshprep::sim::ExampleContext::cloth_rigid) {
-        // Impact strain is sampled before projection in this scene; a higher
-        // threshold keeps the tear local around the sphere instead of erasing
-        // the entire hanging sheet.
+        // Impact strain is sampled before projection in this scene. Require a
+        // persistent but locally reachable strain so rolling contact can tear
+        // the sheet without treating one gravity-loaded solve as damage.
         options.spring_stiffness = 4'000.0F;
-        options.strength_multiplier = 1.5F;
+        options.ground_friction = 5.0F;
+        options.strength_multiplier = 0.25F;
         options.fracture_persistence_substeps = 16U;
     } else if (context == meshprep::sim::ExampleContext::particles_cloth) {
-        // A 2,500-particle load is shared by sixteen support junctions. Use the same
+        // A 20,000-particle load is shared by the fixed support lattice. Use the same
         // converged fixed-graph solve as the anchored post instead of letting
         // residual stretch accumulate into an early fracture cascade.
         options.spring_stiffness = 4'500.0F;
@@ -207,19 +213,17 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
     options.require_1000_voxels = false;
     if (context == ExampleContext::rope_rigid) {
         rope_node_count = std::clamp(rope_node_count, 8U, 512U);
-        SoftBodyAsset rope = make_soft_rope(
-            rope_node_count, rope_length / static_cast<float>(rope_node_count - 1U));
+        SoftBodyAsset rope = make_y_rope_cage(
+            std::max(16U,rope_node_count),rope_length);
         rope = translate_soft_body_asset(std::move(rope), rope_anchor);
         return std::make_unique<SoftBodyCourse>(std::move(rope), options);
     }
     if (context == ExampleContext::rope_bridge) {
-        SoftBodyAsset bridge = make_rope_bridge();
-        // Diagnostic context: hold every tile corner and rope endpoint fixed.
-        // The rigid sphere still collides with the tile interiors, but cannot
-        // inject energy into bridge modes. This isolates whether the observed
-        // launch comes from rigid contact rather than bridge deformation.
-        for (std::uint32_t& flags : bridge.voxel_flags)
-            flags |= soft_body_voxel_pinned;
+        bridge_columns=std::clamp(bridge_columns,2U,16U);
+        bridge_rows=std::clamp(bridge_rows,2U,64U);
+        options.rope_bridge_columns=bridge_columns;
+        options.rope_bridge_rows=bridge_rows;
+        SoftBodyAsset bridge = make_rope_bridge(bridge_columns,bridge_rows);
         return std::make_unique<SoftBodyCourse>(std::move(bridge), options);
     }
     if (context == ExampleContext::cloth_rigid ||
@@ -271,13 +275,10 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
                         std::end(support_rows), row) != std::end(support_rows);
                     const bool support_column = std::find(std::begin(support_columns),
                         std::end(support_columns), column) != std::end(support_columns);
-                    const bool goal_interior =
-                        column > 2U * (cloth.columns - 1U) / 3U &&
-                        row < (cloth.rows - 1U) / 3U && row > 0U &&
-                        column + 1U < cloth.columns && row + 1U < cloth.rows;
-                    // Eight panels are immovable cloth-covered supports. Only
-                    // the far-right goal panel has a live, tearable interior.
-                    if (support_row || support_column || !goal_interior)
+                    // All nine cells use the same live cloth. The support-line
+                    // lattice is fixed and the separate goal volume is only a
+                    // game trigger, never a mechanically special panel.
+                    if (support_row || support_column)
                         asset.voxel_flags[row * cloth.columns + column] |=
                             soft_body_voxel_pinned;
                 }
@@ -370,15 +371,13 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
     }
 
     if (context == ExampleContext::soft_body_fluid) {
-        // A 31x31 cross reaches the 1.35 m rim without dominating the scene.
-        // The previous 41x41, 2 m-radius cross was larger than the useful
-        // wheel and added compliant mass well outside the water path.
+        // Compact cross arms terminate at the smaller external inertial wheel.
         SoftBodyAsset front = translate_soft_body_asset(
-            make_soft_cross(31U, 5U, 0.09F), make_float3(
+            make_soft_cross(17U, 5U, 0.085F), make_float3(
             water_wheel_center.x, water_wheel_center.y,
             water_wheel_center.z + water_wheel_cross_offset));
         SoftBodyAsset back = translate_soft_body_asset(
-            make_soft_cross(31U, 5U, 0.09F), make_float3(
+            make_soft_cross(17U, 5U, 0.085F), make_float3(
             water_wheel_center.x, water_wheel_center.y,
             water_wheel_center.z - water_wheel_cross_offset));
         SoftBodyAsset cross = merge_soft_body_assets(front, back);
@@ -477,11 +476,13 @@ RigidSphereState initial_rigid_sphere(
         sphere.velocity = make_float3(0.0F, 0.0F, 0.0F);
         sphere.mass = 250.0F;
     } else if (context == meshprep::sim::ExampleContext::particles_cloth) {
-        sphere.radius = 0.17F;
-        sphere.mass = 12.0F;
+        // Collision remains a robust finite sphere while the renderer presents
+        // this state as a shallow boat hull.
+        sphere.radius = 0.22F;
+        sphere.mass = 18.0F;
         sphere.center = make_float3(
-            catch_cloth_center.x - 1.18F, 0.58F,
-            catch_cloth_center.z + 0.98F);
+            catch_cloth_center.x - 0.90F, 0.58F,
+            catch_cloth_center.z + 0.58F);
         sphere.velocity = make_float3(0.0F, -0.35F, 0.0F);
     } else if (context == meshprep::sim::ExampleContext::soft_body_rigid) {
         sphere.radius = 0.34F;
@@ -500,14 +501,26 @@ RigidSphereState initial_rigid_sphere(
             water_wheel_stage_z);
         sphere.velocity = {};
     } else if (context == meshprep::sim::ExampleContext::rope_rigid) {
-        rope_node_count = std::clamp(rope_node_count, 8U, 512U);
-        const float node_radius = 0.36F * rope_length /
-            static_cast<float>(rope_node_count - 1U);
+        rope_node_count = std::clamp(rope_node_count, 16U, 512U);
+        const std::uint32_t trunk_nodes=std::max(8U,rope_node_count/2U);
+        const std::uint32_t branch_nodes=std::max(
+            5U,(rope_node_count-trunk_nodes)/2U+1U);
+        const float node_radius=0.36F*std::min(
+            0.5F*rope_length/static_cast<float>(trunk_nodes-1U),
+            0.5F*rope_length/static_cast<float>(branch_nodes-1U));
+        const float inverse_direction=1.0F/std::sqrt(1.0F+0.55F*0.55F);
+        const float3 endpoint=make_float3(
+            rope_anchor.x+
+            0.5F*rope_length*(1.0F+inverse_direction),rope_anchor.y,
+            rope_anchor.z+0.5F*rope_length*0.55F*inverse_direction);
+        const float3 direction=make_float3(
+            inverse_direction,0.0F,0.55F*inverse_direction);
         sphere.radius = 0.32F;
         sphere.mass = 18.0F;
-        sphere.center = make_float3(
-            rope_anchor.x + rope_length + sphere.radius + node_radius,
-            rope_anchor.y, rope_anchor.z);
+        sphere.center=make_float3(
+            endpoint.x+direction.x*(sphere.radius+node_radius),
+            endpoint.y,
+            endpoint.z+direction.z*(sphere.radius+node_radius));
         sphere.velocity = {};
     } else if (context == meshprep::sim::ExampleContext::rope_bridge) {
         sphere.radius = 0.34F;

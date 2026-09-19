@@ -423,8 +423,11 @@ void test_fluid_visual_render_modes()
     };
     const auto surface = render(waterlab::FluidDisplay::Surface, false);
     const auto particles = render(waterlab::FluidDisplay::Particles, false);
+    const auto billboards = render(waterlab::FluidDisplay::Billboards, false);
     const auto combined_wire_base = render(waterlab::FluidDisplay::Wireframe, false);
     require(differing_pixels(surface, particles) != 0U, "surface and particles look identical");
+    require(differing_pixels(particles,billboards)!=0U,
+        "billboard base pass still ray traced particle spheres");
     require(differing_pixels(surface, combined_wire_base) != 0U,
         "surface and combined-wire background look identical");
     require(differing_pixels(particles, combined_wire_base) == 0U,

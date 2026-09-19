@@ -200,7 +200,11 @@ std::vector<float3> make_hcp_particles(const HybridOptions& options)
     std::vector<float3> result;
     result.reserve(options.particle_capacity);
     for (std::uint32_t index = 0U; index < options.particle_capacity; ++index) {
-        result.push_back(add(candidates[index].point, options.particle_initial_center));
+        float3 point = candidates[index].point;
+        point.x *= options.particle_initial_scale.x;
+        point.y *= options.particle_initial_scale.y;
+        point.z *= options.particle_initial_scale.z;
+        result.push_back(add(point, options.particle_initial_center));
     }
     return result;
 }
@@ -1377,6 +1381,10 @@ bool valid_options(const HybridOptions& options)
         options.maximum_rectangle_speed > 0.0F &&
         options.maximum_rectangle_angular_speed > 0.0F &&
         finite3(options.gravity) && finite3(options.particle_initial_center) &&
+        finite3(options.particle_initial_scale) &&
+        options.particle_initial_scale.x > 0.0F &&
+        options.particle_initial_scale.y > 0.0F &&
+        options.particle_initial_scale.z > 0.0F &&
         length(options.gravity) <= 20.0F &&
         (!options.obstacle_course || options.fixed_dt <=
             (0.1F * options.physics_iterations) /
@@ -1608,6 +1616,9 @@ void HybridDroplet::set_runtime_options(const HybridOptions& options)
         options.particle_initial_center.x != options_.particle_initial_center.x ||
         options.particle_initial_center.y != options_.particle_initial_center.y ||
         options.particle_initial_center.z != options_.particle_initial_center.z ||
+        options.particle_initial_scale.x != options_.particle_initial_scale.x ||
+        options.particle_initial_scale.y != options_.particle_initial_scale.y ||
+        options.particle_initial_scale.z != options_.particle_initial_scale.z ||
         options.physical_skin_frequency != options_.physical_skin_frequency ||
         options.render_skin_frequency != options_.render_skin_frequency ||
         options.skin_radius != options_.skin_radius ||
