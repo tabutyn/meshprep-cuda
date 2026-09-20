@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Split the physics umbrella into self-contained Fluid, Cloth, Rope,
+  SoftBody, RigidBody, Smoke, and coupling headers and move the fixed-topology
+  implementation into private library sources.
+- Add solver-neutral analytic colliders and deterministic sorted constraint
+  batches for cross-solver coupling without floating-point contact atomics.
+- Separate SoftBody, Fluid, Cloth, Rope, and Smoke telemetry collection from
+  frame advancement so asynchronous submission performs no diagnostic
+  readback.
+- Keep gallery recipes, controls, objectives, progression, and visualization
+  state out of the installed package contract.
 - Rename the public package to ParallelMater with canonical
   `<parallel_mater/...>` headers, `parallel_mater` namespace spelling,
   `ParallelMater::` CMake targets, and `libparallel-mater-*` artifacts. Keep the

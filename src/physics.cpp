@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
-#include <parallel_mater/physics.hpp>
+#include <parallel_mater/cloth.hpp>
+#include <parallel_mater/rope.hpp>
 
-#include "cloth.hpp"
-#include "soft_body.hpp"
-#include "status_exception.hpp"
+#include "internal/asset_builders.hpp"
+#include "internal/fixed_topology.hpp"
+#include "internal/status_exception.hpp"
 
 #include <cmath>
 #include <memory>
@@ -105,9 +106,8 @@ constexpr Status allocation_failure(const char* message) noexcept
     result.course_board_collisions = false;
     result.arena = waterlab::GalleryArena::none;
     result.unbonded_voxel_collisions = value.unbonded_node_collisions;
-    result.preserve_fractured_triangle_shape =
-        value.preserve_fractured_triangle_shape;
-    result.render_internal_members = value.render_internal_members;
+    result.preserve_fractured_triangle_shape = false;
+    result.render_internal_members = false;
     result.instance_origins = value.instance_origins;
     return result;
 }
@@ -145,7 +145,7 @@ struct SoftBody::Impl {
     FrameOptions frame{};
     std::uint32_t next_substep{};
     bool frame_active{};
-    SoftBodyTimings last_timings{};
+    SoftBodyTelemetry telemetry{};
 };
 
 SoftBody::SoftBody() noexcept = default;
@@ -211,8 +211,10 @@ Status SoftBody::initialize(
 
 Status SoftBody::step(float3 gravity, cudaStream_t stream) noexcept
 {
-    SoftBodyTimings ignored{};
-    return step(gravity, ignored, stream);
+    if (!impl_) return invalid("soft body is not initialized");
+    if (!finite(gravity)) return invalid("gravity must be finite");
+    return advance({impl_->options.timestep, impl_->options.substeps,
+        gravity}, stream);
 }
 
 Status SoftBody::step(
@@ -220,11 +222,11 @@ Status SoftBody::step(
 {
     if (!impl_) return invalid("soft body is not initialized");
     if (!finite(gravity)) return invalid("gravity must be finite");
-    return invoke([&] {
-        const auto measured = impl_->solver.step(gravity, stream);
-        timings = {measured.physics_ms, measured.render_deformation_ms,
-            measured.render_hierarchy_ms};
-    }, "soft-body step failed");
+    Status status = advance({impl_->options.timestep, impl_->options.substeps,
+        gravity}, stream);
+    if (status) status = collect_telemetry(stream);
+    if (status) timings = impl_->telemetry.timings;
+    return status;
 }
 
 Status SoftBody::begin_frame(cudaStream_t stream) noexcept
@@ -255,6 +257,7 @@ Status SoftBody::finish_frame(SoftBodyTimings& timings, cudaStream_t stream) noe
         const auto measured = impl_->solver.finish_frame(stream);
         timings = {measured.physics_ms, measured.render_deformation_ms,
             measured.render_hierarchy_ms};
+        impl_->telemetry.timings = timings;
     }, "soft-body finish_frame failed");
 }
 
@@ -311,11 +314,51 @@ Status SoftBody::finish_frame(
         return invalid("soft-body frame has incomplete substeps");
     }
     if (completion.pending()) return invalid("completion token is already pending");
-    Status status = finish_frame(impl_->last_timings, stream);
+    Status status = invoke([&] { impl_->solver.finish_frame_async(stream); },
+        "soft-body finish_frame failed");
     if (!status) return status;
     status = completion.record(stream);
     if (status) impl_->frame_active = false;
     return status;
+}
+
+Status SoftBody::collect_telemetry_async(
+    Completion& completion, cudaStream_t stream) noexcept
+{
+    if (!impl_) return invalid("soft body is not initialized");
+    if (impl_->frame_active) return invalid("cannot collect an active soft-body frame");
+    if (completion.pending()) return invalid("completion token is already pending");
+    Status status = invoke([&] { impl_->solver.collect_telemetry_async(stream); },
+        "soft-body telemetry request failed");
+    return status ? completion.record(stream) : status;
+}
+
+Status SoftBody::resolve_telemetry(SoftBodyTelemetry& output) noexcept
+{
+    if (!impl_) return invalid("soft body is not initialized");
+    Status status = invoke([&] {
+        const auto measured = impl_->solver.resolve_telemetry();
+        impl_->telemetry.timings = {measured.physics_ms,
+            measured.render_deformation_ms, measured.render_hierarchy_ms};
+        impl_->telemetry.statistics = statistics();
+        output = impl_->telemetry;
+    }, "soft-body telemetry is not ready");
+    return status;
+}
+
+Status SoftBody::collect_telemetry(cudaStream_t stream) noexcept
+{
+    Completion completion;
+    Status status = collect_telemetry_async(completion, stream);
+    if (status) status = completion.wait();
+    SoftBodyTelemetry output;
+    if (status) status = resolve_telemetry(output);
+    return status;
+}
+
+SoftBodyTelemetry SoftBody::telemetry() const noexcept
+{
+    return impl_ ? impl_->telemetry : SoftBodyTelemetry{};
 }
 
 Status SoftBody::advance_async(
@@ -420,7 +463,8 @@ PointCouplingView SoftBody::coupling_points() const noexcept
 {
     const SoftBodyNodeView view = nodes();
     return {view.positions, view.velocities, view.external_impulses,
-        view.node_count, view.node_radius, view.inverse_node_mass};
+        view.position_corrections, view.node_count, view.node_radius,
+        view.inverse_node_mass};
 }
 
 SoftBodyBondView SoftBody::bonds() const noexcept
@@ -485,14 +529,9 @@ Status Cloth::initialize(ClothOptions options, cudaStream_t stream) noexcept
         !finite(options.top_center) || options.solver.instance_count != 1U ||
         !valid(options.solver)) return invalid("invalid cloth options");
     return invoke([&] {
-        waterlab::ClothGridOptions native;
-        native.columns = options.columns;
-        native.rows = options.rows;
-        native.spacing = options.spacing;
-        native.top_center = options.top_center;
-        native.shear_springs = options.shear_springs;
-        native.bend_springs = options.bend_springs;
-        auto asset = waterlab::make_cloth_grid(native);
+        auto asset = detail::make_cloth_asset(options.columns, options.rows,
+            options.spacing, options.top_center, options.shear_springs,
+            options.bend_springs);
         auto replacement = std::make_unique<Impl>();
         replacement->options = options;
         replacement->body.impl_ = std::make_unique<SoftBody::Impl>(
@@ -537,6 +576,17 @@ Status Cloth::advance_async(
 Status Cloth::advance(FrameOptions frame, cudaStream_t stream) noexcept
 {
     return parallel_mater::physics::step(*this, frame, stream);
+}
+Status Cloth::collect_statistics_async(
+    Completion& completion, cudaStream_t stream) noexcept
+{
+    return impl_ ? impl_->body.collect_telemetry_async(completion, stream)
+                 : invalid("cloth is not initialized");
+}
+Status Cloth::collect_statistics(cudaStream_t stream) noexcept
+{
+    return impl_ ? impl_->body.collect_telemetry(stream)
+                 : invalid("cloth is not initialized");
 }
 Status Cloth::reset(cudaStream_t stream) noexcept
 {
@@ -599,29 +649,8 @@ Status Rope::initialize(RopeOptions options, cudaStream_t stream) noexcept
         !(direction_length > 1.0e-6F) || options.solver.instance_count != 1U ||
         !valid(options.solver)) return invalid("invalid rope options");
     return invoke([&] {
-        auto asset = waterlab::make_soft_rope(
-            options.node_count, options.spacing);
-        const float inverse_length = 1.0F / direction_length;
-        const float3 x_axis = make_float3(options.direction.x * inverse_length,
-            options.direction.y * inverse_length,
-            options.direction.z * inverse_length);
-        const float3 reference = std::abs(x_axis.y) < 0.9F
-            ? make_float3(0.0F, 1.0F, 0.0F)
-            : make_float3(0.0F, 0.0F, 1.0F);
-        float3 z_axis = make_float3(
-            x_axis.y * reference.z - x_axis.z * reference.y,
-            x_axis.z * reference.x - x_axis.x * reference.z,
-            x_axis.x * reference.y - x_axis.y * reference.x);
-        const float inverse_z = 1.0F / std::sqrt(
-            z_axis.x*z_axis.x + z_axis.y*z_axis.y + z_axis.z*z_axis.z);
-        z_axis = make_float3(
-            z_axis.x * inverse_z, z_axis.y * inverse_z, z_axis.z * inverse_z);
-        const float3 y_axis = make_float3(
-            z_axis.y*x_axis.z - z_axis.z*x_axis.y,
-            z_axis.z*x_axis.x - z_axis.x*x_axis.z,
-            z_axis.x*x_axis.y - z_axis.y*x_axis.x);
-        asset = waterlab::transform_soft_body_asset(std::move(asset),
-            {x_axis, y_axis, z_axis, options.origin});
+        auto asset = detail::make_rope_asset(options.node_count,
+            options.spacing, options.origin, options.direction);
         auto replacement = std::make_unique<Impl>();
         replacement->options = options;
         replacement->body.impl_ = std::make_unique<SoftBody::Impl>(
@@ -666,6 +695,17 @@ Status Rope::advance_async(
 Status Rope::advance(FrameOptions frame, cudaStream_t stream) noexcept
 {
     return parallel_mater::physics::step(*this, frame, stream);
+}
+Status Rope::collect_statistics_async(
+    Completion& completion, cudaStream_t stream) noexcept
+{
+    return impl_ ? impl_->body.collect_telemetry_async(completion, stream)
+                 : invalid("rope is not initialized");
+}
+Status Rope::collect_statistics(cudaStream_t stream) noexcept
+{
+    return impl_ ? impl_->body.collect_telemetry(stream)
+                 : invalid("rope is not initialized");
 }
 Status Rope::reset(cudaStream_t stream) noexcept
 {

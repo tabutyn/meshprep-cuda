@@ -89,9 +89,9 @@ sample that image directly.
 
 Important code locations:
 
-- [`soft_body.hpp`](../apps/water_lab/soft_body.hpp): asset contract, views,
+- [`fixed_topology.hpp`](../src/internal/fixed_topology.hpp): private asset contract, views,
   runtime options, state, timings, and `SoftBodyCourse` API.
-- [`soft_body.cu`](../apps/water_lab/soft_body.cu): validation, deterministic
+- [`fixed_topology.cu`](../src/internal/fixed_topology.cu): validation, deterministic
   spring gather, fracture, skinning, hierarchy updates, and state transfer.
 - [`hybrid_kernels.cu`](../apps/water_lab/hybrid_kernels.cu): water/post triangle
   contact and deterministic reaction gathering.

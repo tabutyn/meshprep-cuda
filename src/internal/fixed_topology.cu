@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
-#include "soft_body.hpp"
+#include "fixed_topology.hpp"
 
-#include "obstacle_course.hpp"
-#include "particle_cells.cuh"
+#include "../../apps/water_lab/obstacle_course.hpp"
+#include "../../apps/water_lab/particle_cells.cuh"
 #include "status_exception.hpp"
-#include "triangle_contact.cuh"
+#include "../../apps/water_lab/triangle_contact.cuh"
 
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
@@ -1692,6 +1692,7 @@ struct SoftBodyCourse::Impl {
     void* voxel_cell_sort_storage{};
     std::size_t voxel_cell_sort_storage_bytes{};
     std::uint32_t* counters{};
+    std::uint32_t* host_counters{};
 
     float3* local_rest_voxels{};
     float3* local_render_positions{};
@@ -1715,12 +1716,15 @@ struct SoftBodyCourse::Impl {
     static constexpr std::uint32_t markers_per_substep = 6U;
     cudaEvent_t substep_markers[maximum_substeps * markers_per_substep]{};
     cudaEvent_t frame_markers[3]{};
+    cudaEvent_t telemetry_ready{};
     cudaEvent_t rigid_contact_begin[maximum_substeps]{};
     cudaEvent_t rigid_contact_end[maximum_substeps]{};
     std::uint32_t completed_substeps{};
     std::uint32_t rigid_contact_substeps{};
     bool frame_open{};
     bool substep_prepared{};
+    bool telemetry_pending{};
+    SoftBodyTimings telemetry{};
 
     std::uint32_t total_voxels{};
     std::uint32_t total_edges{};
@@ -1926,6 +1930,10 @@ struct SoftBodyCourse::Impl {
                     "allocate voxel-cell sort workspace");
             }
             allocate(counters, 2U);
+            check(cudaMallocHost(&host_counters, 2U * sizeof(std::uint32_t)),
+                "allocate soft-body telemetry staging");
+            host_counters[0] = 0U;
+            host_counters[1] = 0U;
             allocate(local_rest_voxels, asset.rest_voxels.size());
             allocate(local_render_positions, asset.render_positions.size());
             allocate(render_bindings, total_render_vertices);
@@ -1967,6 +1975,8 @@ struct SoftBodyCourse::Impl {
             for (auto& marker : frame_markers) {
                 check(cudaEventCreate(&marker), "create soft-body frame event");
             }
+            check(cudaEventCreateWithFlags(&telemetry_ready,
+                cudaEventDisableTiming), "create soft-body telemetry event");
             positions = position_a;
             next_positions = position_b;
             velocities = velocity_a;
@@ -1982,6 +1992,8 @@ struct SoftBodyCourse::Impl {
 
     void release() noexcept
     {
+        if (telemetry_ready) cudaEventDestroy(telemetry_ready);
+        telemetry_ready = nullptr;
         for (auto& marker : rigid_contact_begin) {
             if (marker) cudaEventDestroy(marker);
             marker = nullptr;
@@ -2011,6 +2023,7 @@ struct SoftBodyCourse::Impl {
         cudaFree(render_bindings);
         cudaFree(local_render_positions);
         cudaFree(local_rest_voxels);
+        cudaFreeHost(host_counters);
         cudaFree(counters);
         cudaFree(voxel_cell_sort_storage);
         cudaFree(voxel_cell_indices_b);
@@ -2047,6 +2060,7 @@ struct SoftBodyCourse::Impl {
         render_bindings = nullptr;
         local_render_positions = nullptr;
         local_rest_voxels = nullptr;
+        host_counters = nullptr;
         counters = nullptr;
         edge_damage = nullptr;
         active_edges = nullptr;
@@ -2113,6 +2127,10 @@ struct SoftBodyCourse::Impl {
         frame_open = false;
         substep_prepared = false;
         completed_substeps = 0U;
+        telemetry_pending = false;
+        telemetry = {};
+        host_counters[0] = 0U;
+        host_counters[1] = 0U;
     }
 
     void enqueue_render(cudaStream_t stream)
@@ -2215,6 +2233,10 @@ void SoftBodyCourse::begin_frame(cudaStream_t stream)
     if (!impl_) throw std::logic_error("moved-from soft-body course");
     auto& state = *impl_;
     if (state.frame_open) throw std::logic_error("soft-body frame is already open");
+    if (state.telemetry_pending) {
+        throw std::logic_error(
+            "resolve pending soft-body telemetry before beginning another frame");
+    }
     check(cudaMemsetAsync(state.counters, 0, 2U * sizeof(std::uint32_t), stream),
         "clear soft-body frame counters");
     state.completed_substeps = 0U;
@@ -2441,7 +2463,7 @@ void SoftBodyCourse::finish_substep(float dt, float3 gravity, cudaStream_t strea
     ++state.completed_substeps;
 }
 
-SoftBodyTimings SoftBodyCourse::finish_frame(cudaStream_t stream)
+void SoftBodyCourse::finish_frame_async(cudaStream_t stream)
 {
     if (!impl_) throw std::logic_error("moved-from soft-body course");
     auto& state = *impl_;
@@ -2461,10 +2483,36 @@ SoftBodyTimings SoftBodyCourse::finish_frame(cudaStream_t stream)
     check(cudaEventRecord(state.frame_markers[2], stream),
         "end final soft-body render hierarchy");
 
-    std::array<std::uint32_t, 2> counters{};
-    check(cudaMemcpyAsync(counters.data(), state.counters, sizeof(counters),
-        cudaMemcpyDeviceToHost, stream), "read soft-body counters");
-    check(cudaEventSynchronize(state.frame_markers[2]), "complete soft-body frame");
+    ++state.statistics.frame_index;
+    state.frame_open = false;
+}
+
+void SoftBodyCourse::collect_telemetry_async(cudaStream_t stream)
+{
+    if (!impl_) throw std::logic_error("moved-from soft-body course");
+    auto& state = *impl_;
+    if (state.frame_open || state.telemetry_pending ||
+        state.completed_substeps == 0U) {
+        throw std::logic_error("soft-body telemetry requires one completed frame");
+    }
+    check(cudaMemcpyAsync(state.host_counters, state.counters,
+        2U * sizeof(std::uint32_t), cudaMemcpyDeviceToHost, stream),
+        "read soft-body counters");
+    check(cudaEventRecord(state.telemetry_ready, stream),
+        "record soft-body telemetry completion");
+    state.telemetry_pending = true;
+}
+
+SoftBodyTimings SoftBodyCourse::resolve_telemetry()
+{
+    if (!impl_) throw std::logic_error("moved-from soft-body course");
+    auto& state = *impl_;
+    if (!state.telemetry_pending)
+        throw std::logic_error("soft-body telemetry was not requested");
+    const cudaError_t ready = cudaEventQuery(state.telemetry_ready);
+    if (ready == cudaErrorNotReady)
+        throw std::logic_error("soft-body telemetry is not complete");
+    check(ready, "query soft-body telemetry");
     SoftBodyTimings timings{};
     for (std::uint32_t substep = 0U; substep < state.completed_substeps; ++substep) {
         const std::uint32_t marker = substep * Impl::markers_per_substep;
@@ -2486,11 +2534,19 @@ SoftBodyTimings SoftBodyCourse::finish_frame(cudaStream_t stream)
         timings.rigid_contact_ms += elapsed(
             state.rigid_contact_begin[substep], state.rigid_contact_end[substep]);
     }
-    state.statistics.broken_edge_count += counters[0];
-    state.statistics.finite_failure_count += counters[1];
-    ++state.statistics.frame_index;
-    state.frame_open = false;
-    return timings;
+    state.statistics.broken_edge_count += state.host_counters[0];
+    state.statistics.finite_failure_count += state.host_counters[1];
+    state.telemetry = timings;
+    state.telemetry_pending = false;
+    return state.telemetry;
+}
+
+SoftBodyTimings SoftBodyCourse::finish_frame(cudaStream_t stream)
+{
+    finish_frame_async(stream);
+    collect_telemetry_async(stream);
+    check(cudaStreamSynchronize(stream), "complete soft-body telemetry");
+    return resolve_telemetry();
 }
 
 SoftBodyTimings SoftBodyCourse::step(float3 gravity, cudaStream_t stream)
@@ -2891,6 +2947,10 @@ void SoftBodyCourse::reset(cudaStream_t stream)
     state.frame_open = false;
     state.substep_prepared = false;
     state.completed_substeps = 0U;
+    state.telemetry_pending = false;
+    state.telemetry = {};
+    state.host_counters[0] = 0U;
+    state.host_counters[1] = 0U;
 }
 
 void SoftBodyCourse::set_pinned_rotation_z(

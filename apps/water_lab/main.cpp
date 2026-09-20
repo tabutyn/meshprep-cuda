@@ -30,6 +30,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -879,8 +880,7 @@ float3 clamp_length(float3 value, float maximum)
 waterlab::SoftBodyTimings step_smoke_coupled_body(
     waterlab::SoftBodyCourse& body,parallel_mater::physics::Smoke& smoke,
     waterlab::RigidSphereState* sphere,float3 body_gravity,float3 sphere_gravity,
-    waterlab::GalleryArena arena,std::uint32_t substeps,float fixed_dt,
-    parallel_mater::physics::SmokeTimings& smoke_timings)
+    waterlab::GalleryArena arena,std::uint32_t substeps,float fixed_dt)
 {
     body.begin_frame();
     const float dt=fixed_dt/static_cast<float>(std::max(1U,substeps));
@@ -897,8 +897,8 @@ waterlab::SoftBodyTimings step_smoke_coupled_body(
         const waterlab::SoftBodyVoxelView nodes=body.voxel_view();
         const parallel_mater::Status coupled=smoke.couple({
             nodes.positions,nodes.velocities,nodes.external_impulses,
-            nodes.voxel_count,nodes.inverse_voxel_mass,nodes.voxel_radius,dt},
-            5.0F,smoke_timings);
+            nodes.position_corrections,nodes.voxel_count,nodes.voxel_radius,
+            nodes.inverse_voxel_mass},dt,5.0F);
         if (!coupled.ok()) throw std::runtime_error(
             std::string("couple smoke: ")+coupled.message);
         body.finish_substep(dt,body_gravity);
@@ -2860,6 +2860,8 @@ int run_interactive(const Options& options)
     waterlab::HybridDroplet& droplet = *droplet_storage;
     std::optional<parallel_mater::physics::Smoke> smoke_storage=
         create_smoke_system(input.context);
+    parallel_mater::physics::Collider smoke_collider{};
+    parallel_mater::physics::ColliderSet smoke_colliders;
     begin_context_particle_spawn(input,droplet);
     std::unique_ptr<waterlab::SoftBodyCourse> soft_bodies;
     if (input.course_mode) {
@@ -3286,15 +3288,25 @@ int run_interactive(const Options& options)
             // Exactly one fixed 1/60-second tick. A slow render delays simulated time;
             // it never launches catch-up ticks or drops a partial collider trajectory.
             if (smoke_storage) {
-                parallel_mater::physics::SmokeSphereCollider collider{
-                    rigid_sphere.center,rigid_sphere.velocity,rigid_sphere.radius,0.20F};
                 const bool collide_sphere=
                     input.context==parallel_mater::examples::SimulationRecipe::smoke ||
                     input.context==parallel_mater::examples::SimulationRecipe::soft_body_smoke ||
                     input.context==parallel_mater::examples::SimulationRecipe::rope_smoke;
-                const parallel_mater::Status status=smoke_storage->step({{},
-                    collide_sphere ? &collider : nullptr,collide_sphere ? 1U : 0U},
-                    smoke_timings);
+                parallel_mater::physics::ColliderView colliders;
+                if (collide_sphere) {
+                    smoke_collider.position=rigid_sphere.center;
+                    smoke_collider.linear_velocity=rigid_sphere.velocity;
+                    smoke_collider.dimensions=make_float3(
+                        rigid_sphere.radius,0.0F,0.0F);
+                    smoke_collider.friction=0.20F;
+                    const parallel_mater::Status uploaded=smoke_colliders.update_async(
+                        std::span<const parallel_mater::physics::Collider>(
+                            &smoke_collider,1U));
+                    if (!uploaded.ok()) throw std::runtime_error(
+                        std::string("upload smoke collider: ")+uploaded.message);
+                    colliders=smoke_colliders.view();
+                }
+                const parallel_mater::Status status=smoke_storage->step({},colliders);
                 if (!status.ok()) throw std::runtime_error(
                     std::string("step smoke: ")+status.message);
             }
@@ -3351,8 +3363,7 @@ int run_interactive(const Options& options)
                     soft=step_smoke_coupled_body(*soft_bodies,*smoke_storage,
                         rolling ? &rigid_sphere : nullptr,body_gravity,
                         input.course_gravity,droplet.options().arena,
-                        droplet.options().physics_iterations,droplet.options().fixed_dt,
-                        smoke_timings);
+                        droplet.options().physics_iterations,droplet.options().fixed_dt);
                     if (input.context==parallel_mater::examples::SimulationRecipe::cloth_smoke) {
                         const float torque=soft_bodies->wheel_rim_reaction_torque(
                             make_float3(0.0F,0.15F,-1.20F));
@@ -3404,6 +3415,12 @@ int run_interactive(const Options& options)
                     droplet.options().arena,5.0F,dt);
                 timings={};
                 visual_ms=0.0F;
+            }
+            if (smoke_storage) {
+                const parallel_mater::Status status=smoke_storage->collect_telemetry();
+                if (!status.ok()) throw std::runtime_error(
+                    std::string("collect smoke telemetry: ")+status.message);
+                smoke_timings=smoke_storage->telemetry().timings;
             }
             if (input.context == parallel_mater::examples::SimulationRecipe::water) {
                 input.painted_fraction = raytracer.update_bowl_paint(

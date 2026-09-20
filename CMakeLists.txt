@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 cmake_minimum_required(VERSION 3.25)
-project(ParallelMater VERSION 0.3.0 LANGUAGES CXX CUDA)
+project(ParallelMater VERSION 0.4.0 LANGUAGES CXX CUDA)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -75,21 +75,20 @@ set_target_properties(
 add_library(
     meshprep-physics
     src/frame.cpp
+    src/coupling.cu
     src/fluid.cu
     src/physics.cpp
     src/rigid_body.cpp
     src/smoke.cu
-    apps/water_lab/cloth.cpp
-    apps/water_lab/geodesic_sphere.cpp
-    apps/water_lab/soft_body.cu)
+    src/internal/asset_builders.cpp
+    src/internal/fixed_topology.cu)
 add_library(ParallelMater::physics ALIAS meshprep-physics)
 target_link_libraries(meshprep-physics PUBLIC ParallelMater::geometry)
 target_include_directories(
     meshprep-physics
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/apps/water_lab)
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_compile_features(meshprep-physics PUBLIC cxx_std_20)
 target_compile_options(
     meshprep-physics PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:--std=c++20>)
@@ -112,6 +111,8 @@ if(PARALLEL_MATER_BUILD_GALLERY OR PARALLEL_MATER_BUILD_LAB)
     add_library(
         parallel-mater-example-gallery
         examples/gallery/gallery.cpp
+        apps/water_lab/cloth.cpp
+        apps/water_lab/geodesic_sphere.cpp
         apps/water_lab/simulation_gallery.cpp
         apps/water_lab/hybrid_kernels.cu)
     target_link_libraries(
@@ -172,7 +173,7 @@ if(PARALLEL_MATER_BUILD_BENCHMARKS OR PARALLEL_MATER_BUILD_TESTS)
         meshprep-contact-experiment
         apps/water_lab/contact_experiment.cpp
         apps/water_lab/geodesic_sphere.cpp
-        apps/water_lab/soft_body.cu
+        src/internal/fixed_topology.cu
         apps/water_lab/hybrid_kernels.cu)
     target_link_libraries(meshprep-contact-experiment PRIVATE ParallelMater::geometry)
     target_compile_options(
@@ -188,7 +189,7 @@ if(PARALLEL_MATER_BUILD_CAPTURE_TOOLS)
         meshprep-soft-body-capture-audit
         apps/water_lab/soft_body_capture_audit.cpp
         apps/water_lab/geodesic_sphere.cpp
-        apps/water_lab/soft_body.cu
+        src/internal/fixed_topology.cu
         apps/water_lab/hybrid_kernels.cu)
     target_link_libraries(meshprep-soft-body-capture-audit PRIVATE ParallelMater::geometry)
     target_compile_definitions(meshprep-soft-body-capture-audit PRIVATE
@@ -277,7 +278,7 @@ if(PARALLEL_MATER_BUILD_TESTS)
         apps/water_lab/geodesic_sphere.cpp
         apps/water_lab/fluid_surface.cu
         apps/water_lab/fluid_visuals.cu
-        apps/water_lab/soft_body.cu
+        src/internal/fixed_topology.cu
         apps/water_lab/water_kernels.cu
         apps/water_lab/hybrid_kernels.cu)
     target_link_libraries(meshprep-hybrid-tests PRIVATE ParallelMater::geometry)
@@ -295,7 +296,7 @@ if(PARALLEL_MATER_BUILD_TESTS)
         meshprep-course-tests
         tests/course_tests.cu
         apps/water_lab/geodesic_sphere.cpp
-        apps/water_lab/soft_body.cu
+        src/internal/fixed_topology.cu
         apps/water_lab/hybrid_kernels.cu)
     target_link_libraries(meshprep-course-tests PRIVATE ParallelMater::geometry)
     target_compile_options(
@@ -317,7 +318,7 @@ if(PARALLEL_MATER_BUILD_TESTS)
     set_tests_properties(meshprep-fluid-visual-tests PROPERTIES SKIP_RETURN_CODE 77)
 
     add_executable(meshprep-soft-body-tests
-        tests/soft_body_tests.cu apps/water_lab/soft_body.cu)
+        tests/soft_body_tests.cu src/internal/fixed_topology.cu)
     target_link_libraries(meshprep-soft-body-tests PRIVATE ParallelMater::geometry)
     target_compile_definitions(meshprep-soft-body-tests PRIVATE
         MESHPREP_SOFT_BODY_TEST_ASSET="${CMAKE_CURRENT_SOURCE_DIR}/assets/softbody/checker_cylinder.msb")
@@ -329,7 +330,7 @@ if(PARALLEL_MATER_BUILD_TESTS)
 
     add_executable(meshprep-cloth-tests
         tests/cloth_tests.cu apps/water_lab/cloth.cpp
-        apps/water_lab/geodesic_sphere.cpp apps/water_lab/soft_body.cu)
+        apps/water_lab/geodesic_sphere.cpp src/internal/fixed_topology.cu)
     target_link_libraries(meshprep-cloth-tests PRIVATE ParallelMater::geometry)
     target_compile_options(meshprep-cloth-tests PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic>
@@ -343,7 +344,7 @@ if(PARALLEL_MATER_BUILD_TESTS)
         apps/water_lab/simulation_gallery.cpp
         apps/water_lab/cloth.cpp
         apps/water_lab/geodesic_sphere.cpp
-        apps/water_lab/soft_body.cu
+        src/internal/fixed_topology.cu
         apps/water_lab/hybrid_kernels.cu)
     target_link_libraries(meshprep-simulation-gallery-tests PRIVATE ParallelMater::geometry)
     target_include_directories(meshprep-simulation-gallery-tests PRIVATE
@@ -414,6 +415,7 @@ set(meshprep_install_targets meshprep-cuda meshprep-physics)
 install(TARGETS ${meshprep_install_targets} EXPORT ParallelMaterTargets)
 install(FILES
     include/parallel_mater/cloth.hpp
+    include/parallel_mater/coupling.hpp
     include/parallel_mater/fluid.hpp
     include/parallel_mater/frame.hpp
     include/parallel_mater/geometry.hpp
@@ -421,6 +423,7 @@ install(FILES
     include/parallel_mater/rigid_body.hpp
     include/parallel_mater/rope.hpp
     include/parallel_mater/smoke.hpp
+    include/parallel_mater/soft_body.hpp
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/parallel_mater)
 install(
     FILES LICENSE THIRD_PARTY_NOTICES.md

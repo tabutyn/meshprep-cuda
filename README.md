@@ -64,7 +64,8 @@ The implementation began as working production geometry code with two concrete d
 six independent owners. Convenience headers such as
 `<parallel_mater/fluid.hpp>`, `<parallel_mater/cloth.hpp>`,
 `<parallel_mater/rope.hpp>`, and `<parallel_mater/rigid_body.hpp>` select the
-same ABI without exposing gallery policy.
+same library while remaining self-contained; none includes the physics
+umbrella or exposes gallery policy.
 
 Every owner implements `begin_frame`, `prepare_substep`, `finish_substep`, and
 `finish_frame`. Coupling belongs between prepare and finish. `advance()` drives
@@ -91,6 +92,11 @@ for (std::uint32_t i = 0; status && i < frame.substeps; ++i) {
 parallel_mater::physics::Completion completion;
 if (status) status = fluid.finish_frame(completion, stream);
 if (status) status = completion.wait();
+
+// Diagnostics are an independent operation, not a hidden frame wait.
+parallel_mater::physics::Completion diagnostics;
+if (status) status = fluid.collect_statistics_async(diagnostics, stream);
+if (status) status = diagnostics.wait();
 ```
 
 See [`examples/soft_body.cu`](examples/soft_body.cu) for a custom analytic
@@ -104,7 +110,7 @@ fluid, cloth, rope, and rigid-body owners without a recipe or game layer.
 
 `<parallel_mater/smoke.hpp>` exposes an independent owning `Smoke` solver.
 `step()` advects a deterministic stream with buoyancy, damping, turbulence,
-and analytic sphere obstacles. `couple()` samples the stream onto any borrowed
+and shared `ColliderView` sphere obstacles. `couple()` samples the stream onto any borrowed
 device-resident point system and accumulates impulses without knowing about a
 particular cloth, rope, or soft-body implementation. See
 [`examples/smoke.cu`](examples/smoke.cu) and the ownership/coupling contract in

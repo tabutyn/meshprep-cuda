@@ -45,6 +45,13 @@ The installed solver owners each own their state and are movable, not copyable.
 They share an ordered prepare/couple/finish substep protocol; applications
 exchange impulses through borrowed views without selecting a gallery recipe.
 `Completion` provides the asynchronous boundary, while `advance()` waits.
+Telemetry has its own request and completion boundary and is never downloaded
+as a side effect of frame submission.
+
+Analytic shapes use the common `Collider`/`ColliderSet` representation.
+Many-to-one contact contributions use `ConstraintBatch`, which sorts by a
+stable `(point, order)` key and deterministically gathers impulses and optional
+position corrections into any `PointCouplingView`.
 
 The example-only `GallerySimulation` owns all device memory required by one
 authored composition and is movable, not copyable.
@@ -62,6 +69,9 @@ instance, while activity is stored per instance. Broken bonds remain broken
 until reset.
 
 ## Recipe-specific authored controls
+
+Everything in this section belongs to the example gallery rather than an
+installed solver, collider, or coupling type.
 
 - Water-Rope uses a closed tank, one vertically authored pinned rope, and a
   heavy finite-mass treasure chest in 40,000 particles. The native app

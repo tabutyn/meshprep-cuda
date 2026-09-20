@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <memory>
 #include <new>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -959,16 +960,23 @@ struct GallerySimulation::Impl {
         float gpu_time = 0.0F;
         physics::SmokeTimings smoke_timing{};
         if (smoke_) {
-            physics::SmokeSphereCollider collider{
-                rigid_sphere_.center,rigid_sphere_.velocity,
-                rigid_sphere_.radius,0.2F};
             const bool collide=options_.recipe==SimulationRecipe::smoke ||
                 options_.recipe==SimulationRecipe::soft_body_smoke ||
                 options_.recipe==SimulationRecipe::rope_smoke;
-            waterlab::detail::throw_if_failed(smoke_->step(
-                {{},collide ? &collider : nullptr,collide ? 1U : 0U},
-                smoke_timing,stream),"advance gallery smoke");
-            gpu_time+=smoke_timing.integrate_ms;
+            physics::ColliderView colliders;
+            if (collide) {
+                smoke_collider_.position=rigid_sphere_.center;
+                smoke_collider_.linear_velocity=rigid_sphere_.velocity;
+                smoke_collider_.dimensions=make_float3(
+                    rigid_sphere_.radius,0.0F,0.0F);
+                smoke_collider_.friction=0.2F;
+                waterlab::detail::throw_if_failed(smoke_colliders_.update_async(
+                    std::span<const physics::Collider>(&smoke_collider_,1U),stream),
+                    "upload gallery smoke collider");
+                colliders=smoke_colliders_.view();
+            }
+            waterlab::detail::throw_if_failed(
+                smoke_->step({},colliders,stream),"advance gallery smoke");
         }
         if (hybrid_) {
             if (staged_particle_target_>hybrid_->options().particle_count) {
@@ -1034,8 +1042,9 @@ struct GallerySimulation::Impl {
                     const auto nodes=deformable_->voxel_view();
                     waterlab::detail::throw_if_failed(smoke_->couple({
                         nodes.positions,nodes.velocities,nodes.external_impulses,
-                        nodes.voxel_count,nodes.inverse_voxel_mass,
-                        nodes.voxel_radius,dt},5.0F,smoke_timing,stream),
+                        nodes.position_corrections,nodes.voxel_count,
+                        nodes.voxel_radius,nodes.inverse_voxel_mass},
+                        dt,5.0F,stream),
                         "couple gallery smoke");
                     deformable_->finish_substep(dt,body_gravity,stream);
                 }
@@ -1068,7 +1077,7 @@ struct GallerySimulation::Impl {
             } else {
                 timing = deformable_->step(resolved_physics_.gravity, stream);
             }
-            gpu_time += timing.gpu_total_ms()+smoke_timing.couple_ms;
+            gpu_time += timing.gpu_total_ms();
         } else if (smoke_ && options_.recipe==SimulationRecipe::smoke) {
             const float dt=resolved_physics_.fixed_step.timestep;
             rigid_sphere_.velocity.x+=resolved_physics_.gravity.x*dt;
@@ -1082,6 +1091,12 @@ struct GallerySimulation::Impl {
                 waterlab::GalleryArena::ground);
             waterlab::advance_rigid_sphere_rotation(rigid_sphere_,
                 waterlab::GalleryArena::ground,5.0F,dt);
+        }
+        if (smoke_) {
+            waterlab::detail::throw_if_failed(
+                smoke_->collect_telemetry(stream),"collect gallery smoke telemetry");
+            smoke_timing=smoke_->telemetry().timings;
+            gpu_time+=smoke_timing.gpu_total_ms();
         }
         refresh_views();
         refresh_statistics(gpu_time);
@@ -1140,6 +1155,8 @@ struct GallerySimulation::Impl {
     std::unique_ptr<waterlab::HybridDroplet> hybrid_;
     std::unique_ptr<waterlab::SoftBodyCourse> deformable_;
     std::unique_ptr<physics::Smoke> smoke_;
+    physics::Collider smoke_collider_{};
+    physics::ColliderSet smoke_colliders_{};
     waterlab::RigidSphereState rigid_sphere_{};
     waterlab::RigidSphereState caged_rigid_sphere_{};
     waterlab::WaterWheelState water_wheel_{};

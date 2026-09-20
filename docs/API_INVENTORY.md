@@ -5,9 +5,9 @@ describes each remaining public type and free function in one sentence; the
 native gallery's objectives and progression are intentionally excluded because
 they are application code.
 
-As of this pass the installed headers contain 2 enums, 36 structures, 10
+As of this pass the installed headers contain 3 enums, 39 structures, 12
 classes, and 10 free functions/templates; the installed implementation contains
-56 private CUDA kernels. Gallery recipes and render aggregation are excluded.
+58 private CUDA kernels. Gallery recipes and render aggregation are excluded.
 
 ## Geometry
 
@@ -56,13 +56,25 @@ classes, and 10 free functions/templates; the installed implementation contains
 | --- | --- |
 | `FrameOptions` | Defines a fixed physical frame interval, equal substep count, and external acceleration. |
 | `SubstepContext` | Identifies one ordered substep and carries its derived timestep and acceleration. |
-| `PointCouplingView` | Borrows point positions, velocities, and one writable impulse row per point across fluid and deformable solvers. |
+| `PointCouplingView` | Borrows point state plus writable impulse and optional position-correction rows across fluid and deformable solvers. |
 | `Completion` | Owns a reusable CUDA event that can be polled or waited for after asynchronous submission. |
 | `FrameSolver` | Describes the shared begin/prepare/couple/finish structural protocol at compile time. |
 | `valid(FrameOptions)` | Validates finite positive frame timing, acceleration, and a bounded substep count. |
 | `substep_context` | Derives one immutable substep context from a frame and index. |
 | `step_async` | Drives an uncoupled `FrameSolver` frame and records its completion token. |
 | `step` | Drives an uncoupled frame and waits for its completion token. |
+
+## Generic collision and constraint coupling
+
+| API | Description |
+| --- | --- |
+| `ColliderShape` | Selects a sphere, box, plane, or capsule representation shared by solver integrations. |
+| `Collider` | Stores one analytic shape, transform, velocity, material response, contact offset, and application ID. |
+| `ColliderView` | Borrows a device array of generic colliders. |
+| `ColliderSet` | Owns and updates a reusable device collider array. |
+| `ConstraintRecord` | Carries one point impulse and optional projection correction with a deterministic ordering key. |
+| `ConstraintRecordView` | Borrows device constraint records emitted by application or contact kernels. |
+| `ConstraintBatch` | Stable-sorts records by point and order before deterministically gathering them without floating-point atomics. |
 
 ## Independent particle and body solvers
 
@@ -86,7 +98,8 @@ classes, and 10 free functions/templates; the installed implementation contains
 `begin_frame`, `prepare_substep`, `finish_substep`, `finish_frame`,
 `advance_async`, `advance`, `reset`, and state/view access appropriate to the
 solver. `Cloth` and `Rope` reuse the fixed-topology graph backend without
-exposing gallery recipes.
+exposing gallery recipes; their optional statistics collection is independent
+from frame submission.
 
 ## Soft-body physics
 
@@ -105,6 +118,7 @@ exposing gallery recipes.
 | `SoftBodySurfaceView` | Borrows the deformed surface mesh, normals, UVs, active triangles, and its hierarchy. |
 | `SoftBodyTimings` | Reports solver, surface-deformation, and hierarchy GPU times. |
 | `SoftBodyStatistics` | Reports instance, node, bond, fracture, finite-failure, and frame totals. |
+| `SoftBodyTelemetry` | Bundles the last explicitly collected timing and statistics snapshot. |
 
 ### Owning object
 
@@ -122,7 +136,9 @@ exposing gallery recipes.
 | `begin_frame` | Starts the manual coupling protocol and prepares per-frame solver state. |
 | `prepare_substep` | Predicts one substep and exposes cleared external impulse and position-correction buffers. |
 | `finish_substep` | Consumes application coupling, solves constraints and fracture, and commits one substep. |
-| `finish_frame` | Completes the manual frame, rebuilds presentation data, and reports timings. |
+| `finish_frame` | Enqueues final surface work and records frame completion without downloading telemetry. |
+| `collect_telemetry_async` / `collect_telemetry` | Request a separate timing/counter snapshot asynchronously or synchronously. |
+| `resolve_telemetry` / `telemetry` | Resolve a completed asynchronous request or read the last completed snapshot. |
 | `reset` | Restores initial positions, velocities, and unbroken bond activity. |
 | `set_material` | Changes the runtime-adjustable material values after initialization. |
 | `set_substeps` | Changes the number of solver substeps within each fixed frame. |
@@ -141,12 +157,10 @@ exposing gallery recipes.
 | API | Description |
 | --- | --- |
 | `SmokeOptions` | Configures deterministic tracer capacity, emission, lifetime, buoyancy, damping, turbulence, speed, and seed. |
-| `SmokeSphereCollider` | Supplies one moving analytic sphere that deflects smoke tracers. |
-| `SmokeStepInput` | Supplies external acceleration and a host array of sphere colliders for one step. |
 | `SmokeParticleView` | Borrows device positions, velocities, ages, and temperatures for active smoke particles. |
-| `SmokeCouplingView` | Borrows body points and a writable impulse buffer for one-way aerodynamic loading. |
 | `SmokeTimings` | Reports smoke integration and body-coupling GPU times. |
 | `SmokeStatistics` | Reports frame, respawn, finite-failure, maximum-speed, and allocation totals. |
+| `SmokeTelemetry` | Bundles the last explicitly collected smoke timings and counters. |
 
 ### Owning object
 
@@ -159,9 +173,12 @@ exposing gallery recipes.
 | API | Description |
 | --- | --- |
 | `create` / `initialize` | Validate smoke options and allocate and seed all device-resident tracer state. |
-| `step` | Advances smoke synchronously with optional colliders and timing output. |
+| `set_colliders` | Selects a borrowed generic device collider view for subsequent smoke substeps. |
+| `step` | Advances smoke synchronously with acceleration and a generic collider view. |
 | `advance_async` / `advance` | Drive smoke through the common frame protocol and completion-token interface. |
-| `couple` | Accumulates aerodynamic impulses into a smoke-specific or common point-coupling view. |
+| `couple` | Enqueues aerodynamic impulse accumulation into a common point-coupling view. |
+| `collect_telemetry_async` / `collect_telemetry` | Request smoke counters and event timings independently from advancement. |
+| `resolve_telemetry` / `telemetry` | Resolve a completed telemetry request or return the last snapshot. |
 | `reset` | Reseeds the original deterministic tracer state. |
 | `initialized` | Reports whether valid smoke state has been created. |
 | `options` | Returns the resolved smoke configuration. |
@@ -174,18 +191,10 @@ The recipe catalog, gallery builder, aggregate render views, objectives, and
 progression live in `examples/gallery` and `apps/water_lab`. They are not
 installed and are intentionally absent from this inventory.
 
-## Remaining reuse work
+## Internal and example boundary
 
-1. Extract the fixed-topology graph backend from the current water-lab source
-   directory so the installed implementation has no app-directory dependency.
-2. Replace smoke's internal timing readbacks and the mature soft-body frame
-   readback with truly enqueue-only variants; their completion tokens currently
-   preserve the protocol but cannot recover synchronization already performed
-   inside those backends.
-3. Add generic collider batches and balanced reaction gathering so common
-   fluid/deformable/rigid contacts do not require application kernels.
-4. Split the physics umbrella declarations into implementation-independent
-   focused headers once the ABI settles; the focused headers currently forward
-   to the common umbrella to guarantee identical view definitions.
-5. Standardize all diagnostics as device-resident snapshots associated with a
-   completion token, avoiding races when statistics are queried too early.
+The fixed-topology backend and generic procedural cloth/rope builders live in
+`src/internal`; focused headers declare their own owners and the umbrella only
+includes them. Recipe catalogs, authored presets and controls, victory logic,
+render aggregation, HUD state, and visualization policy remain under
+`examples/gallery` and `apps/water_lab` and are neither installed nor exported.

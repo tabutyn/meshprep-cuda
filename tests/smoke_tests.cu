@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <stdexcept>
+#include <span>
 #include <vector>
 
 namespace {
@@ -41,11 +42,16 @@ int main()
         require(initial.count==options.particle_count && initial.positions!=nullptr &&
                 initial.velocities!=nullptr && initial.temperatures!=nullptr,
             "smoke did not expose its device-resident particle view");
-        parallel_mater::physics::SmokeSphereCollider sphere{
-            make_float3(0.2F,0.4F,0.0F),{},0.32F,0.25F};
+        parallel_mater::physics::Collider sphere;
+        sphere.position=make_float3(0.2F,0.4F,0.0F);
+        sphere.dimensions=make_float3(0.32F,0.0F,0.0F);
+        sphere.friction=0.25F;
+        parallel_mater::physics::ColliderSet colliders;
+        require(colliders.update(std::span<const parallel_mater::physics::Collider>(
+                    &sphere,1U)).ok(),"smoke collider upload failed");
         parallel_mater::physics::SmokeTimings timing{};
         for (std::uint32_t frame=0U;frame<180U;++frame) {
-            require(smoke.step({{},&sphere,1U},timing).ok(),
+            require(smoke.step({},colliders.view(),timing).ok(),
                 "smoke integration failed");
         }
         const auto statistics=smoke.statistics();
@@ -78,10 +84,14 @@ int main()
         cudaMemcpy(body_positions,&body_point,sizeof(float3),cudaMemcpyHostToDevice);
         cudaMemset(body_velocities,0,sizeof(float3));
         cudaMemset(body_impulses,0,sizeof(float3));
-        parallel_mater::physics::SmokeCouplingView body{
-            body_positions,body_velocities,body_impulses,1U,2.0F,0.03F,1.0F/60.0F};
-        require(smoke.couple(body,8.0F,timing).ok(),
+        parallel_mater::physics::PointCouplingView body{
+            body_positions,body_velocities,body_impulses,nullptr,
+            1U,0.03F,2.0F};
+        require(smoke.couple(body,1.0F/60.0F,8.0F).ok(),
             "smoke/body coupling failed");
+        require(smoke.collect_telemetry().ok(),
+            "smoke coupling telemetry failed");
+        timing=smoke.telemetry().timings;
         float3 impulse{};
         cudaMemcpy(&impulse,body_impulses,sizeof(float3),cudaMemcpyDeviceToHost);
         cudaFree(body_impulses); cudaFree(body_velocities); cudaFree(body_positions);

@@ -393,16 +393,31 @@ Status Fluid::finish_frame(Completion& completion, cudaStream_t stream) noexcept
         return invalid("fluid frame has incomplete substeps");
     }
     if (completion.pending()) return invalid("completion token is already pending");
-    Status status = cuda_status(cudaMemcpyAsync(impl_->host_diagnostics,
-        impl_->diagnostics, 2U * sizeof(std::uint32_t),
-        cudaMemcpyDeviceToHost, stream), "could not download fluid diagnostics");
-    if (!status) return status;
-    status = completion.record(stream);
+    Status status = completion.record(stream);
     if (status) {
         impl_->frame_active = false;
         ++impl_->frame_index;
     }
     return status;
+}
+
+Status Fluid::collect_statistics_async(
+    Completion& completion, cudaStream_t stream) noexcept
+{
+    if (!impl_) return invalid("fluid is not initialized");
+    if (impl_->frame_active) return invalid("cannot collect an active fluid frame");
+    if (completion.pending()) return invalid("completion token is already pending");
+    Status status = cuda_status(cudaMemcpyAsync(impl_->host_diagnostics,
+        impl_->diagnostics, 2U * sizeof(std::uint32_t),
+        cudaMemcpyDeviceToHost, stream), "could not download fluid diagnostics");
+    return status ? completion.record(stream) : status;
+}
+
+Status Fluid::collect_statistics(cudaStream_t stream) noexcept
+{
+    Completion completion;
+    Status status = collect_statistics_async(completion, stream);
+    return status ? completion.wait() : status;
 }
 
 Status Fluid::advance_async(
@@ -454,7 +469,7 @@ PointCouplingView Fluid::coupling_points() const noexcept
 {
     if (!impl_) return {};
     return {impl_->positions, impl_->velocities, impl_->external_impulses,
-        impl_->count, impl_->options.particle_radius,
+        nullptr, impl_->count, impl_->options.particle_radius,
         1.0F / impl_->options.particle_mass};
 }
 FluidStatistics Fluid::statistics() const noexcept

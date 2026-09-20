@@ -36,6 +36,9 @@ struct PointCouplingView {
     const float3* positions{};
     const float3* velocities{};
     float3* external_impulses{};
+    // Optional. Solvers that expose positional projection accept deterministic
+    // corrections here; force-only solvers leave it null.
+    float3* position_corrections{};
     std::uint32_t count{};
     float radius{};
     float inverse_mass{};

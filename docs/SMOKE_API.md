@@ -17,28 +17,35 @@ options.initial_velocity = {3.0F, 0.0F, 0.0F};
 parallel_mater::physics::Smoke smoke;
 auto status = smoke.initialize(options, stream);
 
-parallel_mater::physics::SmokeTimings timings;
-if (status) status = smoke.step({}, timings, stream);
+parallel_mater::physics::ColliderSet colliders;
+parallel_mater::physics::Collider sphere;
+sphere.position = {0.0F, 0.2F, 0.0F};
+sphere.dimensions = {0.35F, 0.0F, 0.0F};
+if (status) status = colliders.update(
+    std::span<const parallel_mater::physics::Collider>(&sphere, 1), stream);
+if (status) status = smoke.step({}, colliders.view(), stream);
+if (status) status = smoke.collect_telemetry(stream);
 
 auto tracers = smoke.particles(); // borrowed device pointers
+auto timings = smoke.telemetry().timings;
 ```
 
 To load a cloth, rope, soft body, or another application-owned point system,
-pass a borrowed `SmokeCouplingView` to `couple()`. The solver samples the same
+pass a borrowed `PointCouplingView` to `couple()`. The solver samples the same
 analytic carrier field used by the visible tracers and adds impulses to the
 caller's buffer. It never owns or assumes the topology of the receiving body.
 
 ```cpp
-parallel_mater::physics::SmokeCouplingView body{
+parallel_mater::physics::PointCouplingView body{
     positions,
     velocities,
     external_impulses,
+    position_corrections,
     node_count,
-    inverse_node_mass,
     node_radius,
-    substep_dt,
+    inverse_node_mass,
 };
-status = smoke.couple(body, 5.0F, timings, stream);
+status = smoke.couple(body, substep_dt, 5.0F, stream);
 ```
 
 The coupling pass is linear in receiving points. It does not compare every
@@ -51,11 +58,13 @@ order.
 - `Smoke` owns its CUDA allocations and is movable but not copyable.
 - `SmokeParticleView` and all input coupling views are borrowed.
 - Reacquire particle views after `initialize()` or `reset()`.
-- Legacy `step` and `couple` calls are synchronous; the common frame protocol
-  returns a `Completion` token after its internal statistics readback.
+- `step`, `advance`, and `couple` never download telemetry; asynchronous frame
+  submission records `Completion` after queued simulation work.
+- `collect_telemetry_async` performs the optional readback under its own token;
+  `collect_telemetry` is the explicit synchronous convenience form.
 - `external_impulses` is accumulated, not cleared or replaced.
-- A `SmokeCouplingView::timestep` is the receiving solver's substep; smoke
-  advection keeps its own fixed `SmokeOptions::timestep`.
+- The coupling timestep is the receiving solver's substep; smoke advection
+  keeps its own fixed `SmokeOptions::timestep`.
 
 ## Example-gallery validation
 

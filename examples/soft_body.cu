@@ -33,7 +33,6 @@ int main(int argc, char** argv)
 
     parallel_mater::physics::SoftBodyOptions options;
     options.instance_origins[0] = {0.0F, 1.0F, 0.0F};
-    options.render_internal_members = true;
 
     parallel_mater::physics::SoftBody body;
     parallel_mater::Status status = body.initialize(argv[1], options);

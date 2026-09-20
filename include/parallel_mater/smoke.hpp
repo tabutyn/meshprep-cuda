@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
-#include <parallel_mater/frame.hpp>
-#include <parallel_mater/geometry.hpp>
+#include <parallel_mater/coupling.hpp>
 
 #include <cuda_runtime_api.h>
 #include <vector_types.h>
@@ -30,19 +29,6 @@ struct SmokeOptions {
     std::uint32_t seed{0x51A0C3U};
 };
 
-struct SmokeSphereCollider {
-    float3 center{};
-    float3 velocity{};
-    float radius{};
-    float friction{0.15F};
-};
-
-struct SmokeStepInput {
-    float3 acceleration{};
-    const SmokeSphereCollider* sphere_colliders{}; // host array, copied on call
-    std::uint32_t sphere_collider_count{};
-};
-
 struct SmokeParticleView {
     const float3* positions{};
     const float3* velocities{};
@@ -50,22 +36,6 @@ struct SmokeParticleView {
     const float* temperatures{};
     std::uint32_t count{};
     float radius{};
-};
-
-// Borrowed device view for one-way aerodynamic coupling. `external_impulses`
-// is accumulated rather than replaced. Coupling samples the same analytic
-// carrier field used by the visual tracers in O(body point count), avoiding an
-// all-pairs smoke-particle/body-point pass.
-struct SmokeCouplingView {
-    const float3* positions{};
-    const float3* velocities{};
-    float3* external_impulses{};
-    std::uint32_t count{};
-    float inverse_mass{};
-    float radius{};
-    // Physical interval represented by this coupling call. This is separate
-    // from smoke advection so a body solver can couple once per substep.
-    float timestep{};
 };
 
 struct SmokeTimings {
@@ -86,10 +56,14 @@ struct SmokeStatistics {
     std::size_t allocated_bytes{};
 };
 
+struct SmokeTelemetry {
+    SmokeTimings timings{};
+    SmokeStatistics statistics{};
+};
+
 // Deterministic device-resident smoke/advection particles. This is a compact
-// visual and coupling model, not a pressure-projected CFD solver. Legacy
-// step/couple calls are synchronous; the common frame API also supplies a
-// completion token. Borrowed views must be reacquired after reset.
+// visual and coupling model, not a pressure-projected CFD solver. Advancing is
+// enqueue-only; diagnostic readbacks are opt-in through collect_telemetry.
 class Smoke {
 public:
     Smoke() noexcept;
@@ -104,13 +78,13 @@ public:
         cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status initialize(
         SmokeOptions options = {}, cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status step(
-        SmokeStepInput input = {}, cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status step(
-        SmokeStepInput input, SmokeTimings& timings,
-        cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status step_async(
-        SmokeStepInput input, Completion& completion,
+    [[nodiscard]] Status set_colliders(ColliderView colliders) noexcept;
+    [[nodiscard]] Status step(float3 acceleration = {},
+        ColliderView colliders = {}, cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status step(float3 acceleration, ColliderView colliders,
+        SmokeTimings& timings, cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status step_async(float3 acceleration,
+        ColliderView colliders, Completion& completion,
         cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status begin_frame(
         FrameOptions frame, cudaStream_t stream = nullptr) noexcept;
@@ -125,17 +99,19 @@ public:
         cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status advance(
         FrameOptions frame, cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status couple(
-        SmokeCouplingView body, float drag_coefficient,
-        SmokeTimings& timings, cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status couple(
-        PointCouplingView body, float timestep, float drag_coefficient,
-        SmokeTimings& timings, cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status couple(PointCouplingView body, float timestep,
+        float drag_coefficient, cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status collect_telemetry_async(Completion& completion,
+        cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status resolve_telemetry(SmokeTelemetry& output) noexcept;
+    [[nodiscard]] Status collect_telemetry(
+        cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status reset(cudaStream_t stream = nullptr) noexcept;
 
     [[nodiscard]] bool initialized() const noexcept;
     [[nodiscard]] SmokeOptions options() const noexcept;
     [[nodiscard]] SmokeParticleView particles() const noexcept;
+    [[nodiscard]] SmokeTelemetry telemetry() const noexcept;
     [[nodiscard]] SmokeStatistics statistics() const noexcept;
 
 private:

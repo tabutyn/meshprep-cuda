@@ -1,12 +1,6 @@
 // SPDX-License-Identifier: MIT
-#include <parallel_mater/cloth.hpp>
-#include <parallel_mater/fluid.hpp>
 #include <parallel_mater/geometry.hpp>
-#include <parallel_mater/frame.hpp>
 #include <parallel_mater/physics.hpp>
-#include <parallel_mater/rigid_body.hpp>
-#include <parallel_mater/rope.hpp>
-#include <parallel_mater/smoke.hpp>
 
 #include <type_traits>
 

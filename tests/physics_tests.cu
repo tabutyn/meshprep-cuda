@@ -48,7 +48,6 @@ void test_standalone_solver()
     options.constraint_iterations = 4U;
     options.instance_origins[0] = {-0.4F, 1.5F, 0.0F};
     options.instance_origins[1] = {0.4F, 1.5F, 0.0F};
-    options.render_internal_members = true;
 
     parallel_mater::physics::SoftBody body;
     require(parallel_mater::physics::SoftBody::create(
@@ -144,6 +143,13 @@ void test_memory_asset_and_protocol()
         "soft-body async frame failed to enqueue");
     require(completion.pending(), "soft-body completion was not recorded");
     require(completion.wait().ok(), "soft-body async frame failed");
+    parallel_mater::physics::Completion telemetry_completion;
+    require(body.collect_telemetry_async(telemetry_completion).ok() &&
+            telemetry_completion.wait().ok(),
+        "soft-body telemetry failed to complete");
+    parallel_mater::physics::SoftBodyTelemetry telemetry;
+    require(body.resolve_telemetry(telemetry).ok(),
+        "soft-body telemetry failed to resolve");
     require(body.statistics().frame_index == 1U,
         "soft-body protocol did not advance one frame");
 }
@@ -176,6 +182,8 @@ void test_independent_owners()
     require(fluid.advance_async(fluid_frame, fluid_completion).ok() &&
             fluid_completion.wait().ok(),
         "fluid owner failed to advance");
+    require(fluid.collect_statistics().ok(),
+        "fluid telemetry failed to collect");
     require(fluid.statistics().frame_index == 1U &&
             fluid.particles().particle_count == particles.size(),
         "fluid owner reported inconsistent state");
@@ -234,6 +242,61 @@ void test_independent_owners()
         "rigid-body force did not affect translation");
 }
 
+void test_generic_coupling()
+{
+    using namespace parallel_mater::physics;
+    Collider collider;
+    collider.shape = ColliderShape::box;
+    collider.position = make_float3(1.0F, 2.0F, 3.0F);
+    collider.dimensions = make_float3(0.5F, 0.25F, 0.75F);
+    ColliderSet colliders;
+    require(colliders.update(std::span<const Collider>(&collider, 1U)).ok() &&
+            colliders.view().count == 1U,
+        "generic collider set failed to upload");
+
+    const ConstraintRecord host_records[] = {
+        {0U, 2U, make_float3(1.0F, 0.0F, 0.0F), {}},
+        {1U, 0U, make_float3(0.0F, 2.0F, 0.0F),
+            make_float3(0.0F, 0.25F, 0.0F)},
+        {0U, 1U, make_float3(3.0F, 0.0F, 0.0F),
+            make_float3(0.5F, 0.0F, 0.0F)}};
+    ConstraintRecord* records{};
+    float3* positions{};
+    float3* velocities{};
+    float3* impulses{};
+    float3* corrections{};
+    require(cudaMalloc(&records, sizeof(host_records)) == cudaSuccess &&
+            cudaMalloc(&positions, 2U * sizeof(float3)) == cudaSuccess &&
+            cudaMalloc(&velocities, 2U * sizeof(float3)) == cudaSuccess &&
+            cudaMalloc(&impulses, 2U * sizeof(float3)) == cudaSuccess &&
+            cudaMalloc(&corrections, 2U * sizeof(float3)) == cudaSuccess,
+        "constraint fixture allocation failed");
+    cudaMemcpy(records, host_records, sizeof(host_records), cudaMemcpyHostToDevice);
+    cudaMemset(positions, 0, 2U * sizeof(float3));
+    cudaMemset(velocities, 0, 2U * sizeof(float3));
+    cudaMemset(impulses, 0, 2U * sizeof(float3));
+    cudaMemset(corrections, 0, 2U * sizeof(float3));
+    ConstraintBatch batch;
+    const PointCouplingView target{positions, velocities, impulses, corrections,
+        2U, 0.1F, 1.0F};
+    require(batch.apply({records, 3U}, target).ok(),
+        "deterministic constraint batch failed");
+    float3 host_impulses[2]{};
+    float3 host_corrections[2]{};
+    cudaMemcpy(host_impulses, impulses, sizeof(host_impulses), cudaMemcpyDeviceToHost);
+    cudaMemcpy(host_corrections, corrections, sizeof(host_corrections),
+        cudaMemcpyDeviceToHost);
+    cudaFree(corrections);
+    cudaFree(impulses);
+    cudaFree(velocities);
+    cudaFree(positions);
+    cudaFree(records);
+    require(host_impulses[0].x == 4.0F && host_impulses[1].y == 2.0F &&
+            host_corrections[0].x == 0.5F &&
+            host_corrections[1].y == 0.25F,
+        "constraint gather did not preserve ordered sums");
+}
+
 } // namespace
 
 int main()
@@ -248,6 +311,7 @@ int main()
         test_standalone_solver();
         test_memory_asset_and_protocol();
         test_independent_owners();
+        test_generic_coupling();
         std::puts("all public physics tests passed");
         return 0;
     } catch (const std::exception& error) {

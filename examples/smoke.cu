@@ -2,6 +2,7 @@
 #include <parallel_mater/smoke.hpp>
 
 #include <cstdio>
+#include <span>
 
 int main()
 {
@@ -18,11 +19,16 @@ int main()
         return 1;
     }
 
-    parallel_mater::physics::SmokeSphereCollider obstacle{
-        make_float3(0.0F,0.2F,0.0F),{},0.35F,0.2F};
+    parallel_mater::physics::Collider obstacle;
+    obstacle.position=make_float3(0.0F,0.2F,0.0F);
+    obstacle.dimensions=make_float3(0.35F,0.0F,0.0F);
+    obstacle.friction=0.2F;
+    parallel_mater::physics::ColliderSet colliders;
+    status=colliders.update(std::span<const parallel_mater::physics::Collider>(
+        &obstacle,1U));
     parallel_mater::physics::SmokeTimings timings;
     for (std::uint32_t frame=0U;frame<240U && status;++frame)
-        status=smoke.step({{},&obstacle,1U},timings);
+        status=smoke.step({},colliders.view(),timings);
     if (!status) {
         std::fprintf(stderr,"smoke step failed: %s\n",status.message);
         return 1;

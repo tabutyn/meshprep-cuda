@@ -17,13 +17,14 @@ Each owner follows `begin_frame`, `prepare_substep`, coupling work,
 `finish_substep`, and `finish_frame`. `advance()` is the synchronous
 convenience driver. `advance_async()` records a movable `Completion`; call
 `ready()` to poll or `wait()` to create a completion boundary and report
-deferred CUDA failures. The mature soft-body and smoke backends still perform
-internal timing/statistics readbacks, so those two may synchronize before
-recording the token; fluid completion is enqueue-only.
-Statistics downloaded by an async frame are stable after its token completes.
+deferred CUDA failures. Frame submission performs no telemetry readback:
+`collect_statistics_async` or `collect_telemetry_async` explicitly requests a
+device-to-host snapshot, while synchronous collection helpers wait for that
+separate request.
 `Fluid`, `Cloth`, `Rope`, and `SoftBody` expose the same
 `PointCouplingView`; its impulse buffer is writable only during a prepared
-substep. `RigidBody` gathers finite-mass reactions through `apply_force` and
+substep and its optional correction buffer is present only for projection
+solvers. `RigidBody` gathers finite-mass reactions through `apply_force` and
 `apply_torque` in the same phase.
 
 `Fluid` owns a deterministic sorted-cell particle system and exposes one
@@ -61,6 +62,10 @@ with custom collision or coupling use this sequence:
    kernels using `nodes()`, then `finish_substep(dt, gravity)`;
 3. `finish_frame(timings)`.
 
+That compatibility sequence collects timing telemetry synchronously. New code
+can use the common `FrameOptions` overloads and request telemetry independently
+after frame completion.
+
 Prediction clears `external_impulses` and `position_corrections`. Coupling
 kernels write an impulse in N·s and/or a positional correction for each node.
 `finish_substep` consumes those arrays, applies graph constraints and fracture,
@@ -78,6 +83,19 @@ completion boundary with the token. Asset loading occurs only during
 initialization; no file I/O or device allocation occurs in a simulation frame.
 See `examples/soft_body.cu` for a minimal custom ground collider.
 
+## Colliders and deterministic coupling
+
+`Collider` is the shared analytic description for spheres, boxes, planes, and
+capsules; `ColliderSet` owns a device array and exposes `ColliderView`.
+Individual solvers document which shapes they consume—Smoke currently consumes
+spheres—without introducing solver-specific collider structures.
+
+`ConstraintRecord` addresses one target point and carries an impulse, optional
+position correction, and caller-defined stable order. `ConstraintBatch` radix
+sorts records by `(point, order)` and gathers every point in that exact order,
+avoiding floating-point contact atomics. One batch can target the common point
+view of a fluid, cloth, rope, or soft body.
+
 The C++ API offers source compatibility within a tagged minor line; a stable C
 ABI is not promised. `.msb` assets have their own checked format version. This
 release accepts version 1 little-endian assets and rejects unknown versions,
@@ -92,6 +110,11 @@ live under `examples/gallery`. They are compiled only when
 tree and `ParallelMaterTargets.cmake`. They demonstrate composition; they are
 not a second public simulation abstraction. Gameplay objectives and automatic
 progression remain in `apps/water_lab`.
+
+The fixed-topology CUDA backend and generic cloth/rope asset builders live in
+`src/internal`; the installed target no longer compiles gallery asset recipes
+or scene geometry generators. Presets, authored controls, victory conditions,
+HUD state, and visualization choices remain non-installed example code.
 
 The complete installed-symbol inventory is in
 [`API_INVENTORY.md`](API_INVENTORY.md); the gallery reading order is in
