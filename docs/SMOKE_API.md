@@ -60,13 +60,13 @@ order.
 
 The optional gallery composes the same API in five contexts:
 
-| Key | Composition | Runtime assertion |
-| --- | --- | --- |
-| `A` | Smoke + rigid sphere | sphere translates and rotates through the stream |
-| `B` | Fluid + smoke | water prefix shrinks while buoyant steam is emitted over a hot pan |
-| `C` | Cloth + smoke | pitched cloth blades transfer smoke load into damped rotor torque |
-| `D` | Soft body + smoke | green bristles receive wind impulses while a rigid sphere rolls through |
-| `E` | Rope + smoke | segmented rope bridge receives wind and rigid-sphere contact |
+| Composition | Runtime assertion |
+| --- | --- |
+| Smoke + rigid sphere | sphere translates and rotates through the stream |
+| Fluid + smoke | water prefix shrinks while buoyant steam is emitted over a hot pan |
+| Cloth + smoke | pitched cloth blades transfer smoke load into damped rotor torque |
+| Soft body + smoke | green bristles receive wind impulses while a rigid sphere rolls through |
+| Rope + smoke | segmented rope bridge receives wind and rigid-sphere contact |
 
 `meshprep-smoke-tests` validates finite advection, respawn, buoyancy, obstacle
 wake, and non-zero coupling. `meshprep-simulation-runtime-tests` initializes

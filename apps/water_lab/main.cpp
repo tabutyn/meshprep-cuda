@@ -789,8 +789,7 @@ bool parse_options(int argc, char** argv, Options& options)
             else if (value == "lab") options.scene = Scene::Lab;
             else return false;
         } else if (argument == "--context") {
-            if (value.size() != 1U) return false;
-            const auto* context = parallel_mater::sim::find_example_context(value.front());
+            const auto* context = parallel_mater::sim::find_example_context(value);
             if (context == nullptr) return false;
             options.context = context->id;
             options.scene = Scene::Course;
@@ -824,8 +823,9 @@ void usage(const char* executable)
 {
     std::fprintf(stderr,
         "usage: %s [--width N] [--height N] [--profile FRAMES] [--warmups N] "
-        "[--iterations 1..16] [--scene course|lab] [--context 1..9|0|A..E] [--drive-box] "
+        "[--iterations 1..16] [--scene course|lab] [--context RECIPE] [--drive-box] "
         "[--view surface|particles|billboards|wire] [--foam on|off] [--replay CAPTURE_DIRECTORY]\n"
+        "context recipes use catalog slugs such as water, fluid-smoke, or cloth-rope\n"
         "rigid contexts default to 4 substeps per fixed 60 Hz tick at 4x speed; "
         "non-rigid and lab contexts to 1\n"
         "brackets use 1x..8x and raise the course substep floor with speed\n",
@@ -1371,14 +1371,6 @@ void key_callback(GLFWwindow* window, int key, int, int action, int modifiers)
                 ? waterlab::gallery::default_context_display(input.context)
                 : waterlab::FluidDisplay::Billboards;
         }
-        else if (!input.replay_mode &&
-                 ((key >= GLFW_KEY_1 && key <= GLFW_KEY_9) || key == GLFW_KEY_0)) {
-            const char context_key = key == GLFW_KEY_0
-                ? '0' : static_cast<char>('1' + key - GLFW_KEY_1);
-            if (const auto* recipe =
-                    parallel_mater::sim::find_example_context(context_key))
-                input.pending_context = recipe->id;
-        }
         else if (key == GLFW_KEY_F) input.show_foam = !input.show_foam;
         else if (key == GLFW_KEY_T) input.show_timings = !input.show_timings;
         else if (key == GLFW_KEY_Z) input.show_normals = !input.show_normals;
@@ -1556,7 +1548,7 @@ void draw_context_browser(int width,int height,const Interaction& input)
     text("UP DOWN SELECT  ENTER OPEN  TAB CLOSE",x+14.0F,y+36.0F,1.25F,width,height);
     const struct Key { const char* label; float r,g,b; } keys[]{
         {"FLUID",0.05F,0.52F,1.0F},{"CLOTH",0.12F,0.88F,0.32F},
-        {"SOFTBODY",0.16F,0.30F,1.0F},{"ROPE",1.0F,0.48F,0.08F},
+        {"SOFTBODY",0.68F,0.22F,0.95F},{"ROPE",1.0F,0.48F,0.08F},
         {"SMOKE",0.92F,0.94F,0.98F}};
     float key_x=x+14.0F;
     for (const auto& key:keys) {
@@ -1570,10 +1562,8 @@ void draw_context_browser(int width,int height,const Interaction& input)
         if (static_cast<int>(index)==input.context_browser_index)
             rectangle(x+8.0F,row_y-4.0F,panel_width-16.0F,row_height-1.0F,
                 width,height,0.08F,0.22F,0.38F,0.95F);
-        char line[64];
         const std::string title=uppercase(context.title);
-        std::snprintf(line,sizeof(line),"%c  %s",context.key,title.c_str());
-        text(line,x+16.0F,row_y,1.5F,width,height);
+        text(title,x+16.0F,row_y,1.5F,width,height);
         float chip_x=x+365.0F;
         const auto chip=[&](parallel_mater::sim::Component component,
                             float r,float g,float b) {
@@ -1583,7 +1573,7 @@ void draw_context_browser(int width,int height,const Interaction& input)
         };
         chip(parallel_mater::sim::Component::fluid_particles,0.05F,0.52F,1.0F);
         chip(parallel_mater::sim::Component::cloth,0.12F,0.88F,0.32F);
-        chip(parallel_mater::sim::Component::soft_body,0.16F,0.30F,1.0F);
+        chip(parallel_mater::sim::Component::soft_body,0.68F,0.22F,0.95F);
         chip(parallel_mater::sim::Component::rope,1.0F,0.48F,0.08F);
         chip(parallel_mater::sim::Component::smoke,0.92F,0.94F,0.98F);
         row_y+=row_height;
@@ -2248,7 +2238,7 @@ void draw_course_hud(int width, int height, const Interaction& input,
     char status[96];
     const auto& definition = parallel_mater::sim::level(input.context);
     const auto& recipe = waterlab::gallery::context_info(input.context);
-    std::snprintf(status, sizeof(status), "LEVEL %c  %.*s%s", recipe.key,
+    std::snprintf(status, sizeof(status), "%.*s%s",
         static_cast<int>(recipe.title.size()), recipe.title.data(),
         input.level_progress.won ? "  COMPLETE" : "");
     text(status,
@@ -3009,7 +2999,7 @@ int run_interactive(const Options& options)
                 visual_ms = 0.0F;
             }
             const auto& selected = waterlab::gallery::context_info(input.context);
-            std::printf("Context %c: %.*s\n", selected.key,
+            std::printf("Context: %.*s\n",
                 static_cast<int>(selected.title.size()), selected.title.data());
         }
         update_camera(input, camera);
@@ -3604,8 +3594,8 @@ int run_interactive(const Options& options)
                    input.context == parallel_mater::sim::ExampleContext::water_cloth) {
             const auto& recipe = waterlab::gallery::context_info(input.context);
             std::snprintf(title, sizeof(title),
-                "%c %.*s | %.0fx motion | N %u | %.2f ms%s%s",
-                recipe.key, static_cast<int>(recipe.title.size()), recipe.title.data(),
+                "%.*s | %.0fx motion | N %u | %.2f ms%s%s",
+                static_cast<int>(recipe.title.size()), recipe.title.data(),
                 waterlab::course_motion_multiplier(droplet.options()),
                 droplet.options().physics_iterations,
                 wall_ms, input.course_finished ? " | FINISH" : "",
@@ -3617,9 +3607,9 @@ int run_interactive(const Options& options)
             const auto soft_stats = soft_bodies
                 ? soft_bodies->statistics() : waterlab::SoftBodyStatistics{};
             std::snprintf(title, sizeof(title),
-                "%c %.*s | goal %.0f%%%s | gravity %.1f | N %u | particles %u | "
+                "%.*s | goal %.0f%%%s | gravity %.1f | N %u | particles %u | "
                 "bonds %u broken | %.2f ms",
-                recipe.key, static_cast<int>(recipe.title.size()), recipe.title.data(),
+                static_cast<int>(recipe.title.size()), recipe.title.data(),
                 100.0F * input.level_progress.normalized,
                 input.level_progress.won ? " COMPLETE" : "",
                 length(input.course_gravity), droplet.options().physics_iterations,

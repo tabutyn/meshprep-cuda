@@ -55,50 +55,50 @@ enum class ExampleContext : std::uint8_t {
 
 struct ExampleContextInfo {
     ExampleContext id{};
-    char key{};
     std::string_view slug{};
     std::string_view title{};
     Component components{};
 };
 
 inline constexpr std::array<ExampleContextInfo, 15> example_contexts{{
-    {ExampleContext::water, '1', "water", "Water",
+    {ExampleContext::water, "water", "Water",
         Component::fluid_particles | Component::rigid_bodies},
-    {ExampleContext::cloth, '2', "cloth", "Cloth",
+    {ExampleContext::cloth, "cloth", "Cloth",
         Component::cloth | Component::rigid_bodies},
-    {ExampleContext::soft_body, '3', "softbody", "Softbody",
+    {ExampleContext::soft_body, "softbody", "Softbody",
         Component::soft_body | Component::rigid_bodies},
-    {ExampleContext::rope, '4', "rope", "Rope",
+    {ExampleContext::rope, "rope", "Rope",
         Component::rope | Component::rigid_bodies},
-    {ExampleContext::water_cloth, '5', "water-cloth", "Water-Cloth",
+    {ExampleContext::smoke, "smoke", "Smoke",
+        Component::smoke | Component::rigid_bodies},
+    {ExampleContext::water_cloth, "water-cloth", "Water-Cloth",
         Component::fluid_particles | Component::water_skin |
             Component::cloth | Component::rigid_bodies},
-    {ExampleContext::water_soft_body, '6', "water-softbody", "Water-Softbody",
+    {ExampleContext::water_soft_body, "water-softbody", "Water-Softbody",
         Component::soft_body | Component::fluid_particles | Component::rigid_bodies},
-    {ExampleContext::water_rope, '7', "water-rope", "Water-Rope",
+    {ExampleContext::water_rope, "water-rope", "Water-Rope",
         Component::fluid_particles | Component::rope | Component::rigid_bodies},
-    {ExampleContext::cloth_soft_body, '8', "cloth-softbody", "Cloth-Softbody",
-        Component::soft_body | Component::cloth | Component::rigid_bodies},
-    {ExampleContext::cloth_rope, '9', "cloth-rope", "Cloth-Rope",
-        Component::cloth | Component::rope | Component::rigid_bodies},
-    {ExampleContext::soft_body_rope, '0', "softbody-rope", "Softbody-Rope",
-        Component::soft_body | Component::rope | Component::rigid_bodies},
-    {ExampleContext::smoke, 'A', "smoke", "Smoke",
-        Component::smoke | Component::rigid_bodies},
-    {ExampleContext::fluid_smoke, 'B', "fluid-smoke", "Fluid-Smoke",
+    {ExampleContext::fluid_smoke, "fluid-smoke", "Fluid-Smoke",
         Component::fluid_particles | Component::smoke},
-    {ExampleContext::cloth_smoke, 'C', "cloth-smoke", "Cloth-Smoke",
+    {ExampleContext::cloth_soft_body, "cloth-softbody", "Cloth-Softbody",
+        Component::soft_body | Component::cloth | Component::rigid_bodies},
+    {ExampleContext::cloth_rope, "cloth-rope", "Cloth-Rope",
+        Component::cloth | Component::rope | Component::rigid_bodies},
+    {ExampleContext::cloth_smoke, "cloth-smoke", "Cloth-Smoke",
         Component::cloth | Component::smoke | Component::rigid_bodies},
-    {ExampleContext::soft_body_smoke, 'D', "softbody-smoke", "Softbody-Smoke",
+    {ExampleContext::soft_body_rope, "softbody-rope", "Softbody-Rope",
+        Component::soft_body | Component::rope | Component::rigid_bodies},
+    {ExampleContext::soft_body_smoke, "softbody-smoke", "Softbody-Smoke",
         Component::soft_body | Component::smoke | Component::rigid_bodies},
-    {ExampleContext::rope_smoke, 'E', "rope-smoke", "Rope-Smoke",
+    {ExampleContext::rope_smoke, "rope-smoke", "Rope-Smoke",
         Component::rope | Component::smoke | Component::rigid_bodies},
 }};
 
-[[nodiscard]] constexpr const ExampleContextInfo* find_example_context(char key) noexcept
+[[nodiscard]] constexpr const ExampleContextInfo* find_example_context(
+    std::string_view slug) noexcept
 {
     for (const auto& context : example_contexts) {
-        if (context.key == key) return &context;
+        if (context.slug == slug) return &context;
     }
     return nullptr;
 }
@@ -132,24 +132,24 @@ inline constexpr std::array<LevelDefinition, 15> levels{{
         "Cover the rolling sphere in blue paint from the cylinders.", 1.0F},
     {ExampleContext::rope, GoalKind::wrap_post,
         "Wrap the tether three complete turns around the post.", 3.0F},
+    {ExampleContext::smoke, GoalKind::observe,
+        "Roll through the stream and reveal the turbulent wake.", 0.0F},
     {ExampleContext::water_cloth, GoalKind::reach_course_goal,
         "Roll the water sphere through the obstacle course.", 1.0F},
     {ExampleContext::water_soft_body, GoalKind::ride_lift,
         "Cross the water wheel from the right stage to the left exit.", 1.0F},
     {ExampleContext::water_rope, GoalKind::catch_treasure,
         "Hook the submerged treasure and reel it to the top.", 1.0F},
+    {ExampleContext::fluid_smoke, GoalKind::observe,
+        "Heat the water into rising steam.", 0.0F},
     {ExampleContext::cloth_soft_body, GoalKind::damage_cloth,
         "Paint and damage the cloth marked GOAL.", 1.0F},
     {ExampleContext::cloth_rope, GoalKind::reach_exit,
         "Roll across the cloth-and-rope floor.", 1.0F},
-    {ExampleContext::soft_body_rope, GoalKind::reach_exit,
-        "Roll the soft-body sphere across the suspended rope bridge.", 1.0F},
-    {ExampleContext::smoke, GoalKind::observe,
-        "Roll through the stream and reveal the turbulent wake.", 0.0F},
-    {ExampleContext::fluid_smoke, GoalKind::observe,
-        "Heat the water into rising steam.", 0.0F},
     {ExampleContext::cloth_smoke, GoalKind::observe,
         "Turn the pitched cloth windmill with smoke.", 0.0F},
+    {ExampleContext::soft_body_rope, GoalKind::reach_exit,
+        "Roll the soft-body sphere across the suspended rope bridge.", 1.0F},
     {ExampleContext::soft_body_smoke, GoalKind::observe,
         "Bend the soft grass with smoke and the rolling sphere.", 0.0F},
     {ExampleContext::rope_smoke, GoalKind::observe,

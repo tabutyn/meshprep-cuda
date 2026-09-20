@@ -7,7 +7,7 @@
 
 int main()
 {
-    // Context 2 is fully procedural: no application window, renderer, or asset
+    // Water is fully procedural: no application window, renderer, or asset
     // path is required. The simulation owns all CUDA allocations.
     parallel_mater::sim::GallerySimulation simulation;
     // One fluent builder is enough to select a complete authored simulation.
@@ -44,7 +44,7 @@ int main()
     const parallel_mater::sim::FrameRenderView frame = simulation.render_view();
     if (frame.particle_system_count != 1U || frame.particle_systems == nullptr ||
         frame.particle_systems[0].count != 2'048U) {
-        std::fprintf(stderr, "unexpected context-2 render view\n");
+        std::fprintf(stderr, "unexpected Water render view\n");
         return 1;
     }
     float3 first_particle{};
@@ -59,7 +59,7 @@ int main()
     const auto stats = simulation.statistics();
     const auto physics = simulation.resolved_physics();
     std::printf(
-        "context 2: %u particles, %u rigid bodies, frame %llu, "
+        "Water: %u particles, %u rigid bodies, frame %llu, "
         "dt=%.5f, iterations=%u, gravity=(%.2f, %.2f, %.2f), "
         "first=(%.3f, %.3f, %.3f)\n",
         stats.particle_count, stats.rigid_body_count,

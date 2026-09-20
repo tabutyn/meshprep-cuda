@@ -43,15 +43,22 @@ bool finite(const waterlab::HybridTimings& timings)
 
 void host_catalog_test()
 {
+    constexpr std::array<ExampleContext, 15U> expected_contexts{
+        ExampleContext::water,ExampleContext::cloth,ExampleContext::soft_body,
+        ExampleContext::rope,ExampleContext::smoke,ExampleContext::water_cloth,
+        ExampleContext::water_soft_body,ExampleContext::water_rope,
+        ExampleContext::fluid_smoke,ExampleContext::cloth_soft_body,
+        ExampleContext::cloth_rope,ExampleContext::cloth_smoke,
+        ExampleContext::soft_body_rope,ExampleContext::soft_body_smoke,
+        ExampleContext::rope_smoke};
     constexpr std::array<std::uint32_t, 15U> expected_component_counts{
-        2U,2U,2U,2U,4U,3U,3U,3U,3U,3U,2U,2U,3U,3U,3U};
-    constexpr std::array<char, 15U> expected_keys{
-        '1','2','3','4','5','6','7','8','9','0','A','B','C','D','E'};
+        2U,2U,2U,2U,2U,4U,3U,3U,2U,3U,3U,3U,3U,3U,3U};
     for (std::size_t index = 0U;
          index < meshprep::sim::example_contexts.size(); ++index) {
-        const auto context = static_cast<ExampleContext>(index + 1U);
+        const auto context = expected_contexts[index];
         const auto& info = waterlab::gallery::context_info(context);
-        require(info.id == context && info.key == expected_keys[index],
+        require(info.id == context &&
+                meshprep::sim::example_contexts[index].id == context,
             "gallery context order diverged from the installed catalog");
         require(std::popcount(static_cast<std::uint32_t>(info.components)) ==
                 expected_component_counts[index],

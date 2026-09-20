@@ -59,11 +59,12 @@ bindings rather than attempting forward-compatible interpretation.
 ## Optional gallery simulation/render views
 
 `<parallel_mater/game.hpp>` is the CUDA-free configuration and campaign entry
-point. It provides ten `LevelDefinition` records, fluent `SimulationConfig`,
-validation, goal evaluation, and `Campaign`. The catalog is deliberately
-component-oriented: `Water`, `Cloth`, `Softbody`, `Rope`, then `Water-Cloth`,
-`Water-Softbody`, `Water-Rope`, `Cloth-Softbody`, `Cloth-Rope`, and
-`Softbody-Rope`. Their keyboard keys are `1` through `9`, then `0`.
+point. It provides fifteen `LevelDefinition` records, fluent
+`SimulationConfig`, validation, goal evaluation, and `Campaign`. The catalog
+is deliberately component-oriented: the five individual simulations come
+first, followed by fluid pairs, then the remaining cloth, soft-body, and rope
+pairs. Recipes are selected in the native browser or by stable textual slugs;
+they are not coupled to keyboard keys.
 
 `<parallel_mater/gallery.hpp>` provides the owning CUDA adapter. Its movable
 `GallerySimulation` has `initialize`/`create`, fixed `step`, and `reset`

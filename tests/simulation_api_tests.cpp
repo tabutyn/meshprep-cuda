@@ -20,43 +20,42 @@ constexpr std::uint32_t bits(Component value) noexcept
 
 struct ExpectedContext {
     ExampleContext id;
-    char key;
     std::string_view slug;
     std::string_view title;
     Component components;
 };
 
 constexpr std::array<ExpectedContext, 15> expected_contexts{{
-    {ExampleContext::water, '1', "water", "Water",
+    {ExampleContext::water, "water", "Water",
         Component::fluid_particles | Component::rigid_bodies},
-    {ExampleContext::cloth, '2', "cloth", "Cloth",
+    {ExampleContext::cloth, "cloth", "Cloth",
         Component::cloth | Component::rigid_bodies},
-    {ExampleContext::soft_body, '3', "softbody", "Softbody",
+    {ExampleContext::soft_body, "softbody", "Softbody",
         Component::soft_body | Component::rigid_bodies},
-    {ExampleContext::rope, '4', "rope", "Rope",
+    {ExampleContext::rope, "rope", "Rope",
         Component::rope | Component::rigid_bodies},
-    {ExampleContext::water_cloth, '5', "water-cloth", "Water-Cloth",
+    {ExampleContext::smoke, "smoke", "Smoke",
+        Component::smoke | Component::rigid_bodies},
+    {ExampleContext::water_cloth, "water-cloth", "Water-Cloth",
         Component::fluid_particles | Component::water_skin |
             Component::cloth | Component::rigid_bodies},
-    {ExampleContext::water_soft_body, '6', "water-softbody", "Water-Softbody",
+    {ExampleContext::water_soft_body, "water-softbody", "Water-Softbody",
         Component::soft_body | Component::fluid_particles | Component::rigid_bodies},
-    {ExampleContext::water_rope, '7', "water-rope", "Water-Rope",
+    {ExampleContext::water_rope, "water-rope", "Water-Rope",
         Component::fluid_particles | Component::rope | Component::rigid_bodies},
-    {ExampleContext::cloth_soft_body, '8', "cloth-softbody", "Cloth-Softbody",
-        Component::soft_body | Component::cloth | Component::rigid_bodies},
-    {ExampleContext::cloth_rope, '9', "cloth-rope", "Cloth-Rope",
-        Component::cloth | Component::rope | Component::rigid_bodies},
-    {ExampleContext::soft_body_rope, '0', "softbody-rope", "Softbody-Rope",
-        Component::soft_body | Component::rope | Component::rigid_bodies},
-    {ExampleContext::smoke, 'A', "smoke", "Smoke",
-        Component::smoke | Component::rigid_bodies},
-    {ExampleContext::fluid_smoke, 'B', "fluid-smoke", "Fluid-Smoke",
+    {ExampleContext::fluid_smoke, "fluid-smoke", "Fluid-Smoke",
         Component::fluid_particles | Component::smoke},
-    {ExampleContext::cloth_smoke, 'C', "cloth-smoke", "Cloth-Smoke",
+    {ExampleContext::cloth_soft_body, "cloth-softbody", "Cloth-Softbody",
+        Component::soft_body | Component::cloth | Component::rigid_bodies},
+    {ExampleContext::cloth_rope, "cloth-rope", "Cloth-Rope",
+        Component::cloth | Component::rope | Component::rigid_bodies},
+    {ExampleContext::cloth_smoke, "cloth-smoke", "Cloth-Smoke",
         Component::cloth | Component::smoke | Component::rigid_bodies},
-    {ExampleContext::soft_body_smoke, 'D', "softbody-smoke", "Softbody-Smoke",
+    {ExampleContext::soft_body_rope, "softbody-rope", "Softbody-Rope",
+        Component::soft_body | Component::rope | Component::rigid_bodies},
+    {ExampleContext::soft_body_smoke, "softbody-smoke", "Softbody-Smoke",
         Component::soft_body | Component::smoke | Component::rigid_bodies},
-    {ExampleContext::rope_smoke, 'E', "rope-smoke", "Rope-Smoke",
+    {ExampleContext::rope_smoke, "rope-smoke", "Rope-Smoke",
         Component::rope | Component::smoke | Component::rigid_bodies},
 }};
 
@@ -78,28 +77,27 @@ void test_context_catalog()
         const auto& expected = expected_contexts[index];
         const auto& actual = meshprep::sim::example_contexts[index];
         expect(actual.id == expected.id, "context id/order changed");
-        expect(actual.key == expected.key, "context key/order changed");
         expect(actual.slug == expected.slug, "context slug changed");
         expect(actual.title == expected.title, "context title changed");
         expect(bits(actual.components) == bits(expected.components),
             "context component set changed or gained an unexpected component");
-        expect(meshprep::sim::find_example_context(expected.key) == &actual,
+        expect(meshprep::sim::find_example_context(expected.slug) == &actual,
             "lookup must return the catalog entry, not a copy");
     }
 
-    const auto* softbody_rope = meshprep::sim::find_example_context('0');
+    const auto* softbody_rope = meshprep::sim::find_example_context("softbody-rope");
     expect(softbody_rope != nullptr &&
             softbody_rope->id == ExampleContext::soft_body_rope,
-        "context 0 must expose Softbody-Rope");
-    const auto* bridge = meshprep::sim::find_example_context('9');
+        "catalog must expose Softbody-Rope by slug");
+    const auto* bridge = meshprep::sim::find_example_context("cloth-rope");
     expect(bridge != nullptr && bridge->id == ExampleContext::cloth_rope,
-        "context 9 must expose Cloth-Rope");
-    expect(meshprep::sim::find_example_context('x') == nullptr,
-        "unknown context key must be rejected");
-    const auto* smoke = meshprep::sim::find_example_context('A');
+        "catalog must expose Cloth-Rope by slug");
+    expect(meshprep::sim::find_example_context("unknown") == nullptr,
+        "unknown context slug must be rejected");
+    const auto* smoke = meshprep::sim::find_example_context("smoke");
     expect(smoke != nullptr && smoke->id == ExampleContext::smoke &&
             meshprep::sim::has_component(smoke->components, Component::smoke),
-        "context A must expose the smoke component");
+        "smoke recipe must expose the smoke component");
     expect(!meshprep::sim::has_component(Component::none, Component::cloth),
         "empty component set must not report cloth");
     expect(meshprep::sim::has_component(

@@ -8,28 +8,35 @@ gallery application.
 1. `ParallelMater::geometry` builds normals and deterministic hierarchies.
 2. `ParallelMater::physics` owns general fixed-topology lattice state and
    exposes borrowed CUDA node/bond views.
-3. `ParallelMater::game` is CUDA-free: component flags, ten recipes, goals,
+3. `ParallelMater::game` is CUDA-free: component flags, fifteen recipes, goals,
    validation, and campaign progression.
 4. `ParallelMater::gallery` adapts the production solvers behind
    `GallerySimulation` and borrowed render views.
 5. `parallel-mater-lab` supplies GLFW input, OpenGL/CUDA rendering, HUD,
    capture/playback, and authored minigame controls.
 
-The numbered scenes do not have ten independent solver implementations. They
-compose four components—Water, Cloth, Softbody, and Rope—with rigid fixtures:
+The gallery recipes do not have independent solver implementations. They
+compose Water, Cloth, Softbody, Rope, and Smoke with rigid fixtures. Catalog
+order groups individual simulations first, then fluid pairs, then the remaining
+cloth, soft-body, and rope pairs:
 
-| Key | Recipe | Components |
-| --- | --- | --- |
-| `1` | Water | fluid + rigid |
-| `2` | Cloth | cloth + rigid |
-| `3` | Softbody | softbody + rigid |
-| `4` | Rope | rope + rigid |
-| `5` | Water-Cloth | fluid + water skin + rigid |
-| `6` | Water-Softbody | fluid + softbody + rigid |
-| `7` | Water-Rope | fluid + rope + rigid |
-| `8` | Cloth-Softbody | cloth + softbody + rigid |
-| `9` | Cloth-Rope | cloth tiles + rope links + rigid |
-| `0` | Softbody-Rope | softbody + rope bridge + rigid |
+| Recipe | Components |
+| --- | --- |
+| Water | fluid + rigid |
+| Cloth | cloth + rigid |
+| Softbody | softbody + rigid |
+| Rope | rope + rigid |
+| Smoke | smoke + rigid |
+| Water-Cloth | fluid + water skin + rigid |
+| Water-Softbody | fluid + softbody + rigid |
+| Water-Rope | fluid + rope + rigid |
+| Fluid-Smoke | fluid + smoke |
+| Cloth-Softbody | cloth + softbody + rigid |
+| Cloth-Rope | cloth tiles + rope links + rigid |
+| Cloth-Smoke | cloth + smoke + rigid |
+| Softbody-Rope | softbody + rope bridge + rigid |
+| Softbody-Smoke | softbody + smoke + rigid |
+| Rope-Smoke | rope + smoke + rigid |
 
 ## Ownership and stepping
 

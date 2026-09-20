@@ -124,7 +124,7 @@ separate from the general physics contract.
 
 ```bash
 ./build/parallel-mater-gallery-example
-./build/parallel-mater-lab --context 6
+./build/parallel-mater-lab --context water-softbody
 ```
 
 See [`examples/simulation_contexts.cu`](examples/simulation_contexts.cu) for
