@@ -51,10 +51,14 @@ target_include_directories(
     parallel-mater-geometry
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_compile_features(parallel-mater-geometry PUBLIC cxx_std_20)
 target_compile_options(
-    parallel-mater-geometry PUBLIC $<$<COMPILE_LANGUAGE:CUDA>:--std=c++20>)
+    parallel-mater-geometry
+    PUBLIC
+        $<$<COMPILE_LANGUAGE:CUDA>:--std=c++20>
+        $<$<COMPILE_LANGUAGE:CXX>:-I${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}>)
 target_compile_definitions(
     parallel-mater-geometry PRIVATE PARALLEL_MATER_ENABLE_NVTX=$<BOOL:${PARALLEL_MATER_ENABLE_NVTX}>)
 target_compile_options(
