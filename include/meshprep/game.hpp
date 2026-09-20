@@ -20,6 +20,7 @@ enum class Component : std::uint32_t {
     rigid_bodies = 1U << 4U,
     hand_particles = 1U << 5U,
     rope = 1U << 6U,
+    smoke = 1U << 7U,
 };
 
 [[nodiscard]] constexpr Component operator|(Component left, Component right) noexcept
@@ -45,6 +46,11 @@ enum class ExampleContext : std::uint8_t {
     cloth_soft_body = 8,
     cloth_rope = 9,
     soft_body_rope = 10,
+    smoke = 11,
+    fluid_smoke = 12,
+    cloth_smoke = 13,
+    soft_body_smoke = 14,
+    rope_smoke = 15,
 };
 
 struct ExampleContextInfo {
@@ -55,7 +61,7 @@ struct ExampleContextInfo {
     Component components{};
 };
 
-inline constexpr std::array<ExampleContextInfo, 10> example_contexts{{
+inline constexpr std::array<ExampleContextInfo, 15> example_contexts{{
     {ExampleContext::water, '1', "water", "Water",
         Component::fluid_particles | Component::rigid_bodies},
     {ExampleContext::cloth, '2', "cloth", "Cloth",
@@ -77,6 +83,16 @@ inline constexpr std::array<ExampleContextInfo, 10> example_contexts{{
         Component::cloth | Component::rope | Component::rigid_bodies},
     {ExampleContext::soft_body_rope, '0', "softbody-rope", "Softbody-Rope",
         Component::soft_body | Component::rope | Component::rigid_bodies},
+    {ExampleContext::smoke, 'A', "smoke", "Smoke",
+        Component::smoke | Component::rigid_bodies},
+    {ExampleContext::fluid_smoke, 'B', "fluid-smoke", "Fluid-Smoke",
+        Component::fluid_particles | Component::smoke},
+    {ExampleContext::cloth_smoke, 'C', "cloth-smoke", "Cloth-Smoke",
+        Component::cloth | Component::smoke | Component::rigid_bodies},
+    {ExampleContext::soft_body_smoke, 'D', "softbody-smoke", "Softbody-Smoke",
+        Component::soft_body | Component::smoke | Component::rigid_bodies},
+    {ExampleContext::rope_smoke, 'E', "rope-smoke", "Rope-Smoke",
+        Component::rope | Component::smoke | Component::rigid_bodies},
 }};
 
 [[nodiscard]] constexpr const ExampleContextInfo* find_example_context(char key) noexcept
@@ -97,6 +113,7 @@ enum class GoalKind : std::uint8_t {
     pass_cloth,
     wrap_post,
     catch_treasure,
+    observe,
 };
 
 struct LevelDefinition {
@@ -106,7 +123,7 @@ struct LevelDefinition {
     float target{};
 };
 
-inline constexpr std::array<LevelDefinition, 10> levels{{
+inline constexpr std::array<LevelDefinition, 15> levels{{
     {ExampleContext::water, GoalKind::paint_surface,
         "Cover every bowl tile with blue water.", 1.0F},
     {ExampleContext::cloth, GoalKind::damage_cloth,
@@ -127,6 +144,16 @@ inline constexpr std::array<LevelDefinition, 10> levels{{
         "Roll across the cloth-and-rope floor.", 1.0F},
     {ExampleContext::soft_body_rope, GoalKind::reach_exit,
         "Roll the soft-body sphere across the suspended rope bridge.", 1.0F},
+    {ExampleContext::smoke, GoalKind::observe,
+        "Roll through the stream and reveal the turbulent wake.", 0.0F},
+    {ExampleContext::fluid_smoke, GoalKind::observe,
+        "Heat the water into rising steam.", 0.0F},
+    {ExampleContext::cloth_smoke, GoalKind::observe,
+        "Turn the pitched cloth windmill with smoke.", 0.0F},
+    {ExampleContext::soft_body_smoke, GoalKind::observe,
+        "Bend the soft grass with smoke and the rolling sphere.", 0.0F},
+    {ExampleContext::rope_smoke, GoalKind::observe,
+        "Cross the rope bridge while the smoke stream loads it.", 0.0F},
 }};
 
 [[nodiscard]] constexpr const LevelDefinition& level(ExampleContext context) noexcept

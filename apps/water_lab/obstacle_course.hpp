@@ -21,6 +21,8 @@ enum class GalleryArena : unsigned {
     rope_post,
     rope_bridge,
     fishing_tank,
+    hot_pan,
+    grass,
 };
 
 struct CourseContact {
@@ -671,11 +673,13 @@ __host__ __device__ inline void project_gallery_contact(
             p.x = side_limit;
             if (v.x > 0.0F) v.x = 0.0F;
         }
-    } else if ((arena == GalleryArena::ground || arena == GalleryArena::rope_post) &&
+    } else if ((arena == GalleryArena::ground || arena == GalleryArena::grass ||
+                arena == GalleryArena::rope_post) &&
                p.y < course_floor_y + radius) {
         normal = make_float3(0.0F, 1.0F, 0.0F);
         depth = course_floor_y + radius - p.y;
     } else if (arena == GalleryArena::enclosed_box ||
+               arena == GalleryArena::hot_pan ||
                arena == GalleryArena::ground_box ||
                arena == GalleryArena::cloth_basin ||
                arena == GalleryArena::low_ceiling_box ||
@@ -689,7 +693,8 @@ __host__ __device__ inline void project_gallery_contact(
         const float lower_y = arena == GalleryArena::ground_box &&
                 inside_ground_pit(p, radius)
             ? ground_pit_bottom_y + radius
-            : box_center.y - box_half_extents.y + radius;
+            : box_center.y - box_half_extents.y + radius +
+                (arena == GalleryArena::hot_pan ? 0.06F : 0.0F);
         const float3 minimum = make_float3(
             box_center.x - box_half_extents.x + radius,
             lower_y,
@@ -719,7 +724,7 @@ __host__ __device__ inline void project_gallery_contact(
         if (p.y < minimum.y) {
             depth = minimum.y - p.y;
             normal = make_float3(0.0F, 1.0F, 0.0F);
-        } else if (p.y > maximum.y) {
+        } else if (arena != GalleryArena::fishing_tank && p.y > maximum.y) {
             depth = p.y - maximum.y;
             normal = make_float3(0.0F, -1.0F, 0.0F);
         }

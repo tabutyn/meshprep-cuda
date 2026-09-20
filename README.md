@@ -4,18 +4,20 @@ Deterministic CUDA C++ mesh preprocessing: face/vertex normals and eight-way AAB
 
 ParallelMater is an MIT-licensed C++20/CUDA library for applications that keep geometry
 and simulation state on the GPU. Its stable core builds normals and spatial
-hierarchies. Its general-purpose physics layer loads fixed-topology volumetric
-soft bodies, advances deterministic spring constraints and fracture, and lets
-applications insert their own CUDA contact kernels through explicit coupling
-buffers. No renderer, window system, input model, or game rules are required.
+hierarchies. Its general-purpose physics layer provides fixed-topology
+volumetric soft bodies plus deterministic device-resident smoke/advection
+particles. Applications compose contacts and aerodynamic impulses through
+explicit coupling buffers. No renderer, window system, input model, or game
+rules are required.
 
 Stable CUB sorting replaces atomic scatter order, so topology, primitive
 permutation, and corner-normal indices are repeatable on the same supported
 environment.
 
 The repository also includes an optional
-[native CUDA/OpenGL simulation gallery](apps/water_lab/README.md). Its nine
-numbered scenes are integration examples, not the primary library API.
+[native CUDA/OpenGL simulation gallery](apps/water_lab/README.md). Its ten
+numbered scenes and five smoke compositions are integration examples, not the
+primary library API.
 
 Rectangle-edge contact is covered by a deterministic 1,980-frame headless
 experiment. The retained smooth contact shell reduced measured corner vibration
@@ -46,7 +48,7 @@ The implementation began as working production geometry code with two concrete d
 - breadth-first eight-way hierarchy with contiguous child and primitive ranges;
 - generic device-AABB hierarchy input for particles and non-triangle primitives;
 - reusable movable RAII workspace and outputs, with no exceptions across the API;
-- separately linkable `ParallelMater::physics` soft-body solver with application-owned contacts;
+- separately linkable `ParallelMater::physics` soft-body and smoke solvers with application-owned contacts;
 - versioned `.msb` lattice assets, fixed stepping, fracture statistics, live
   material controls, and borrowed CUDA node/bond/surface views;
 - validation for non-finite coordinates, indices, sharp-edge endpoints, and 32-bit limits;
@@ -86,6 +88,14 @@ device views are borrowed and must be reacquired after stepping. A narrow
 package-level timing baseline is recorded in
 [`docs/PHYSICS_PERFORMANCE.md`](docs/PHYSICS_PERFORMANCE.md).
 
+`<parallel_mater/smoke.hpp>` exposes an independent owning `Smoke` solver.
+`step()` advects a deterministic stream with buoyancy, damping, turbulence,
+and analytic sphere obstacles. `couple()` samples the stream onto any borrowed
+device-resident point system and accumulates impulses without knowing about a
+particular cloth, rope, or soft-body implementation. See
+[`examples/smoke.cu`](examples/smoke.cu) and the ownership/coupling contract in
+[`docs/SMOKE_API.md`](docs/SMOKE_API.md).
+
 ## Optional gallery API
 
 When configured with `-DPARALLEL_MATER_BUILD_GALLERY=ON`, the dependency-free
@@ -103,8 +113,11 @@ closed-box rigid-sphere/cloth and rigid-sphere/soft-body examples, a combined
 sphere/particle/catching-cloth scene, a torque-driven water wheel with compliant
 axle-to-rim soft crosses and 32 rigid outer rungs, a load-bearing procedural soft sphere rolling over
 ground cloth into hanging cloth, and a rigid sphere tethered to a central post
-by a procedural Y rope alongside an equal-sized glass rigid sphere in a D12
-cage, and two distinct forty-tile rope bridges carrying a rigid sphere. The native `P`
+by a procedural Y rope alongside an equal-sized glass rigid sphere in an
+eight-corner slack-rope cage, two distinct forty-tile rope bridges carrying a rigid sphere, and five
+smoke compositions covering rigid wake turbulence, water-to-steam presentation,
+pitched cloth blades, soft grass, and a wind-loaded rope bridge. The native `Tab`
+catalog color-codes the systems used by each recipe; the native `P`
 panel exposes active particle count and physical water-skin detail where
 applicable. These scene recipes remain experimental and are deliberately
 separate from the general physics contract.
@@ -144,7 +157,7 @@ ctest --test-dir build --output-on-failure
 ```
 
 The default package build is intentionally small: geometry and general physics
-only. Benchmarks, tests, capture tools, the ten-scene gallery API, and the
+only. Benchmarks, tests, capture tools, the fifteen-scene gallery API, and the
 OpenGL app are opt-in CMake options. CI enables all of them explicitly.
 
 The test and sanitizer commands need a CUDA-capable host. Tests cover smooth and sharp meshes, a sharp cube, disconnected fans, duplicate edges, a non-manifold edge, degenerate faces, identical centroids, invalid inputs, and seeded triangle soup.

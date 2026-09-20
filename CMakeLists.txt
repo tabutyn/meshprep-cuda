@@ -77,6 +77,7 @@ set_target_properties(
 add_library(
     meshprep-physics
     src/physics.cpp
+    src/smoke.cu
     apps/water_lab/soft_body.cu)
 add_library(meshprep::physics ALIAS meshprep-physics)
 add_library(ParallelMater::physics ALIAS meshprep-physics)
@@ -144,6 +145,10 @@ if(PARALLEL_MATER_BUILD_EXAMPLES)
     add_executable(parallel-mater-soft-body-example examples/soft_body.cu)
     target_link_libraries(
         parallel-mater-soft-body-example PRIVATE ParallelMater::physics)
+
+    add_executable(parallel-mater-smoke-example examples/smoke.cu)
+    target_link_libraries(
+        parallel-mater-smoke-example PRIVATE ParallelMater::physics)
 
     if(TARGET meshprep-simulation)
         add_executable(parallel-mater-gallery-example examples/simulation_contexts.cu)
@@ -235,6 +240,15 @@ if(PARALLEL_MATER_BUILD_TESTS)
         PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
     add_test(NAME meshprep-physics-tests COMMAND meshprep-physics-tests)
     set_tests_properties(meshprep-physics-tests PROPERTIES SKIP_RETURN_CODE 77)
+
+    add_executable(meshprep-smoke-tests tests/smoke_tests.cu)
+    target_link_libraries(meshprep-smoke-tests PRIVATE meshprep::physics)
+    target_compile_options(meshprep-smoke-tests PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:-O3;--generate-line-info>)
+    set_target_properties(meshprep-smoke-tests
+        PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
+    add_test(NAME meshprep-smoke-tests COMMAND meshprep-smoke-tests)
+    set_tests_properties(meshprep-smoke-tests PROPERTIES SKIP_RETURN_CODE 77)
 
     add_executable(meshprep-triangle-contact-tests tests/triangle_contact_tests.cu)
     target_compile_options(meshprep-triangle-contact-tests PRIVATE
@@ -391,10 +405,12 @@ install(TARGETS ${meshprep_install_targets} EXPORT ParallelMaterTargets)
 install(FILES
     include/meshprep/meshprep.hpp
     include/meshprep/physics.hpp
+    include/meshprep/smoke.hpp
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/meshprep)
 install(FILES
     include/parallel_mater/geometry.hpp
     include/parallel_mater/physics.hpp
+    include/parallel_mater/smoke.hpp
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/parallel_mater)
 if(TARGET meshprep-game)
     install(FILES include/meshprep/game.hpp

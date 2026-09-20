@@ -1652,7 +1652,7 @@ __device__ bool intersect_gallery_opaque(
                     dot(hit_normal, normalize(make_float3(-0.48F, 0.84F, 0.34F)))));
             hit_any = true;
         }
-        // The D12 cage contains a second real rigid sphere. It is analytic in
+        // The compact rope cage contains a second real rigid sphere. It is analytic in
         // the renderer just like the primary sphere; the rope graph is no
         // longer abused as a deformable glass surface.
         if (collider.secondary_sphere_radius > 0.0F &&
@@ -1723,7 +1723,8 @@ __device__ bool intersect_gallery_opaque(
         }
         return hit_any;
     }
-    if (arena == GalleryArena::slope || arena == GalleryArena::ground) {
+    if (arena == GalleryArena::slope || arena == GalleryArena::ground ||
+        arena == GalleryArena::grass) {
         const float gradient = arena == GalleryArena::slope ? slope_gradient : 0.0F;
         const float height = arena == GalleryArena::slope
             ? slope_start_y : course_floor_y;
@@ -1741,7 +1742,8 @@ __device__ bool intersect_gallery_opaque(
             : make_float3(0.08F, 0.10F, 0.14F);
         return true;
     }
-    if (arena == GalleryArena::enclosed_box || arena == GalleryArena::cloth_basin ||
+    if (arena == GalleryArena::enclosed_box || arena == GalleryArena::hot_pan ||
+        arena == GalleryArena::cloth_basin ||
         arena == GalleryArena::ground_box || arena == GalleryArena::low_ceiling_box ||
         arena == GalleryArena::fishing_tank) {
         // The camera normally lives inside this room. Intersect the first of
@@ -1811,6 +1813,26 @@ __device__ bool intersect_gallery_opaque(
                 ? make_float3(0.48F, 0.54F, 0.61F)
                 : make_float3(0.075F, 0.095F, 0.13F),
                 0.38F + 0.62F * fabsf(wall_normal.y));
+        }
+        if (arena == GalleryArena::hot_pan) {
+            float pan_distance{};
+            float3 pan_normal{};
+            if (intersect_box(ray,
+                    make_float3(gallery_box_center.x,-1.04F,gallery_box_center.z),
+                    make_float3(1.65F,0.05F,1.20F),
+                    wall ? distance : maximum_distance,
+                    pan_distance,pan_normal)) {
+                const float3 point=add(ray.origin,multiply(ray.direction,pan_distance));
+                const float dx=point.x-gallery_box_center.x;
+                const float dz=point.z-gallery_box_center.z;
+                const float radial=sqrtf(dx*dx+dz*dz);
+                const bool burner=fabsf(radial-0.82F)<0.08F || radial<0.22F;
+                wall=true;
+                distance=pan_distance;
+                color=multiply(burner ? make_float3(0.92F,0.12F,0.025F)
+                                      : make_float3(0.075F,0.085F,0.095F),
+                    0.32F+0.68F*fabsf(pan_normal.y));
+            }
         }
         if (arena == GalleryArena::low_ceiling_box) {
             constexpr int grate_lines = 9;
@@ -2089,9 +2111,13 @@ __device__ bool trace_opaque_scene(const Ray& ray, const OrientedBox& collider,
                 outside || painted ? make_float3(0.035F,0.30F,0.92F)
                                    : make_float3(0.86F,0.06F,0.045F),
                 false,0);
+        } else if (arena == GalleryArena::grass) {
+            color=shade_colored_surface(ray,body,
+                make_float3(0.08F,0.58F,0.16F),false,false);
         } else {
             color = shade_soft_body(ray, body,
-                arena == GalleryArena::ground || arena == GalleryArena::ground_box,
+                arena == GalleryArena::ground || arena == GalleryArena::grass ||
+                    arena == GalleryArena::ground_box,
                 crust, arena == GalleryArena::enclosed_box);
         }
         // Context 4 uses a cheap single-hit translucency cue: the polished
@@ -3149,12 +3175,16 @@ float RayTracer::render_hybrid(
         launch.operator()<false, GalleryArena::slope>();
     else if (arena == GalleryArena::ground)
         launch.operator()<false, GalleryArena::ground>();
+    else if (arena == GalleryArena::grass)
+        launch.operator()<false, GalleryArena::grass>();
     else if (arena == GalleryArena::ground_box)
         launch.operator()<false, GalleryArena::ground_box>();
     else if (arena == GalleryArena::low_ceiling_box)
         launch.operator()<false, GalleryArena::low_ceiling_box>();
     else if (arena == GalleryArena::enclosed_box)
         launch.operator()<false, GalleryArena::enclosed_box>();
+    else if (arena == GalleryArena::hot_pan)
+        launch.operator()<false, GalleryArena::hot_pan>();
     else if (arena == GalleryArena::cloth_basin)
         launch.operator()<false, GalleryArena::cloth_basin>();
     else if (arena == GalleryArena::water_wheel)

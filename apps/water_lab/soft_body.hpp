@@ -110,7 +110,7 @@ struct SoftBodyOptions {
     // Relative mass of the leading cross-contact body. It changes only the
     // source/target correction split; the target cloth keeps `voxel_mass`.
     float cross_source_mass_multiplier{1.0F};
-    // Optional closed D12 cage range used by the rope example. Node contacts
+    // Optional closed eight-node cage range used by the rope example. Node contacts
     // provide ordinary coupling; the face half-spaces provide containment.
     std::uint32_t cage_first_node{};
     std::uint32_t cage_node_count{};
@@ -122,6 +122,9 @@ struct SoftBodyOptions {
     // Spatial-cell barrier between non-bonded voxels, including detached
     // fragments and separate post instances. Kept optional for cloth recipes.
     bool unbonded_voxel_collisions{};
+    // Edges touching an earlier node are structural and cannot fracture.
+    // Used by merged soft-body/cloth fixtures so only the cloth tears.
+    std::uint32_t fracture_node_first{};
     // Impact cloth can accumulate fracture damage from the unprojected contact
     // strain. Load-bearing volumes use converged residual strain instead.
     bool fracture_before_projection{};
@@ -307,7 +310,7 @@ public:
         float attachment_distance, float3 gravity,
         cudaStream_t stream = nullptr);
     // Context 4: one tethered sphere and one independent finite-mass sphere
-    // contained by the D12 rope cage. Both contact the same graph.
+    // contained by the rope cage. Both contact the same graph.
     [[nodiscard]] SoftBodyTimings step_with_tethered_rigid_spheres(
         RigidSphereState& tethered_sphere, std::uint32_t endpoint_node,
         float attachment_distance, RigidSphereState& caged_sphere,

@@ -26,7 +26,7 @@ struct ExpectedContext {
     Component components;
 };
 
-constexpr std::array<ExpectedContext, 10> expected_contexts{{
+constexpr std::array<ExpectedContext, 15> expected_contexts{{
     {ExampleContext::water, '1', "water", "Water",
         Component::fluid_particles | Component::rigid_bodies},
     {ExampleContext::cloth, '2', "cloth", "Cloth",
@@ -48,6 +48,16 @@ constexpr std::array<ExpectedContext, 10> expected_contexts{{
         Component::cloth | Component::rope | Component::rigid_bodies},
     {ExampleContext::soft_body_rope, '0', "softbody-rope", "Softbody-Rope",
         Component::soft_body | Component::rope | Component::rigid_bodies},
+    {ExampleContext::smoke, 'A', "smoke", "Smoke",
+        Component::smoke | Component::rigid_bodies},
+    {ExampleContext::fluid_smoke, 'B', "fluid-smoke", "Fluid-Smoke",
+        Component::fluid_particles | Component::smoke},
+    {ExampleContext::cloth_smoke, 'C', "cloth-smoke", "Cloth-Smoke",
+        Component::cloth | Component::smoke | Component::rigid_bodies},
+    {ExampleContext::soft_body_smoke, 'D', "softbody-smoke", "Softbody-Smoke",
+        Component::soft_body | Component::smoke | Component::rigid_bodies},
+    {ExampleContext::rope_smoke, 'E', "rope-smoke", "Rope-Smoke",
+        Component::rope | Component::smoke | Component::rigid_bodies},
 }};
 
 int failures{};
@@ -62,7 +72,7 @@ void expect(bool condition, const char* message)
 void test_context_catalog()
 {
     expect(meshprep::sim::example_contexts.size() == expected_contexts.size(),
-        "catalog must contain the ten component and pair contexts");
+        "catalog must contain component, pair, and smoke contexts");
 
     for (std::size_t index = 0; index < expected_contexts.size(); ++index) {
         const auto& expected = expected_contexts[index];
@@ -85,7 +95,11 @@ void test_context_catalog()
     expect(bridge != nullptr && bridge->id == ExampleContext::cloth_rope,
         "context 9 must expose Cloth-Rope");
     expect(meshprep::sim::find_example_context('x') == nullptr,
-        "non-number context key must be rejected");
+        "unknown context key must be rejected");
+    const auto* smoke = meshprep::sim::find_example_context('A');
+    expect(smoke != nullptr && smoke->id == ExampleContext::smoke &&
+            meshprep::sim::has_component(smoke->components, Component::smoke),
+        "context A must expose the smoke component");
     expect(!meshprep::sim::has_component(Component::none, Component::cloth),
         "empty component set must not report cloth");
     expect(meshprep::sim::has_component(

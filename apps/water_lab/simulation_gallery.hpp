@@ -28,7 +28,7 @@ inline constexpr float3 catch_cloth_center = cloth_basin_center;
 inline constexpr std::uint32_t default_rope_nodes = 64U;
 inline constexpr float rope_length = 4.0F;
 
-// The second branch terminates at the center of the D12 rope cage. Keeping
+// The second branch terminates at the center of the compact rope cage. Keeping
 // this authored transform in one helper lets the native app and installed API
 // initialize the same finite-mass glass sphere.
 [[nodiscard]] inline float3 rope_cage_sphere_center(

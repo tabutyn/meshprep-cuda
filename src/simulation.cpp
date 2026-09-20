@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include <meshprep/simulation.hpp>
+#include <meshprep/smoke.hpp>
 
 #include "hybrid_lab.hpp"
 #include "obstacle_course.hpp"
@@ -110,6 +111,31 @@ void check_cuda(cudaError_t status, const char* operation)
     return nullptr;
 }
 
+physics::SmokeOptions smoke_options(ExampleContext context,float timestep)
+{
+    physics::SmokeOptions options;
+    options.timestep=timestep;
+    options.particle_count=6'000U;
+    options.capacity=12'000U;
+    options.emitter_center={-2.15F,-0.30F,-1.20F};
+    options.emitter_half_extents={0.05F,0.48F,0.52F};
+    options.initial_velocity={2.8F,0.12F,0.0F};
+    if (context==ExampleContext::fluid_smoke) {
+        options.particle_count=7'500U;
+        options.emitter_center={0.0F,-0.78F,-1.20F};
+        options.emitter_half_extents={1.15F,0.04F,0.78F};
+        options.initial_velocity={0.0F,0.42F,0.0F};
+        options.buoyancy=1.85F;
+        options.turbulence_strength=0.72F;
+    } else if (context==ExampleContext::cloth_smoke) {
+        options.emitter_center={0.0F,0.10F,1.10F};
+        options.emitter_half_extents={0.95F,0.95F,0.04F};
+        options.initial_velocity={0.0F,0.05F,-2.9F};
+        options.buoyancy=0.18F;
+    }
+    return options;
+}
+
 template <typename T>
 class DeviceBuffer {
 public:
@@ -207,6 +233,12 @@ struct GallerySimulation::Impl {
             if (!deformable_) {
                 throw std::runtime_error("gallery recipe omitted a declared deformable");
             }
+        }
+        if (has_component(info_->components,Component::smoke)) {
+            smoke_=std::make_unique<physics::Smoke>();
+            waterlab::detail::throw_if_failed(smoke_->initialize(
+                smoke_options(options_.context,physics.fixed_dt),stream),
+                "initialize gallery smoke");
         }
         if (rigid) initialize_rigid_arena(stream);
         check_cuda(cudaStreamSynchronize(stream), "complete gallery initialization");
@@ -317,7 +349,8 @@ struct GallerySimulation::Impl {
         }
         if (options_.context == ExampleContext::rope ||
             options_.context == ExampleContext::cloth_rope ||
-            options_.context == ExampleContext::soft_body_rope) {
+            options_.context == ExampleContext::soft_body_rope ||
+            options_.context == ExampleContext::rope_smoke) {
             constexpr std::array<float3, 8U> cube_vertices{{
                 {-1.0F, -1.0F, -1.0F}, {1.0F, -1.0F, -1.0F},
                 {1.0F, 1.0F, -1.0F}, {-1.0F, 1.0F, -1.0F},
@@ -383,7 +416,11 @@ struct GallerySimulation::Impl {
         if (options_.context == ExampleContext::cloth ||
             options_.context == ExampleContext::soft_body ||
             options_.context == ExampleContext::water_rope ||
-            options_.context == ExampleContext::cloth_soft_body) {
+            options_.context == ExampleContext::cloth_soft_body ||
+            options_.context == ExampleContext::smoke ||
+            options_.context == ExampleContext::fluid_smoke ||
+            options_.context == ExampleContext::cloth_smoke ||
+            options_.context == ExampleContext::soft_body_smoke) {
             constexpr std::array<float3, 8U> cube_vertices{{
                 {-1.0F, -1.0F, -1.0F}, {1.0F, -1.0F, -1.0F},
                 {1.0F, 1.0F, -1.0F}, {-1.0F, 1.0F, -1.0F},
@@ -452,6 +489,11 @@ struct GallerySimulation::Impl {
                 rigid_sphere_view_index_ = std::numeric_limits<std::uint32_t>::max();
                 rigid_count_ = 6U;
             }
+            if (options_.context == ExampleContext::smoke ||
+                options_.context == ExampleContext::fluid_smoke ||
+                options_.context == ExampleContext::cloth_smoke ||
+                options_.context == ExampleContext::soft_body_smoke)
+                rigid_count_=2U;
             return;
         }
         if (options_.context == ExampleContext::water_soft_body) {
@@ -790,11 +832,14 @@ struct GallerySimulation::Impl {
     {
         if (rigid_sphere_view_index_ != std::numeric_limits<std::uint32_t>::max()) {
             rigid_views_[rigid_sphere_view_index_].translation = rigid_sphere_.center;
+            rigid_views_[rigid_sphere_view_index_].orientation = rigid_sphere_.orientation;
         }
         if (caged_rigid_sphere_view_index_ !=
             std::numeric_limits<std::uint32_t>::max()) {
             rigid_views_[caged_rigid_sphere_view_index_].translation =
                 caged_rigid_sphere_.center;
+            rigid_views_[caged_rigid_sphere_view_index_].orientation =
+                caged_rigid_sphere_.orientation;
         }
         if (rigid_wheel_first_fin_ != std::numeric_limits<std::uint32_t>::max()) {
             constexpr float two_pi = 6.28318530717958647692F;
@@ -845,6 +890,12 @@ struct GallerySimulation::Impl {
                 hybrid_->particle_velocities(), hybrid_->statistics().particle_count,
                 hybrid_->particle_radius()};
         }
+        if (smoke_) {
+            const physics::SmokeParticleView view=smoke_->particles();
+            particle_views_[particle_count_++]={view.positions,view.velocities,
+                view.count,view.radius,options_.context==ExampleContext::fluid_smoke
+                    ? ParticleMaterial::steam : ParticleMaterial::smoke};
+        }
         if (hybrid_ && has_component(info_->components, Component::water_skin)) {
             surface_views_[surface_count_++] = {hybrid_->skin_mesh(),
                 hybrid_->skin_normals().vertex_normals(), nullptr, nullptr};
@@ -894,11 +945,31 @@ struct GallerySimulation::Impl {
             statistics_.broken_connection_count = deformable.broken_edge_count;
             statistics_.allocated_bytes += deformable_->allocated_bytes();
         }
+        if (smoke_) {
+            const auto smoke=smoke_->statistics();
+            statistics_.frame_index=std::max(statistics_.frame_index,smoke.frame_index);
+            statistics_.particle_count+=smoke_->particles().count;
+            statistics_.finite_failure_count+=smoke.finite_failure_count;
+            statistics_.allocated_bytes+=smoke.allocated_bytes;
+        }
     }
 
     void advance(cudaStream_t stream)
     {
         float gpu_time = 0.0F;
+        physics::SmokeTimings smoke_timing{};
+        if (smoke_) {
+            physics::SmokeSphereCollider collider{
+                rigid_sphere_.center,rigid_sphere_.velocity,
+                rigid_sphere_.radius,0.2F};
+            const bool collide=options_.context==ExampleContext::smoke ||
+                options_.context==ExampleContext::soft_body_smoke ||
+                options_.context==ExampleContext::rope_smoke;
+            waterlab::detail::throw_if_failed(smoke_->step(
+                {{},collide ? &collider : nullptr,collide ? 1U : 0U},
+                smoke_timing,stream),"advance gallery smoke");
+            gpu_time+=smoke_timing.integrate_ms;
+        }
         if (hybrid_) {
             if (staged_particle_target_>hybrid_->options().particle_count) {
                 staged_spawn_frame_=std::min(300U,staged_spawn_frame_+1U);
@@ -917,7 +988,12 @@ struct GallerySimulation::Impl {
                     ? &water_wheel_ : nullptr,
                 options_.context == ExampleContext::water_soft_body
                     ? &resolved_physics_.gravity : nullptr);
-            gpu_time = timing.gpu_total_ms();
+            gpu_time += timing.gpu_total_ms();
+            if (options_.context==ExampleContext::fluid_smoke &&
+                hybrid_->statistics().particle_count>256U &&
+                (hybrid_->statistics().frame_index&1U)==0U)
+                hybrid_->resize_particles(std::max(256U,
+                    hybrid_->statistics().particle_count-16U),stream);
         } else if (deformable_) {
             const bool rolling_rigid = options_.context == ExampleContext::cloth ||
                 options_.context == ExampleContext::soft_body ||
@@ -925,7 +1001,57 @@ struct GallerySimulation::Impl {
                 options_.context == ExampleContext::cloth_rope ||
                 options_.context == ExampleContext::soft_body_rope;
             waterlab::SoftBodyTimings timing{};
-            if (options_.context == ExampleContext::rope) {
+            if (smoke_) {
+                if (options_.context==ExampleContext::cloth_smoke) {
+                    deformable_->set_pinned_rotation_z(
+                        make_float3(0.0F,0.15F,-1.20F),smoke_rotor_angle_,stream);
+                }
+                deformable_->begin_frame(stream);
+                const std::uint32_t substeps=resolved_physics_.solver_iterations;
+                const float dt=resolved_physics_.fixed_step.timestep/
+                    static_cast<float>(substeps);
+                const bool rolling=options_.context==ExampleContext::soft_body_smoke ||
+                    options_.context==ExampleContext::rope_smoke;
+                const float3 body_gravity=options_.context==ExampleContext::soft_body_smoke
+                    ? resolved_physics_.gravity : make_float3(0,0,0);
+                for (std::uint32_t substep=0U;substep<substeps;++substep) {
+                    if (rolling) {
+                        rigid_sphere_.velocity.x+=resolved_physics_.gravity.x*dt;
+                        rigid_sphere_.velocity.y+=resolved_physics_.gravity.y*dt;
+                        rigid_sphere_.velocity.z+=resolved_physics_.gravity.z*dt;
+                        rigid_sphere_.center.x+=rigid_sphere_.velocity.x*dt;
+                        rigid_sphere_.center.y+=rigid_sphere_.velocity.y*dt;
+                        rigid_sphere_.center.z+=rigid_sphere_.velocity.z*dt;
+                        waterlab::project_gallery_contact(rigid_sphere_.center,
+                            rigid_sphere_.velocity,rigid_sphere_.radius,
+                            waterlab::gallery::make_context_physics(
+                                options_.context).arena);
+                    }
+                    deformable_->prepare_substep(dt,body_gravity,stream);
+                    if (rolling)
+                        deformable_->contact_rigid_sphere_substep(
+                            rigid_sphere_,dt,stream);
+                    const auto nodes=deformable_->voxel_view();
+                    waterlab::detail::throw_if_failed(smoke_->couple({
+                        nodes.positions,nodes.velocities,nodes.external_impulses,
+                        nodes.voxel_count,nodes.inverse_voxel_mass,
+                        nodes.voxel_radius,dt},5.0F,smoke_timing,stream),
+                        "couple gallery smoke");
+                    deformable_->finish_substep(dt,body_gravity,stream);
+                }
+                timing=deformable_->finish_frame(stream);
+                if (options_.context==ExampleContext::cloth_smoke) {
+                    const float torque=deformable_->wheel_rim_reaction_torque(
+                        make_float3(0.0F,0.15F,-1.20F),stream);
+                    const float dt=resolved_physics_.fixed_step.timestep;
+                    const float acceleration=std::clamp(
+                        0.00025F*torque,-8.0F,8.0F);
+                    smoke_rotor_angular_velocity_=std::clamp(
+                        (smoke_rotor_angular_velocity_+acceleration*dt)/
+                            (1.0F+0.8F*dt),-3.0F,3.0F);
+                    smoke_rotor_angle_+=smoke_rotor_angular_velocity_*dt;
+                }
+            } else if (options_.context == ExampleContext::rope) {
                 const auto lattice = deformable_->lattice_view();
                 timing = deformable_->step_with_tethered_rigid_spheres(
                     rigid_sphere_, lattice.voxels_per_instance - 1U,
@@ -942,7 +1068,20 @@ struct GallerySimulation::Impl {
             } else {
                 timing = deformable_->step(resolved_physics_.gravity, stream);
             }
-            gpu_time = timing.gpu_total_ms();
+            gpu_time += timing.gpu_total_ms()+smoke_timing.couple_ms;
+        } else if (smoke_ && options_.context==ExampleContext::smoke) {
+            const float dt=resolved_physics_.fixed_step.timestep;
+            rigid_sphere_.velocity.x+=resolved_physics_.gravity.x*dt;
+            rigid_sphere_.velocity.y+=resolved_physics_.gravity.y*dt;
+            rigid_sphere_.velocity.z+=resolved_physics_.gravity.z*dt;
+            rigid_sphere_.center.x+=rigid_sphere_.velocity.x*dt;
+            rigid_sphere_.center.y+=rigid_sphere_.velocity.y*dt;
+            rigid_sphere_.center.z+=rigid_sphere_.velocity.z*dt;
+            waterlab::project_gallery_contact(rigid_sphere_.center,
+                rigid_sphere_.velocity,rigid_sphere_.radius,
+                waterlab::GalleryArena::ground);
+            waterlab::advance_rigid_sphere_rotation(rigid_sphere_,
+                waterlab::GalleryArena::ground,5.0F,dt);
         }
         refresh_views();
         refresh_statistics(gpu_time);
@@ -966,13 +1105,22 @@ struct GallerySimulation::Impl {
             waterlab::gallery::initialize_context_motion(
                 options_.context, *deformable_);
         }
+        if (smoke_) waterlab::detail::throw_if_failed(
+            smoke_->reset(stream),"reset gallery smoke");
+        smoke_rotor_angle_=0.0F;
+        smoke_rotor_angular_velocity_=0.0F;
         if (options_.context == ExampleContext::cloth ||
             options_.context == ExampleContext::soft_body ||
             options_.context == ExampleContext::water ||
             options_.context == ExampleContext::water_rope ||
             options_.context == ExampleContext::rope ||
             options_.context == ExampleContext::cloth_rope ||
-            options_.context == ExampleContext::soft_body_rope) {
+            options_.context == ExampleContext::soft_body_rope ||
+            options_.context == ExampleContext::smoke ||
+            options_.context == ExampleContext::fluid_smoke ||
+            options_.context == ExampleContext::cloth_smoke ||
+            options_.context == ExampleContext::soft_body_smoke ||
+            options_.context == ExampleContext::rope_smoke) {
             rigid_sphere_ = waterlab::gallery::initial_rigid_sphere(
                 options_.context, rope_node_count());
             if (options_.context==ExampleContext::rope)
@@ -991,14 +1139,17 @@ struct GallerySimulation::Impl {
     const ExampleContextInfo* info_{};
     std::unique_ptr<waterlab::HybridDroplet> hybrid_;
     std::unique_ptr<waterlab::SoftBodyCourse> deformable_;
+    std::unique_ptr<physics::Smoke> smoke_;
     waterlab::RigidSphereState rigid_sphere_{};
     waterlab::RigidSphereState caged_rigid_sphere_{};
     waterlab::WaterWheelState water_wheel_{};
     std::uint32_t staged_particle_target_{};
     std::uint32_t staged_spawn_frame_{};
+    float smoke_rotor_angle_{};
+    float smoke_rotor_angular_velocity_{};
     DeviceBuffer<float3> rigid_vertices_;
     DeviceBuffer<uint3> rigid_triangles_;
-    std::array<ParticleRenderView, 1U> particle_views_{};
+    std::array<ParticleRenderView, 2U> particle_views_{};
     std::array<SurfaceRenderView, 2U> surface_views_{};
     std::array<RigidBodyRenderView, 12U + waterlab::water_wheel_fin_count +
         waterlab::water_wheel_outer_rung_count> rigid_views_{};

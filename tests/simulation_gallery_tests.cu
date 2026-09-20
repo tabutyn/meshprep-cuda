@@ -43,10 +43,10 @@ bool finite(const waterlab::HybridTimings& timings)
 
 void host_catalog_test()
 {
-    constexpr std::array<std::uint32_t, 10U> expected_component_counts{
-        2U, 2U, 2U, 2U, 4U, 3U, 3U, 3U, 3U, 3U};
-    constexpr std::array<char, 10U> expected_keys{
-        '1','2','3','4','5','6','7','8','9','0'};
+    constexpr std::array<std::uint32_t, 15U> expected_component_counts{
+        2U,2U,2U,2U,4U,3U,3U,3U,3U,3U,2U,2U,3U,3U,3U};
+    constexpr std::array<char, 15U> expected_keys{
+        '1','2','3','4','5','6','7','8','9','0','A','B','C','D','E'};
     for (std::size_t index = 0U;
          index < meshprep::sim::example_contexts.size(); ++index) {
         const auto context = static_cast<ExampleContext>(index + 1U);
@@ -61,6 +61,7 @@ void host_catalog_test()
                  || context == ExampleContext::water
                  || context == ExampleContext::water_rope
                  || context == ExampleContext::water_soft_body
+                 || context == ExampleContext::fluid_smoke
                     ? waterlab::FluidDisplay::Surface
                     : waterlab::FluidDisplay::Particles),
             "gallery context has the wrong default display");
@@ -86,6 +87,7 @@ void host_catalog_test()
         require(options.particle_repulsion ==
                 (context == ExampleContext::water ? 50.0F :
                  context == ExampleContext::water_rope ? 120.0F :
+                 context == ExampleContext::fluid_smoke ? 60.0F :
                  course ? 20.0F : waterlab::HybridOptions{}.particle_repulsion),
             "gallery context selected the wrong material preset");
         if (course) {
@@ -118,6 +120,12 @@ void host_catalog_test()
         if (context == ExampleContext::cloth_rope)
             require(options.arena == waterlab::GalleryArena::rope_bridge,
                 "context 9 omitted its cloth-rope floor arena");
+        if (context == ExampleContext::fluid_smoke)
+            require(options.arena == waterlab::GalleryArena::hot_pan,
+                "fluid-smoke omitted its heated-pan arena");
+        if (context == ExampleContext::soft_body_smoke)
+            require(options.arena == waterlab::GalleryArena::grass,
+                "softbody-smoke omitted its green ground-and-grass arena");
     }
 
     waterlab::gallery::ContextPhysicsOverrides overrides;
@@ -315,12 +323,12 @@ void gpu_fixture_test()
         std::uint32_t instances;
         std::uint32_t voxels;
     };
-    constexpr std::array<ExpectedFixture, 10U> expected{{
+    constexpr std::array<ExpectedFixture, 15U> expected{{
         {0U, 0U}, {1U, 840U}, {20U, 20'000U}, {1U, 84U},
         {0U, 0U}, {1U, 870U},
         {1U, waterlab::gallery::default_rope_nodes}, {1U, 3'176U},
-        {1U, waterlab::rope_bridge_columns * waterlab::rope_bridge_rows * 36U},
-        {1U, waterlab::rope_bridge_columns * waterlab::rope_bridge_rows * 256U},
+        {1U, 2'232U}, {1U, 11'032U},
+        {0U,0U},{0U,0U},{1U,312U},{60U,60'000U},{1U,2'232U},
     }};
 
     for (std::size_t index = 0U; index < expected.size(); ++index) {
@@ -418,7 +426,8 @@ void gpu_fixture_test()
         } else if (context != ExampleContext::rope &&
                    context != ExampleContext::water_rope &&
                    context != ExampleContext::cloth_rope &&
-                   context != ExampleContext::soft_body_rope) {
+                   context != ExampleContext::soft_body_rope &&
+                   context != ExampleContext::rope_smoke) {
             require(deformable->render_view().member_count == 0U,
                 "strength-member rendering leaked into another context");
         }
@@ -432,20 +441,27 @@ void gpu_fixture_test()
                 "context 8 did not expose its rope nodes and structural links");
         }
         if (context == ExampleContext::cloth_rope ||
+            context == ExampleContext::rope_smoke ||
             context == ExampleContext::soft_body_rope) {
             const auto lattice = deformable->lattice_view();
-            const std::uint32_t nodes_per_tile=
-                context==ExampleContext::soft_body_rope ? 256U : 36U;
+            const bool dense=context==ExampleContext::soft_body_rope;
+            const std::uint32_t nodes_per_tile=dense ? 256U : 36U;
+            constexpr std::uint32_t shared_edges =
+                (waterlab::rope_bridge_columns-1U)*waterlab::rope_bridge_rows+
+                waterlab::rope_bridge_columns*(waterlab::rope_bridge_rows-1U);
+            constexpr std::uint32_t ropes_per_edge=4U;
+            constexpr std::uint32_t segments_per_rope=4U;
+            constexpr std::uint32_t rope_count=shared_edges*ropes_per_edge;
+            constexpr std::uint32_t intermediate_rope_nodes=
+                rope_count*(segments_per_rope-1U);
             require(lattice.voxels_per_instance ==
                         waterlab::rope_bridge_columns*waterlab::rope_bridge_rows*
-                            nodes_per_tile &&
+                            nodes_per_tile+intermediate_rope_nodes &&
                     deformable->render_view().member_count ==
-                        264U,
-                "bridge context did not expose forty tiles and direct rope links");
-            const std::uint32_t expected_edges = context == ExampleContext::cloth_rope
-                ? 4'664U : 37'464U;
-            const std::uint32_t expected_triangles =
-                context == ExampleContext::cloth_rope ? 2'000U : 18'000U;
+                        rope_count*segments_per_rope,
+                "bridge context did not expose forty tiles and segmented rope links");
+            const std::uint32_t expected_edges=dense ? 38'256U : 5'456U;
+            const std::uint32_t expected_triangles=dense ? 18'000U : 2'000U;
             require(deformable->statistics().total_edge_count == expected_edges &&
                     deformable->render_view().triangle_count == expected_triangles,
                 "bridge does not contain its requested ropes per shared edge");
@@ -460,7 +476,7 @@ void gpu_fixture_test()
                 });
             require(pinned == static_cast<std::ptrdiff_t>(
                         2U*waterlab::rope_bridge_columns*
-                            (context==ExampleContext::soft_body_rope ? 16U : 6U)),
+                            (dense ? 16U : 6U)),
                 "rope bridge must pin only its two land-connected end rows");
         }
 
@@ -1025,6 +1041,41 @@ void gpu_soft_sphere_cloth_contact_test()
     }
     require(reverse_cloth_motion > 0.05F,
         "cloth contact still works from only one authored normal direction");
+
+    // Regression for the interactive SOFT MASS control: a heavier source
+    // must transfer enough pre-projection strain to tear the target cloth.
+    // Source-body bonds are outside the fracture range and must remain whole.
+    auto heavy = waterlab::gallery::make_context_deformable(
+        context, physics, MESHPREP_SOFT_BODY_TEST_ASSET);
+    heavy->set_primary_body_mass(2.0F);
+    for (std::uint32_t frame=0U;frame<180U;++frame) {
+        const auto timing=heavy->step(make_float3(0.0F,-9.60F,-2.75F));
+        require(finite(timing) && heavy->statistics().finite_failure_count==0U,
+            "heavy soft sphere/cloth contact became non-finite");
+    }
+    const auto heavy_lattice=heavy->lattice_view();
+    std::vector<waterlab::SoftBodyEdge> heavy_edges(
+        heavy_lattice.edges_per_instance);
+    std::vector<std::uint8_t> heavy_active(
+        heavy_lattice.edges_per_instance);
+    require(cudaMemcpy(heavy_edges.data(),heavy_lattice.edges,
+                heavy_edges.size()*sizeof(heavy_edges[0]),cudaMemcpyDeviceToHost)==
+                cudaSuccess &&
+            cudaMemcpy(heavy_active.data(),heavy_lattice.active_edges,
+                heavy_active.size(),cudaMemcpyDeviceToHost)==cudaSuccess,
+        "heavy soft sphere/cloth fracture arrays were unreadable");
+    std::uint32_t source_breaks{};
+    std::uint32_t target_breaks{};
+    for (std::size_t edge=0U;edge<heavy_edges.size();++edge) {
+        if (heavy_active[edge]!=0U) continue;
+        if (heavy_edges[edge].vertices.x<1'000U ||
+            heavy_edges[edge].vertices.y<1'000U) ++source_breaks;
+        else ++target_breaks;
+    }
+    std::fprintf(stderr,"heavy soft sphere/cloth: target breaks %u, source breaks %u\n",
+        target_breaks,source_breaks);
+    require(target_breaks!=0U && source_breaks==0U,
+        "increased source mass phased through cloth instead of tearing only the target");
 }
 
 void gpu_free_soft_body_gravity_test()
@@ -1336,32 +1387,30 @@ void gpu_rope_rigid_test()
             tethered,enclosed_endpoint,tethered.radius+enclosed_lattice.voxel_radius,
             glass,physics.gravity);
         require(finite(timing) && enclosed->statistics().finite_failure_count==0U,
-            "closed D12 rope cage became non-finite");
+            "closed rope cage became non-finite");
     }
     waterlab::SoftBodyState enclosed_state;
     enclosed->capture_state(enclosed_state);
     constexpr std::uint32_t cage_first=30U;
     float3 cage_center{};
-    for (std::uint32_t node=0U;node<20U;++node) {
-        cage_center.x+=enclosed_state.positions[cage_first+node].x/20.0F;
-        cage_center.y+=enclosed_state.positions[cage_first+node].y/20.0F;
-        cage_center.z+=enclosed_state.positions[cage_first+node].z/20.0F;
+    for (std::uint32_t node=0U;node<8U;++node) {
+        cage_center.x+=enclosed_state.positions[cage_first+node].x/8.0F;
+        cage_center.y+=enclosed_state.positions[cage_first+node].y/8.0F;
+        cage_center.z+=enclosed_state.positions[cage_first+node].z/8.0F;
     }
     const float cage_offset=std::hypot(std::hypot(
         glass.center.x-cage_center.x,glass.center.y-cage_center.y),
         glass.center.z-cage_center.z);
-    constexpr std::uint32_t cage_faces[12][5]{
-        {0,1,12,16,17},{0,2,8,10,16},{0,4,8,12,14},
-        {1,3,9,11,17},{1,5,9,12,14},{2,3,13,16,17},
-        {2,6,10,13,15},{3,7,11,13,15},{4,5,14,18,19},
-        {4,6,8,10,18},{5,7,9,11,19},{6,7,15,18,19}};
+    constexpr std::uint32_t cage_faces[6][4]{
+        {0,1,3,2},{4,6,7,5},{0,4,5,1},
+        {2,3,7,6},{0,2,6,4},{1,5,7,3}};
     float maximum_face_violation=-INFINITY;
     for (const auto& face:cage_faces) {
         float3 face_center{};
         for (std::uint32_t corner:face) {
             const float3 p=enclosed_state.positions[cage_first+corner];
-            face_center.x+=p.x/5.0F; face_center.y+=p.y/5.0F;
-            face_center.z+=p.z/5.0F;
+            face_center.x+=p.x/4.0F; face_center.y+=p.y/4.0F;
+            face_center.z+=p.z/4.0F;
         }
         const float3 a=enclosed_state.positions[cage_first+face[0]];
         const float3 b=enclosed_state.positions[cage_first+face[1]];
@@ -1382,10 +1431,10 @@ void gpu_rope_rigid_test()
             signed_distance+glass.radius);
     }
     std::fprintf(stderr,
-        "D12 cage after impact: center offset %.5f, face violation %.6f\n",
+        "rope cage after impact: center offset %.5f, face violation %.6f\n",
         cage_offset,maximum_face_violation);
     require(maximum_face_violation<1.0e-3F,
-        "glass sphere escaped the closed D12 rope enclosure");
+        "glass sphere escaped the closed rope enclosure");
 }
 
 void gpu_rope_bridge_crossing_test()
@@ -1434,6 +1483,42 @@ void gpu_rope_bridge_crossing_test()
         "rope bridge did not carry a moving sphere between fixed lands");
 }
 
+void gpu_segmented_rope_contact_test()
+{
+    const auto context=ExampleContext::cloth_rope;
+    const auto physics=waterlab::gallery::make_context_physics(context);
+    auto bridge=waterlab::gallery::make_context_deformable(
+        context,physics,MESHPREP_SOFT_BODY_TEST_ASSET);
+    auto sphere=waterlab::gallery::initial_rigid_sphere(context);
+    waterlab::SoftBodyState baseline;
+    bridge->capture_state(baseline);
+    constexpr std::uint32_t tile_nodes=
+        waterlab::rope_bridge_columns*waterlab::rope_bridge_rows*36U;
+    require(baseline.positions.size()>tile_nodes,
+        "segmented rope bridge omitted its intermediate rope nodes");
+    for (std::uint32_t frame=0U;frame<240U;++frame) {
+        const auto timing=bridge->step_with_rigid_sphere(sphere,
+            make_float3(0.0F,0.0F,0.0F),make_float3(0.0F,-9.81F,-3.6F));
+        require(finite(timing) && bridge->statistics().finite_failure_count==0U,
+            "segmented rope contact became non-finite");
+    }
+    waterlab::SoftBodyState state;
+    bridge->capture_state(state);
+    float maximum_rope_motion{};
+    for (std::size_t node=tile_nodes;node<state.positions.size();++node) {
+        const float3 delta{state.positions[node].x-baseline.positions[node].x,
+            state.positions[node].y-baseline.positions[node].y,
+            state.positions[node].z-baseline.positions[node].z};
+        maximum_rope_motion=std::max(maximum_rope_motion,
+            std::hypot(std::hypot(delta.x,delta.y),delta.z));
+    }
+    std::fprintf(stderr,
+        "segmented cloth/rope: sphere z %.3f, maximum rope-node motion %.4f\n",
+        sphere.center.z,maximum_rope_motion);
+    require(maximum_rope_motion>0.01F,
+        "rigid sphere loaded cloth tiles but transferred no force to rope segments");
+}
+
 } // namespace
 
 int main()
@@ -1456,6 +1541,7 @@ int main()
         gpu_rolling_rigid_cloth_test();
         gpu_rope_rigid_test();
         gpu_rope_bridge_crossing_test();
+        gpu_segmented_rope_contact_test();
         gpu_rolling_rigid_post_test();
         // Keep the long-running bowl-equilibrium diagnostic last so a known
         // fluid-surface regression cannot hide failures in contexts 3-7.

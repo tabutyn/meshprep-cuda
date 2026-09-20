@@ -243,6 +243,8 @@ void test_every_public_recipe_steps_declared_components()
                 recipe.components, meshprep::sim::Component::fluid_particles) ||
             meshprep::sim::has_component(
                 recipe.components, meshprep::sim::Component::hand_particles);
+        const bool smoke = meshprep::sim::has_component(
+            recipe.components,meshprep::sim::Component::smoke);
         const bool deformable = meshprep::sim::has_component(
                 recipe.components, meshprep::sim::Component::cloth) ||
             meshprep::sim::has_component(
@@ -257,7 +259,9 @@ void test_every_public_recipe_steps_declared_components()
             recipe.components, meshprep::sim::Component::rigid_bodies);
         const auto frame = simulation.render_view();
         const auto stats = simulation.statistics();
-        require(frame.particle_system_count == (particles ? 1U : 0U) &&
+        require(frame.particle_system_count ==
+                    static_cast<std::uint32_t>(particles)+
+                    static_cast<std::uint32_t>(smoke) &&
                 frame.surface_count == static_cast<std::uint32_t>(water_skin) +
                     static_cast<std::uint32_t>(separate_deformable &&
                         recipe.id != meshprep::sim::ExampleContext::rope) &&
@@ -280,10 +284,23 @@ void test_every_public_recipe_steps_declared_components()
                         return 3U;
                     if (recipe.id == meshprep::sim::ExampleContext::soft_body_rope)
                         return 3U;
+                    if (recipe.id == meshprep::sim::ExampleContext::rope_smoke)
+                        return 3U;
+                    if (smoke) return 2U;
                     return 7U;
                 }()) &&
                 frame.lattice_count == (separate_deformable ? 1U : 0U),
             "public gallery recipe exposed an undeclared component");
+        if (smoke) {
+            const auto& smoke_view=frame.particle_systems[
+                particles ? 1U : 0U];
+            require(smoke_view.material==
+                    (recipe.id==meshprep::sim::ExampleContext::fluid_smoke
+                        ? meshprep::sim::ParticleMaterial::steam
+                        : meshprep::sim::ParticleMaterial::smoke) &&
+                    smoke_view.count>=4'096U,
+                "smoke recipe omitted its typed tracer view");
+        }
         for (std::uint32_t body_index = 0U;
              body_index < frame.rigid_body_count; ++body_index) {
             const auto& body = frame.rigid_bodies[body_index];
@@ -364,6 +381,96 @@ void test_lattice_masks_keep_instance_identity()
     require(std::all_of(active.begin(), active.end(), [](std::uint8_t value) {
                 return value == 1U;
             }), "native lattice view did not restore bonds on reset");
+}
+
+void test_smoke_context_dynamics()
+{
+    using meshprep::sim::ExampleContext;
+
+    meshprep::sim::GallerySimulation rolling;
+    meshprep::sim::GallerySimulationOptions rolling_options;
+    rolling_options.context=ExampleContext::smoke;
+    require(rolling.initialize(rolling_options).ok(),
+        "rolling-smoke context failed to initialize");
+    const auto rolling_initial=rolling.render_view().rigid_bodies[0];
+    for (std::uint32_t frame=0U;frame<90U;++frame)
+        require(rolling.step().ok(),"rolling-smoke context failed to step");
+    const auto rolling_final=rolling.render_view().rigid_bodies[0];
+    const float orientation_change=std::fabs(
+        rolling_final.orientation.x-rolling_initial.orientation.x)+
+        std::fabs(rolling_final.orientation.y-rolling_initial.orientation.y)+
+        std::fabs(rolling_final.orientation.z-rolling_initial.orientation.z)+
+        std::fabs(rolling_final.orientation.w-rolling_initial.orientation.w);
+    require(rolling_final.translation.x>rolling_initial.translation.x+0.5F &&
+            orientation_change>0.02F,
+        "smoke sphere slid without the advertised rolling friction");
+
+    meshprep::sim::GallerySimulation boiling;
+    meshprep::sim::GallerySimulationOptions boiling_options;
+    boiling_options.context=ExampleContext::fluid_smoke;
+    require(boiling.initialize(boiling_options).ok(),
+        "fluid-smoke context failed to initialize");
+    const std::uint32_t initial_water=
+        boiling.render_view().particle_systems[0].count;
+    for (std::uint32_t frame=0U;frame<30U;++frame)
+        require(boiling.step().ok(),"fluid-smoke context failed to step");
+    require(boiling.render_view().particle_systems[0].count<initial_water,
+        "heated fluid did not convert any water prefix into steam");
+
+    meshprep::sim::GallerySimulation windmill;
+    meshprep::sim::GallerySimulationOptions windmill_options;
+    windmill_options.context=ExampleContext::cloth_smoke;
+    require(windmill.initialize(windmill_options).ok(),
+        "cloth-smoke context failed to initialize");
+    const auto initial_lattice=windmill.render_view().lattices[0];
+    const auto initial_positions=download(
+        initial_lattice.positions,initial_lattice.node_count);
+    const auto flags=download(initial_lattice.flags,initial_lattice.node_count);
+    for (std::uint32_t frame=0U;frame<120U;++frame)
+        require(windmill.step().ok(),"cloth-smoke context failed to step");
+    const auto final_lattice=windmill.render_view().lattices[0];
+    const auto final_positions=download(
+        final_lattice.positions,final_lattice.node_count);
+    float maximum_hub_motion{};
+    for (std::size_t node=0U;node<flags.size();++node) {
+        if ((flags[node]&meshprep::sim::lattice_node_pinned)==0U) continue;
+        const float3 delta{final_positions[node].x-initial_positions[node].x,
+            final_positions[node].y-initial_positions[node].y,
+            final_positions[node].z-initial_positions[node].z};
+        maximum_hub_motion=std::max(maximum_hub_motion,
+            std::hypot(std::hypot(delta.x,delta.y),delta.z));
+    }
+    require(maximum_hub_motion>0.005F,
+        "smoke-loaded windmill did not rotate its pinned rotor");
+
+    for (const ExampleContext context :
+            {ExampleContext::soft_body_smoke,ExampleContext::rope_smoke}) {
+        meshprep::sim::GallerySimulation composition;
+        meshprep::sim::GallerySimulationOptions options;
+        options.context=context;
+        if (meshprep::sim::requires_soft_body_asset(context))
+            options.soft_body_asset_path=MESHPREP_SIMULATION_TEST_ASSET;
+        require(composition.initialize(options).ok(),
+            "smoke/deformable composition failed to initialize");
+        const auto initial=composition.render_view().lattices[0];
+        const auto positions=download(initial.positions,initial.node_count);
+        const auto node_flags=download(initial.flags,initial.node_count);
+        for (std::uint32_t frame=0U;frame<45U;++frame)
+            require(composition.step().ok(),
+                "smoke/deformable composition failed to step");
+        const auto final=download(composition.render_view().lattices[0].positions,
+            initial.node_count);
+        float maximum_free_motion{};
+        for (std::size_t node=0U;node<positions.size();++node) {
+            if ((node_flags[node]&meshprep::sim::lattice_node_pinned)!=0U) continue;
+            const float3 delta{final[node].x-positions[node].x,
+                final[node].y-positions[node].y,final[node].z-positions[node].z};
+            maximum_free_motion=std::max(maximum_free_motion,
+                std::hypot(std::hypot(delta.x,delta.y),delta.z));
+        }
+        require(maximum_free_motion>0.001F,
+            "smoke/deformable composition remained motionless");
+    }
 }
 
 void test_explicit_physics_overrides()
@@ -498,6 +605,7 @@ int main()
         test_procedural_soft_body_fluid();
         test_lattice_masks_keep_instance_identity();
         test_every_public_recipe_steps_declared_components();
+        test_smoke_context_dynamics();
         test_explicit_physics_overrides();
         test_cuda_failures_retain_the_runtime_error();
         std::puts("simulation runtime API tests passed");

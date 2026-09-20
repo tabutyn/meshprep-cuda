@@ -1929,6 +1929,7 @@ HybridTimings HybridDroplet::step(
             const bool one_sided_cloth = direct_particle_contact &&
                 (arena == GalleryArena::ground || arena == GalleryArena::ground_box ||
                  arena == GalleryArena::enclosed_box ||
+                 arena == GalleryArena::hot_pan ||
                  arena == GalleryArena::cloth_basin);
             skin_soft_body_contact_kernel<<<source_blocks, block_size, 0, stream>>>(
                 direct_particle_contact ? particle_positions_ : skin_positions_,

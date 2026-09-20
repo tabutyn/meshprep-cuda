@@ -49,7 +49,7 @@ std::string_view describe(ConfigError error) noexcept
 {
     switch (error) {
     case ConfigError::none: return "valid";
-    case ConfigError::invalid_context: return "context must be one of the ten gallery recipes";
+    case ConfigError::invalid_context: return "context must be a gallery recipe";
     case ConfigError::invalid_timestep: return "timestep must be finite and positive";
     case ConfigError::invalid_iterations: return "solver iterations must be between 1 and 16";
     case ConfigError::invalid_particle_count: return "particle count must be between 256 and 100000";
@@ -91,6 +91,11 @@ LevelProgress evaluate(ExampleContext context, const LevelMetrics& metrics) noex
     case GoalKind::catch_treasure:
         result.normalized = metrics.treasure_caught
             ? saturated(metrics.treasure_lift_progress) : 0.0F;
+        break;
+    case GoalKind::observe:
+        // Diagnostic examples are intentionally open-ended; choosing one must
+        // never auto-advance while the user is inspecting its behavior.
+        result.normalized = 0.0F;
         break;
     }
     result.won = result.normalized >= 1.0F;

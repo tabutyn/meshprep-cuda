@@ -16,6 +16,12 @@
 
 namespace meshprep::sim {
 
+enum class ParticleMaterial : std::uint8_t {
+    fluid,
+    smoke,
+    steam,
+};
+
 // Read-only CUDA views form the rendering boundary. Simulation implementations
 // retain ownership and may replace their allocations between frames; callers
 // must reacquire views after every simulation step.
@@ -24,6 +30,7 @@ struct ParticleRenderView {
     const float3* velocities{};
     std::uint32_t count{};
     float radius{};
+    ParticleMaterial material{ParticleMaterial::fluid};
 };
 
 struct SurfaceRenderView {
@@ -141,7 +148,8 @@ struct GallerySimulationStatistics {
 [[nodiscard]] constexpr bool requires_soft_body_asset(
     ExampleContext context) noexcept
 {
-    return context == ExampleContext::soft_body;
+    return context == ExampleContext::soft_body ||
+        context == ExampleContext::soft_body_smoke;
 }
 
 // Owning, synchronous fixed-step simulation without a window or renderer.

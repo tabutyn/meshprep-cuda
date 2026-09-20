@@ -432,9 +432,6 @@ SoftBodyAsset make_y_rope_cage(std::uint32_t node_count,float total_length)
     const auto vector_scale=[](float3 value,float scale) {
         return make_float3(value.x*scale,value.y*scale,value.z*scale);
     };
-    const auto vector_length=[](float3 value) {
-        return std::sqrt(value.x*value.x+value.y*value.y+value.z*value.z);
-    };
 
     SoftBodyAsset asset;
     asset.nominal_spacing=std::min(trunk_spacing,branch_spacing);
@@ -453,7 +450,6 @@ SoftBodyAsset make_y_rope_cage(std::uint32_t node_count,float total_length)
         add_node(make_float3(trunk_spacing*node,0.0F,0.0F));
     asset.voxel_flags.front()|=soft_body_voxel_pinned;
     for (std::uint32_t node=0U;node+1U<trunk_nodes;++node) add_edge(node,node+1U);
-    for (std::uint32_t node=0U;node+2U<trunk_nodes;++node) add_edge(node,node+2U);
 
     const std::uint32_t secondary_first=static_cast<std::uint32_t>(
         asset.rest_voxels.size());
@@ -467,50 +463,36 @@ SoftBodyAsset make_y_rope_cage(std::uint32_t node_count,float total_length)
     const float3 cage_center=vector_add(junction,
         vector_scale(secondary_direction,branch_length));
     const std::uint32_t cage_first=static_cast<std::uint32_t>(asset.rest_voxels.size());
-    constexpr float phi=1.61803398875F;
-    constexpr float inv_phi=1.0F/phi;
-    const float3 raw[20]{
-        {-1,-1,-1},{-1,-1,1},{-1,1,-1},{-1,1,1},
-        {1,-1,-1},{1,-1,1},{1,1,-1},{1,1,1},
-        {0,-inv_phi,-phi},{0,-inv_phi,phi},{0,inv_phi,-phi},{0,inv_phi,phi},
-        {-inv_phi,-phi,0},{-inv_phi,phi,0},{inv_phi,-phi,0},{inv_phi,phi,0},
-        {-phi,0,-inv_phi},{-phi,0,inv_phi},{phi,0,-inv_phi},{phi,0,inv_phi}};
-    constexpr float cage_radius=0.42F;
-    for (float3 point:raw)
-        add_node(vector_add(cage_center,
-            vector_scale(point,cage_radius/vector_length(point))));
-    std::vector<uint2> cage_edges;
-    for (std::uint32_t a=0U;a<20U;++a) {
-        std::vector<std::pair<float,std::uint32_t>> nearest;
-        for (std::uint32_t b=0U;b<20U;++b) if (a!=b)
-            nearest.emplace_back(distance(raw[a],raw[b]),b);
-        std::partial_sort(nearest.begin(),nearest.begin()+3U,nearest.end());
-        for (std::uint32_t slot=0U;slot<3U;++slot)
-            cage_edges.push_back(make_uint2(std::min(a,nearest[slot].second),
-                std::max(a,nearest[slot].second)));
+    // Eight corners define containment. Each of the twelve visible ropes gets
+    // one free, outward-bowed midpoint, so it can visibly sag and pull taut
+    // instead of behaving like a rigid cube edge. The former face-clique D12
+    // duplicated overlapping ropes and overconstrained the branch.
+    constexpr float half=0.42F;
+    const float3 raw[8]{
+        {-half,-half,-half},{-half,-half,half},
+        {-half,half,-half},{-half,half,half},
+        {half,-half,-half},{half,-half,half},
+        {half,half,-half},{half,half,half}};
+    for (float3 point:raw) add_node(vector_add(cage_center,point));
+    constexpr std::uint32_t cage_edges[12][2]{
+        {0,1},{0,2},{0,4},{1,3},{1,5},{2,3},
+        {2,6},{3,7},{4,5},{4,6},{5,7},{6,7}};
+    for (const auto& edge:cage_edges) {
+        const std::uint32_t a=cage_first+edge[0];
+        const std::uint32_t b=cage_first+edge[1];
+        const float3 midpoint=vector_scale(
+            vector_add(asset.rest_voxels[a],asset.rest_voxels[b]),0.5F);
+        const float3 radial=make_float3(midpoint.x-cage_center.x,
+            midpoint.y-cage_center.y,midpoint.z-cage_center.z);
+        const float inverse=1.0F/std::max(distance(midpoint,cage_center),1.0e-6F);
+        const std::uint32_t slack=add_node(vector_add(midpoint,
+            vector_scale(radial,0.10F*inverse)));
+        add_edge(a,slack);
+        add_edge(slack,b);
     }
-    std::sort(cage_edges.begin(),cage_edges.end(),[](uint2 a,uint2 b) {
-        return a.x<b.x || (a.x==b.x && a.y<b.y);
-    });
-    cage_edges.erase(std::unique(cage_edges.begin(),cage_edges.end(),
-        [](uint2 a,uint2 b){return a.x==b.x && a.y==b.y;}),cage_edges.end());
-    for (uint2 edge:cage_edges) add_edge(cage_first+edge.x,cage_first+edge.y);
-    // A pentagonal wire loop has free shear modes and can fold open while all
-    // of its edge lengths remain valid. Brace each D12 face as a clique so
-    // the authored enclosure has a real closed, shape-preserving surface for
-    // the hard half-space containment used by the glass sphere.
-    constexpr std::uint32_t cage_faces[12][5]{
-        {0,1,12,16,17},{0,2,8,10,16},{0,4,8,12,14},
-        {1,3,9,11,17},{1,5,9,12,14},{2,3,13,16,17},
-        {2,6,10,13,15},{3,7,11,13,15},{4,5,14,18,19},
-        {4,6,8,10,18},{5,7,9,11,19},{6,7,15,18,19}};
-    for (const auto& face:cage_faces)
-        for (std::uint32_t a=0U;a<5U;++a)
-            for (std::uint32_t b=a+1U;b<5U;++b)
-                add_edge(cage_first+face[a],cage_first+face[b]);
     const std::uint32_t secondary_end=cage_first-1U;
-    for (std::uint32_t link=0U;link<3U;++link)
-        add_edge(secondary_end,cage_first+link);
+    add_edge(secondary_end,cage_first+0U);
+    add_edge(secondary_end,cage_first+2U);
 
     const std::uint32_t primary_first=static_cast<std::uint32_t>(
         asset.rest_voxels.size());
@@ -542,7 +524,7 @@ SoftBodyAsset make_y_rope_cage(std::uint32_t node_count,float total_length)
                 3.14159265358979323846F));
         float best=INFINITY;
         std::uint32_t owner=cage_first;
-        for (std::uint32_t node=0U;node<20U;++node) {
+        for (std::uint32_t node=0U;node<8U;++node) {
             const float d=distance(placed,asset.rest_voxels[cage_first+node]);
             if (d<best) { best=d; owner=cage_first+node; }
         }
@@ -624,26 +606,53 @@ SoftBodyAsset make_direct_tile_rope_bridge(
                     asset.render_triangles.push_back(make_uint3(a,c,b));
                     asset.render_triangles.push_back(make_uint3(a,d,c));
                 }
+        }
+    }
+    // Rope links use four physical segments, not one long spring masquerading
+    // as a rope. Build them after every tile so appended intermediate nodes do
+    // not disturb the fixed contiguous tile ranges used by contact support.
+    const auto add_rope=[&](std::uint32_t a,std::uint32_t b) {
+        std::uint32_t previous=a;
+        const float3 start=asset.rest_voxels[a];
+        const float3 end=asset.rest_voxels[b];
+        for (std::uint32_t segment=1U;segment<4U;++segment) {
+            const float alpha=static_cast<float>(segment)/4.0F;
+            const float3 point=make_float3(
+                start.x+(end.x-start.x)*alpha,
+                start.y+(end.y-start.y)*alpha,
+                start.z+(end.z-start.z)*alpha);
+            const std::uint32_t node=static_cast<std::uint32_t>(
+                asset.rest_voxels.size());
+            asset.rest_voxels.push_back(point);
+            asset.voxel_flags.push_back(soft_body_voxel_surface);
+            asset.render_positions.push_back(point);
+            asset.render_uvs.push_back(make_float2(alpha,0.5F));
+            asset.render_bindings.push_back({make_uint4(node,node,node,node),
+                make_float4(1,0,0,0)});
+            connect(previous,node);
+            member_endpoints.push_back(make_uint2(
+                std::min(previous,node),std::max(previous,node)));
+            previous=node;
+        }
+        connect(previous,b);
+        member_endpoints.push_back(make_uint2(
+            std::min(previous,b),std::max(previous,b)));
+    };
+    for (std::uint32_t row=0U;row<rows;++row) {
+        for (std::uint32_t column=0U;column<columns;++column) {
+            const std::uint32_t base=tile(column,row);
             if (column+1U<columns) {
                 const std::uint32_t right=tile(column+1U,row);
                 for (std::uint32_t rope=0U;rope<4U;++rope) {
                     const std::uint32_t lane=(rope+1U)*(resolution-1U)/5U;
-                    const uint2 edge=make_uint2(base+local(resolution-1U,lane),
-                        right+local(0U,lane));
-                    connect(edge.x,edge.y);
-                    member_endpoints.push_back(make_uint2(
-                        std::min(edge.x,edge.y),std::max(edge.x,edge.y)));
+                    add_rope(base+local(resolution-1U,lane),right+local(0U,lane));
                 }
             }
             if (row+1U<rows) {
                 const std::uint32_t next=tile(column,row+1U);
                 for (std::uint32_t rope=0U;rope<4U;++rope) {
                     const std::uint32_t lane=(rope+1U)*(resolution-1U)/5U;
-                    const uint2 edge=make_uint2(base+local(lane,resolution-1U),
-                        next+local(lane,0U));
-                    connect(edge.x,edge.y);
-                    member_endpoints.push_back(make_uint2(
-                        std::min(edge.x,edge.y),std::max(edge.x,edge.y)));
+                    add_rope(base+local(lane,resolution-1U),next+local(lane,0U));
                 }
             }
         }
@@ -680,8 +689,8 @@ SoftBodyAsset make_rope_bridge(
     if (!four_ropes_per_edge)
         throw std::invalid_argument("tile bridge requires four direct ropes per edge");
     // Six samples per side leave all four attachment lanes inset from the
-    // corners. Each rope is one direct tile-to-tile bond—there are no hidden
-    // rope-to-rope joints.
+    // corners. Each tile-to-tile rope has four physical segments so rigid
+    // contact can load its span instead of only its endpoints.
     return make_direct_tile_rope_bridge(columns,rows,6U,rope_bridge_tile_size);
 }
 
@@ -689,8 +698,8 @@ SoftBodyAsset make_dense_tile_rope_bridge(
     std::uint32_t columns,std::uint32_t rows)
 {
     // Every visible square is an actual 16x16 cloth simulation. Its internal
-    // structural/shear graph remains physics-only; only the four direct links
-    // across each neighboring edge are rendered as ropes.
+    // structural/shear graph remains physics-only; only the four segmented
+    // links across each neighboring edge are rendered as ropes.
     return make_direct_tile_rope_bridge(columns,rows,16U,0.40F);
 }
 

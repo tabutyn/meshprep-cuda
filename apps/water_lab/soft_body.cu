@@ -300,12 +300,14 @@ float4 quaternion_product(float4 a, float4 b)
 bool sphere_has_support(const RigidSphereState& sphere, GalleryArena arena)
 {
     constexpr float tolerance = 0.035F;
-    if (arena == GalleryArena::enclosed_box || arena == GalleryArena::ground_box ||
+    if (arena == GalleryArena::enclosed_box || arena == GalleryArena::hot_pan ||
+        arena == GalleryArena::ground_box ||
         arena == GalleryArena::cloth_basin || arena == GalleryArena::low_ceiling_box) {
         const float floor = gallery_box_center.y - gallery_box_half_extents.y;
         return sphere.center.y <= floor + sphere.radius + tolerance;
     }
-    if (arena == GalleryArena::ground || arena == GalleryArena::rope_post)
+    if (arena == GalleryArena::ground || arena == GalleryArena::grass ||
+        arena == GalleryArena::rope_post)
         return sphere.center.y <= course_floor_y + sphere.radius + tolerance;
     if (arena == GalleryArena::rope_bridge) {
         const bool above_land = fabsf(sphere.center.z) >=
@@ -444,13 +446,16 @@ __global__ void find_broken_edges(const float3* positions, const SoftBodyEdge* e
     std::uint8_t* active_edges, std::uint8_t* edge_damage,
     std::uint32_t voxels_per_instance,
     std::uint32_t edges_per_instance, std::uint32_t total_edges,
-    float maximum_strain, std::uint32_t persistence, std::uint32_t* counters)
+    std::uint32_t fracture_node_first,float maximum_strain,
+    std::uint32_t persistence, std::uint32_t* counters)
 {
     const std::uint32_t global_edge = blockIdx.x * blockDim.x + threadIdx.x;
     if (global_edge >= total_edges || active_edges[global_edge] == 0U) return;
     const std::uint32_t instance = global_edge / edges_per_instance;
     const std::uint32_t edge_id = global_edge - instance * edges_per_instance;
     const SoftBodyEdge edge = edges[edge_id];
+    if (edge.vertices.x<fracture_node_first ||
+        edge.vertices.y<fracture_node_first) return;
     const std::uint32_t base = instance * voxels_per_instance;
     const float distance = length(subtract(
         positions[base + edge.vertices.y], positions[base + edge.vertices.x]));
@@ -1094,7 +1099,8 @@ __global__ void apply_post_constraint_ground_friction(
 {
     const std::uint32_t node = blockIdx.x * blockDim.x + threadIdx.x;
     if (node >= count || (flags[node] & soft_body_voxel_pinned) != 0U ||
-        (arena != GalleryArena::ground && arena != GalleryArena::ground_box &&
+        (arena != GalleryArena::ground && arena != GalleryArena::grass &&
+         arena != GalleryArena::ground_box &&
          arena != GalleryArena::rope_post) ||
         positions[node].y > (arena == GalleryArena::ground_box &&
                 inside_ground_pit(positions[node], radius)
@@ -1284,19 +1290,17 @@ __global__ void emit_member_bounds(const float3* positions,
     return milliseconds;
 }
 
-void contain_sphere_in_d12(RigidSphereState& sphere,
+void contain_sphere_in_rope_cage(RigidSphereState& sphere,
     const std::vector<float3>& positions,std::uint32_t first,float clearance)
 {
-    constexpr std::uint32_t faces[12][5]{
-        {0,1,12,16,17},{0,2,8,10,16},{0,4,8,12,14},
-        {1,3,9,11,17},{1,5,9,12,14},{2,3,13,16,17},
-        {2,6,10,13,15},{3,7,11,13,15},{4,5,14,18,19},
-        {4,6,8,10,18},{5,7,9,11,19},{6,7,15,18,19}};
+    constexpr std::uint32_t faces[6][4]{
+        {0,1,3,2},{4,6,7,5},{0,4,5,1},
+        {2,3,7,6},{0,2,6,4},{1,5,7,3}};
     float3 center{};
-    for (std::uint32_t node=0U;node<20U;++node)
+    for (std::uint32_t node=0U;node<8U;++node)
         center=add(center,positions[first+node]);
-    center=multiply(center,1.0F/20.0F);
-    // Sequential half-space projection closes the twelve pentagonal faces.
+    center=multiply(center,1.0F/8.0F);
+    // Sequential half-space projection closes the six quadrilateral faces.
     // Node spheres still handle ordinary force transfer; this is the hard
     // geometric invariant that prevents the glass sphere escaping a gap.
     for (std::uint32_t pass=0U;pass<8U;++pass) {
@@ -1304,7 +1308,7 @@ void contain_sphere_in_d12(RigidSphereState& sphere,
             float3 face_center{};
             for (std::uint32_t corner:face)
                 face_center=add(face_center,positions[first+corner]);
-            face_center=multiply(face_center,0.2F);
+            face_center=multiply(face_center,0.25F);
             const float3 a=positions[first+face[0]];
             const float3 b=positions[first+face[1]];
             const float3 c=positions[first+face[2]];
@@ -1802,8 +1806,10 @@ struct SoftBodyCourse::Impl {
              options.cross_target_triangle_first >= total_render_triangles)) {
             throw std::invalid_argument("invalid soft/cloth cross-component ranges");
         }
+        if (options.fracture_node_first>asset.rest_voxels.size())
+            throw std::invalid_argument("invalid soft-body fracture range");
         if (options.cage_node_count != 0U &&
-            (options.instance_count != 1U || options.cage_node_count != 20U ||
+            (options.instance_count != 1U || options.cage_node_count != 8U ||
              options.cage_first_node + options.cage_node_count > total_voxels)) {
             throw std::invalid_argument("invalid closed rope-cage range");
         }
@@ -2295,6 +2301,7 @@ void SoftBodyCourse::finish_substep(float dt, float3 gravity, cudaStream_t strea
             state.edge_damage,
             static_cast<std::uint32_t>(state.asset.rest_voxels.size()),
             static_cast<std::uint32_t>(state.asset.edges.size()), state.total_edges,
+            state.options.fracture_node_first,
             state.options.break_strain * state.options.strength_multiplier,
             state.options.fracture_persistence_substeps, state.counters);
         check(cudaGetLastError(), "sample pre-projection soft-body fracture");
@@ -2399,6 +2406,7 @@ void SoftBodyCourse::finish_substep(float dt, float3 gravity, cudaStream_t strea
             state.edge_damage,
             static_cast<std::uint32_t>(state.asset.rest_voxels.size()),
             static_cast<std::uint32_t>(state.asset.edges.size()), state.total_edges,
+            state.options.fracture_node_first,
             state.options.break_strain * state.options.strength_multiplier,
             state.options.fracture_persistence_substeps, state.counters);
         check(cudaGetLastError(), "sample residual soft-body fracture");
@@ -2771,8 +2779,8 @@ SoftBodyTimings SoftBodyCourse::step_with_tethered_rigid_spheres(
         prepare_substep(dt,gravity,stream);
         contact_rigid_sphere_substep(sphere,dt,stream);
         contact_rigid_sphere_substep(caged_sphere,dt,stream);
-        if (state.options.cage_node_count==20U)
-            contain_sphere_in_d12(caged_sphere,state.host_contact_positions,
+        if (state.options.cage_node_count==8U)
+            contain_sphere_in_rope_cage(caged_sphere,state.host_contact_positions,
                 state.options.cage_first_node,0.10F*state.asset.voxel_radius);
         finish_substep(dt,gravity,stream);
         tether_rigid_sphere_kernel<<<1,1,0,stream>>>(
@@ -2784,15 +2792,15 @@ SoftBodyTimings SoftBodyCourse::step_with_tethered_rigid_spheres(
         check(cudaMemcpyAsync(state.host_rigid_sphere_impulses.data(),
             state.rigid_sphere_impulses,2U*sizeof(float3),cudaMemcpyDeviceToHost,
             stream),"download paired rope/sphere tether reaction");
-        if (state.options.cage_node_count==20U)
+        if (state.options.cage_node_count==8U)
             check(cudaMemcpyAsync(state.host_contact_positions.data(),state.positions,
                 static_cast<std::size_t>(state.total_voxels)*sizeof(float3),
                 cudaMemcpyDeviceToHost,stream),
-                "download committed D12 cage positions");
+                "download committed rope cage positions");
         check(cudaStreamSynchronize(stream),
             "finish paired rope/sphere tether reaction");
-        if (state.options.cage_node_count==20U)
-            contain_sphere_in_d12(caged_sphere,state.host_contact_positions,
+        if (state.options.cage_node_count==8U)
+            contain_sphere_in_rope_cage(caged_sphere,state.host_contact_positions,
                 state.options.cage_first_node,0.10F*state.asset.voxel_radius);
         sphere.center=add(sphere.center,state.host_rigid_sphere_impulses[0]);
         sphere.velocity=add(sphere.velocity,state.host_rigid_sphere_impulses[1]);

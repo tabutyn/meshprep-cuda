@@ -79,6 +79,15 @@ HybridOptions make_context_physics(
         const float spawn_x = water_wheel_entry_x - 2.15F;
         options.particle_initial_center = make_float3(
             spawn_x, water_wheel_inlet_height(spawn_x) + 0.32F, 0.0F);
+    } else if (context == ExampleContext::fluid_smoke) {
+        // A shallow pool sits on the heated floor while the independent smoke
+        // system emits steam above it. Keeping the two particle populations
+        // separate makes the phase boundary explicit in the public API.
+        options.particle_count = 8'000U;
+        options.particle_capacity = 20'000U;
+        options.particle_initial_center = make_float3(0.0F,-0.72F,-1.2F);
+        options.particle_initial_scale = make_float3(1.40F,0.20F,1.05F);
+        options.particle_repulsion = 60.0F;
     }
     options.fixed_dt = overrides.fixed_dt;
     if (overrides.physics_iterations.has_value()) {
@@ -114,6 +123,15 @@ HybridOptions make_context_physics(
     else if (context == ExampleContext::soft_body_rope)
         options.arena = GalleryArena::rope_bridge;
     else if (context == ExampleContext::cloth_rope)
+        options.arena = GalleryArena::rope_bridge;
+    else if (context == ExampleContext::smoke ||
+            context == ExampleContext::cloth_smoke)
+        options.arena = GalleryArena::ground;
+    else if (context == ExampleContext::soft_body_smoke)
+        options.arena = GalleryArena::grass;
+    else if (context == ExampleContext::fluid_smoke)
+        options.arena = GalleryArena::hot_pan;
+    else if (context == ExampleContext::rope_smoke)
         options.arena = GalleryArena::rope_bridge;
     options.particle_skin_coupling =
         context != ExampleContext::water &&
@@ -196,7 +214,8 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         options.velocity_damping = 0.35F;
         options.render_internal_members = true;
     } else if (context == meshprep::sim::ExampleContext::cloth_rope ||
-               context == meshprep::sim::ExampleContext::soft_body_rope) {
+               context == meshprep::sim::ExampleContext::soft_body_rope ||
+               context == meshprep::sim::ExampleContext::rope_smoke) {
         options.spring_stiffness = 32'000.0F;
         options.strength_multiplier = 64.0F;
         options.spring_damping_ratio = 0.92F;
@@ -210,15 +229,20 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         context == meshprep::sim::ExampleContext::water_rope ||
         context == meshprep::sim::ExampleContext::rope ||
         context == meshprep::sim::ExampleContext::cloth_rope ||
-        context == meshprep::sim::ExampleContext::soft_body_rope;
+        context == meshprep::sim::ExampleContext::soft_body_rope ||
+        context == meshprep::sim::ExampleContext::rope_smoke;
     options.fracture_before_projection =
-        context == meshprep::sim::ExampleContext::cloth;
+        context == meshprep::sim::ExampleContext::cloth ||
+        context == meshprep::sim::ExampleContext::cloth_soft_body;
     options.preserve_fractured_triangle_shape =
-        context == meshprep::sim::ExampleContext::cloth;
+        context == meshprep::sim::ExampleContext::cloth ||
+        context == meshprep::sim::ExampleContext::cloth_soft_body;
 
     using meshprep::sim::ExampleContext;
     if (context == ExampleContext::water ||
-        context == ExampleContext::water_cloth) return {};
+        context == ExampleContext::water_cloth ||
+        context == ExampleContext::smoke ||
+        context == ExampleContext::fluid_smoke) return {};
 
     options.instance_count = 1U;
     options.use_course_layout = false;
@@ -230,7 +254,7 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         const std::uint32_t branch_nodes=std::max(
             5U,(authored_nodes-trunk_nodes)/2U+1U);
         options.cage_first_node=trunk_nodes+branch_nodes-1U;
-        options.cage_node_count=20U;
+        options.cage_node_count=8U;
         SoftBodyAsset rope = make_y_rope_cage(
             authored_nodes,rope_length);
         rope = translate_soft_body_asset(std::move(rope), rope_anchor);
@@ -238,7 +262,7 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
     }
     if (context == ExampleContext::water_rope) {
         rope_node_count=std::clamp(rope_node_count,16U,512U);
-        const float spacing=3.10F/static_cast<float>(rope_node_count-1U);
+        const float spacing=3.85F/static_cast<float>(rope_node_count-1U);
         SoftBodyAsset fishing_rope=make_soft_rope(rope_node_count,spacing);
         SoftBodyRigidTransform hanging;
         // The generic rope is authored along +X.  Fishing needs its one pinned
@@ -252,7 +276,8 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         return std::make_unique<SoftBodyCourse>(std::move(fishing_rope),options);
     }
     if (context == ExampleContext::cloth_rope ||
-        context == ExampleContext::soft_body_rope) {
+        context == ExampleContext::soft_body_rope ||
+        context == ExampleContext::rope_smoke) {
         bridge_columns=std::clamp(bridge_columns,2U,16U);
         bridge_rows=std::clamp(bridge_rows,2U,64U);
         options.rope_bridge_columns=bridge_columns;
@@ -263,6 +288,41 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
             ? make_dense_tile_rope_bridge(bridge_columns,bridge_rows)
             : make_rope_bridge(bridge_columns,bridge_rows,true);
         return std::make_unique<SoftBodyCourse>(std::move(bridge), options);
+    }
+    if (context == ExampleContext::cloth_smoke) {
+        // Four independent cloth blades share a pinned hub. The blades are
+        // pitched 30 degrees about their radial axes so the smoke stream has
+        // a non-zero tangential load instead of striking a symmetric sheet.
+        ClothGridOptions blade_options;
+        blade_options.columns=6U;
+        blade_options.rows=13U;
+        blade_options.spacing=0.075F;
+        SoftBodyAsset blade=make_cloth_grid(blade_options);
+        for (std::uint32_t& flags:blade.voxel_flags)
+            flags&=~soft_body_voxel_pinned;
+        for (std::uint32_t column=0U;column<blade_options.columns;++column)
+            blade.voxel_flags[column]|=
+                soft_body_voxel_pinned|soft_body_voxel_rim_anchor;
+        constexpr float pi=3.14159265358979323846F;
+        constexpr float pitch=pi/6.0F;
+        SoftBodyAsset windmill;
+        for (std::uint32_t arm=0U;arm<4U;++arm) {
+            const float angle=0.5F*pi*static_cast<float>(arm);
+            SoftBodyRigidTransform transform;
+            transform.x_axis=make_float3(cosf(angle)*cosf(pitch),
+                sinf(angle)*cosf(pitch),-sinf(pitch));
+            transform.y_axis=make_float3(-sinf(angle),cosf(angle),0.0F);
+            transform.z_axis=make_float3(cosf(angle)*sinf(pitch),
+                sinf(angle)*sinf(pitch),cosf(pitch));
+            transform.translation=make_float3(0.0F,0.15F,-1.20F);
+            SoftBodyAsset arm_asset=transform_soft_body_asset(blade,transform);
+            windmill=arm==0U ? std::move(arm_asset)
+                : merge_soft_body_assets(windmill,arm_asset);
+        }
+        options.spring_stiffness=5'000.0F;
+        options.strength_multiplier=64.0F;
+        options.velocity_damping=0.6F;
+        return std::make_unique<SoftBodyCourse>(std::move(windmill),options);
     }
     if (context == ExampleContext::cloth) {
         cloth_detail = cloth_detail == 0U
@@ -353,6 +413,10 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         ground_cloth.file_flags |= soft_body_asset_free_body;
 
         options.cross_source_nodes = 1'000U;
+        options.fracture_node_first=options.cross_source_nodes;
+        // The leading sphere remains unbreakable by range; this multiplier
+        // now controls only the cloth's tear threshold.
+        options.strength_multiplier=1.5F;
         options.cross_target_triangle_first =
             static_cast<std::uint32_t>(sphere.render_triangles.size());
         options.surface_triangle_split = options.cross_target_triangle_first;
@@ -386,6 +450,37 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
     }
 
     SoftBodyAsset cylinder = load_soft_body_asset(std::string(soft_body_asset_path));
+
+    if (context == ExampleContext::soft_body_smoke) {
+        // Reuse the imported volumetric lattice as a field of short green
+        // bristles. Each instance retains its pinned root and all internal
+        // bonds, so smoke and the rolling sphere bend actual soft bodies.
+        for (float3& point:cylinder.rest_voxels) {
+            point.x*=0.13F; point.y*=0.42F; point.z*=0.13F;
+        }
+        for (float3& point:cylinder.render_positions) {
+            point.x*=0.13F; point.y*=0.42F; point.z*=0.13F;
+        }
+        cylinder.voxel_radius*=0.13F;
+        cylinder.nominal_spacing*=0.13F;
+        for (SoftBodyEdge& edge:cylinder.edges) {
+            const float3 a=cylinder.rest_voxels[edge.vertices.x];
+            const float3 b=cylinder.rest_voxels[edge.vertices.y];
+            edge.rest_length=std::sqrt((a.x-b.x)*(a.x-b.x)+
+                (a.y-b.y)*(a.y-b.y)+(a.z-b.z)*(a.z-b.z));
+        }
+        constexpr std::uint32_t columns=10U;
+        constexpr std::uint32_t rows=6U;
+        options.instance_count=columns*rows;
+        options.spring_stiffness=9'000.0F;
+        options.strength_multiplier=64.0F;
+        options.unbonded_voxel_collisions=true;
+        for (std::uint32_t row=0U;row<rows;++row)
+            for (std::uint32_t column=0U;column<columns;++column)
+                options.instance_origins[row*columns+column]=make_float3(
+                    -1.35F+0.30F*column,course_floor_y+0.03F,-2.0F+0.30F*row);
+        return std::make_unique<SoftBodyCourse>(std::move(cylinder),options);
+    }
 
     if (context == ExampleContext::soft_body) {
         cylinder_columns=std::clamp(cylinder_columns,1U,16U);
@@ -455,7 +550,8 @@ FluidDisplay default_context_display(meshprep::sim::ExampleContext context) noex
     return context == meshprep::sim::ExampleContext::water_cloth ||
         context == meshprep::sim::ExampleContext::water ||
         context == meshprep::sim::ExampleContext::water_rope ||
-        context == meshprep::sim::ExampleContext::water_soft_body
+        context == meshprep::sim::ExampleContext::water_soft_body ||
+        context == meshprep::sim::ExampleContext::fluid_smoke
         ? FluidDisplay::Surface : FluidDisplay::Particles;
 }
 
@@ -528,7 +624,8 @@ RigidSphereState initial_rigid_sphere(
             endpoint.z+direction.z*(sphere.radius+node_radius));
         sphere.velocity = {};
     } else if (context == meshprep::sim::ExampleContext::cloth_rope ||
-               context == meshprep::sim::ExampleContext::soft_body_rope) {
+               context == meshprep::sim::ExampleContext::soft_body_rope ||
+               context == meshprep::sim::ExampleContext::rope_smoke) {
         sphere.radius = 0.34F;
         sphere.mass = context==meshprep::sim::ExampleContext::cloth_rope
             ? 180.0F : 45.0F;
@@ -536,6 +633,20 @@ RigidSphereState initial_rigid_sphere(
             rope_bridge_land_y + sphere.radius,
             rope_bridge_land_inner_z + 0.65F);
         sphere.velocity = {};
+    } else if (context == meshprep::sim::ExampleContext::smoke) {
+        sphere.radius=0.36F;
+        sphere.mass=28.0F;
+        sphere.center=make_float3(-1.8F,course_floor_y+sphere.radius,-1.2F);
+        sphere.velocity=make_float3(1.35F,0.0F,0.0F);
+    } else if (context == meshprep::sim::ExampleContext::soft_body_smoke) {
+        sphere.radius=0.30F;
+        sphere.mass=45.0F;
+        sphere.center=make_float3(-1.75F,course_floor_y+sphere.radius,-1.25F);
+        sphere.velocity=make_float3(0.9F,0.0F,0.0F);
+    } else if (context == meshprep::sim::ExampleContext::cloth_smoke) {
+        sphere.center=make_float3(3.0F,course_floor_y+sphere.radius,-1.2F);
+    } else if (context == meshprep::sim::ExampleContext::fluid_smoke) {
+        sphere.center=make_float3(3.0F,course_floor_y+sphere.radius,-1.2F);
     } else {
         // A grazing track loads the breakable wall while not demanding that a
         // floor-height ball tunnel through the post's immovable foundation.

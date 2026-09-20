@@ -8,6 +8,7 @@
 
 #include <parallel_mater/gallery.hpp>
 #include <parallel_mater/physics.hpp>
+#include <parallel_mater/smoke.hpp>
 
 #include <GLFW/glfw3.h>
 
@@ -73,6 +74,7 @@ struct Interaction {
     bool show_physics{};
     bool show_quantities{};
     bool show_timings{true};
+    bool show_context_browser{};
     bool show_normals{};
     bool show_box_forces{};
     bool show_particle_forces{};
@@ -106,6 +108,7 @@ struct Interaction {
     int course_motion_adjustment{};
     int soft_body_strength_adjustment{};
     int replay_delta{};
+    int context_browser_index{};
     double previous_x{};
     double previous_y{};
     double drag_x{};
@@ -132,6 +135,8 @@ struct Interaction {
     float fishing_head_x{};
     float fishing_rope_scale{1.0F};
     bool fishing_latched{};
+    float smoke_rotor_angle{};
+    float smoke_rotor_angular_velocity{};
 };
 
 void begin_context_particle_spawn(
@@ -250,6 +255,58 @@ bool context_has_particles(parallel_mater::sim::ExampleContext context)
             context, parallel_mater::sim::Component::hand_particles);
 }
 
+bool context_has_smoke(parallel_mater::sim::ExampleContext context)
+{
+    return waterlab::gallery::context_has(
+        context,parallel_mater::sim::Component::smoke);
+}
+
+parallel_mater::physics::SmokeOptions smoke_options_for(
+    parallel_mater::sim::ExampleContext context)
+{
+    using parallel_mater::sim::ExampleContext;
+    parallel_mater::physics::SmokeOptions options;
+    options.particle_count=6'000U;
+    options.capacity=12'000U;
+    options.emitter_center=make_float3(-2.15F,-0.30F,-1.20F);
+    options.emitter_half_extents=make_float3(0.05F,0.48F,0.52F);
+    options.initial_velocity=make_float3(2.8F,0.12F,0.0F);
+    options.turbulence_strength=1.15F;
+    if (context==ExampleContext::fluid_smoke) {
+        options.particle_count=7'500U;
+        options.emitter_center=make_float3(0.0F,-0.78F,-1.20F);
+        options.emitter_half_extents=make_float3(1.15F,0.04F,0.78F);
+        options.initial_velocity=make_float3(0.0F,0.42F,0.0F);
+        options.buoyancy=1.85F;
+        options.turbulence_strength=0.72F;
+        options.lifetime=3.6F;
+    } else if (context==ExampleContext::cloth_smoke) {
+        // Windmill is in XY with its axle along Z; smoke travels toward -Z.
+        options.emitter_center=make_float3(0.0F,0.10F,1.10F);
+        options.emitter_half_extents=make_float3(0.95F,0.95F,0.04F);
+        options.initial_velocity=make_float3(0.0F,0.05F,-2.9F);
+        options.buoyancy=0.18F;
+    } else if (context==ExampleContext::soft_body_smoke ||
+              context==ExampleContext::rope_smoke) {
+        options.emitter_center=make_float3(-2.25F,-0.35F,-1.20F);
+        options.emitter_half_extents=make_float3(0.05F,0.32F,1.05F);
+        options.initial_velocity=make_float3(3.0F,0.12F,0.0F);
+        options.buoyancy=0.22F;
+    }
+    return options;
+}
+
+std::optional<parallel_mater::physics::Smoke> create_smoke_system(
+    parallel_mater::sim::ExampleContext context)
+{
+    if (!context_has_smoke(context)) return std::nullopt;
+    parallel_mater::physics::Smoke smoke;
+    const parallel_mater::Status status=smoke.initialize(smoke_options_for(context));
+    if (!status.ok()) throw std::runtime_error(
+        std::string("initialize smoke: ")+status.message);
+    return smoke;
+}
+
 waterlab::FoamSettings context_foam_settings(
     parallel_mater::sim::ExampleContext context) noexcept
 {
@@ -297,10 +354,24 @@ void configure_context_camera(Interaction& input)
         input.orbit_radius = 4.8F;
         input.orbit_pitch = 0.30F;
     } else if (input.context == parallel_mater::sim::ExampleContext::cloth_rope ||
-               input.context == parallel_mater::sim::ExampleContext::soft_body_rope) {
+               input.context == parallel_mater::sim::ExampleContext::soft_body_rope ||
+               input.context == parallel_mater::sim::ExampleContext::rope_smoke) {
         input.camera_target = make_float3(0.0F, -0.45F, 0.0F);
         input.orbit_radius = 7.2F;
         input.orbit_pitch = 0.42F;
+    } else if (input.context == parallel_mater::sim::ExampleContext::smoke ||
+               input.context == parallel_mater::sim::ExampleContext::soft_body_smoke) {
+        input.camera_target=make_float3(0.0F,-0.35F,-1.2F);
+        input.orbit_radius=5.4F;
+        input.orbit_pitch=0.28F;
+    } else if (input.context == parallel_mater::sim::ExampleContext::fluid_smoke) {
+        input.camera_target=make_float3(0.0F,-0.15F,-1.2F);
+        input.orbit_radius=5.6F;
+        input.orbit_pitch=0.46F;
+    } else if (input.context == parallel_mater::sim::ExampleContext::cloth_smoke) {
+        input.camera_target=make_float3(0.0F,0.0F,-1.2F);
+        input.orbit_radius=4.8F;
+        input.orbit_pitch=0.12F;
     }
 }
 
@@ -753,7 +824,7 @@ void usage(const char* executable)
 {
     std::fprintf(stderr,
         "usage: %s [--width N] [--height N] [--profile FRAMES] [--warmups N] "
-        "[--iterations 1..16] [--scene course|lab] [--context 1..9|0] [--drive-box] "
+        "[--iterations 1..16] [--scene course|lab] [--context 1..9|0|A..E] [--drive-box] "
         "[--view surface|particles|billboards|wire] [--foam on|off] [--replay CAPTURE_DIRECTORY]\n"
         "rigid contexts default to 4 substeps per fixed 60 Hz tick at 4x speed; "
         "non-rigid and lab contexts to 1\n"
@@ -803,6 +874,39 @@ float3 clamp_length(float3 value, float maximum)
 {
     const float magnitude = length(value);
     return magnitude > maximum ? multiply(value, maximum / magnitude) : value;
+}
+
+waterlab::SoftBodyTimings step_smoke_coupled_body(
+    waterlab::SoftBodyCourse& body,parallel_mater::physics::Smoke& smoke,
+    waterlab::RigidSphereState* sphere,float3 body_gravity,float3 sphere_gravity,
+    waterlab::GalleryArena arena,std::uint32_t substeps,float fixed_dt,
+    parallel_mater::physics::SmokeTimings& smoke_timings)
+{
+    body.begin_frame();
+    const float dt=fixed_dt/static_cast<float>(std::max(1U,substeps));
+    for (std::uint32_t substep=0U;substep<std::max(1U,substeps);++substep) {
+        if (sphere!=nullptr) {
+            sphere->velocity=add(sphere->velocity,multiply(sphere_gravity,dt));
+            sphere->velocity=multiply(sphere->velocity,1.0F/(1.0F+0.22F*dt));
+            sphere->center=add(sphere->center,multiply(sphere->velocity,dt));
+            waterlab::project_gallery_contact(
+                sphere->center,sphere->velocity,sphere->radius,arena);
+        }
+        body.prepare_substep(dt,body_gravity);
+        if (sphere!=nullptr) body.contact_rigid_sphere_substep(*sphere,dt);
+        const waterlab::SoftBodyVoxelView nodes=body.voxel_view();
+        const parallel_mater::Status coupled=smoke.couple({
+            nodes.positions,nodes.velocities,nodes.external_impulses,
+            nodes.voxel_count,nodes.inverse_voxel_mass,nodes.voxel_radius,dt},
+            5.0F,smoke_timings);
+        if (!coupled.ok()) throw std::runtime_error(
+            std::string("couple smoke: ")+coupled.message);
+        body.finish_substep(dt,body_gravity);
+        if (sphere!=nullptr)
+            waterlab::advance_rigid_sphere_rotation(*sphere,arena,
+                body.material().ground_friction,dt);
+    }
+    return body.finish_frame();
 }
 
 void update_camera(const Interaction& input, waterlab::Camera& camera)
@@ -1063,7 +1167,7 @@ void update_fishing_controls(GLFWwindow* window,Interaction& input,
         static_cast<float>(pressed(GLFW_KEY_UP));
     if (reel!=0.0F) {
         const float desired=std::clamp(
-            input.fishing_rope_scale+reel*0.28F*dt,0.48F,1.18F);
+            input.fishing_rope_scale+reel*0.36F*dt,0.12F,1.18F);
         if (desired!=input.fishing_rope_scale) {
             rope->scale_rest_lengths(desired/input.fishing_rope_scale);
             input.fishing_rope_scale=desired;
@@ -1211,7 +1315,34 @@ void key_callback(GLFWwindow* window, int key, int, int action, int modifiers)
     if (key == GLFW_KEY_Q) input.rotate_left = action != GLFW_RELEASE;
     if (key == GLFW_KEY_E) input.rotate_right = action != GLFW_RELEASE;
     if (action == GLFW_PRESS) {
+        if (input.show_context_browser) {
+            const int count=static_cast<int>(parallel_mater::sim::example_contexts.size());
+            if (key==GLFW_KEY_ESCAPE || key==GLFW_KEY_TAB) {
+                input.show_context_browser=false;
+                return;
+            }
+            if (key==GLFW_KEY_UP || key==GLFW_KEY_DOWN) {
+                input.context_browser_index=(input.context_browser_index+
+                    (key==GLFW_KEY_DOWN ? 1 : -1)+count)%count;
+                return;
+            }
+            if (key==GLFW_KEY_ENTER || key==GLFW_KEY_KP_ENTER) {
+                input.pending_context=parallel_mater::sim::example_contexts[
+                    static_cast<std::size_t>(input.context_browser_index)].id;
+                input.show_context_browser=false;
+                return;
+            }
+        }
         if (key == GLFW_KEY_ESCAPE) glfwSetWindowShouldClose(window, GLFW_TRUE);
+        else if (key == GLFW_KEY_TAB) {
+            input.show_context_browser=true;
+            const auto found=std::find_if(parallel_mater::sim::example_contexts.begin(),
+                parallel_mater::sim::example_contexts.end(),[&](const auto& item) {
+                    return item.id==input.context;
+                });
+            input.context_browser_index=found==parallel_mater::sim::example_contexts.end()
+                ? 0 : static_cast<int>(found-parallel_mater::sim::example_contexts.begin());
+        }
         else if (key == GLFW_KEY_SPACE) input.paused = !input.paused;
         else if (key == GLFW_KEY_P) {
             input.show_physics = !input.show_physics;
@@ -1399,6 +1530,69 @@ void text(std::string_view value, float x, float y, float scale, int width, int 
     }
 }
 
+std::string uppercase(std::string_view value)
+{
+    std::string result(value);
+    std::transform(result.begin(),result.end(),result.begin(),[](unsigned char c) {
+        return c>='a' && c<='z' ? static_cast<char>(c-'a'+'A') : static_cast<char>(c);
+    });
+    return result;
+}
+
+void draw_context_browser(int width,int height,const Interaction& input)
+{
+    if (!input.show_context_browser) return;
+    constexpr float panel_width=500.0F;
+    constexpr float row_height=23.0F;
+    const float panel_height=92.0F+row_height*
+        static_cast<float>(parallel_mater::sim::example_contexts.size());
+    const float x=0.5F*(static_cast<float>(width)-panel_width);
+    const float y=std::max(12.0F,0.5F*(static_cast<float>(height)-panel_height));
+    glDisable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+    rectangle(x,y,panel_width,panel_height,width,height,0.01F,0.02F,0.04F,0.94F);
+    text("CONTEXTS",x+14.0F,y+12.0F,2.0F,width,height);
+    text("UP DOWN SELECT  ENTER OPEN  TAB CLOSE",x+14.0F,y+36.0F,1.25F,width,height);
+    const struct Key { const char* label; float r,g,b; } keys[]{
+        {"FLUID",0.05F,0.52F,1.0F},{"CLOTH",0.12F,0.88F,0.32F},
+        {"SOFTBODY",0.16F,0.30F,1.0F},{"ROPE",1.0F,0.48F,0.08F},
+        {"SMOKE",0.92F,0.94F,0.98F}};
+    float key_x=x+14.0F;
+    for (const auto& key:keys) {
+        rectangle(key_x,y+57.0F,10.0F,10.0F,width,height,key.r,key.g,key.b,1.0F);
+        text(key.label,key_x+15.0F,y+55.0F,1.0F,width,height);
+        key_x+=static_cast<float>(std::strlen(key.label))*6.0F+30.0F;
+    }
+    float row_y=y+82.0F;
+    for (std::size_t index=0;index<parallel_mater::sim::example_contexts.size();++index) {
+        const auto& context=parallel_mater::sim::example_contexts[index];
+        if (static_cast<int>(index)==input.context_browser_index)
+            rectangle(x+8.0F,row_y-4.0F,panel_width-16.0F,row_height-1.0F,
+                width,height,0.08F,0.22F,0.38F,0.95F);
+        char line[64];
+        const std::string title=uppercase(context.title);
+        std::snprintf(line,sizeof(line),"%c  %s",context.key,title.c_str());
+        text(line,x+16.0F,row_y,1.5F,width,height);
+        float chip_x=x+365.0F;
+        const auto chip=[&](parallel_mater::sim::Component component,
+                            float r,float g,float b) {
+            if (!parallel_mater::sim::has_component(context.components,component)) return;
+            rectangle(chip_x,row_y-2.0F,18.0F,12.0F,width,height,r,g,b,0.95F);
+            chip_x+=22.0F;
+        };
+        chip(parallel_mater::sim::Component::fluid_particles,0.05F,0.52F,1.0F);
+        chip(parallel_mater::sim::Component::cloth,0.12F,0.88F,0.32F);
+        chip(parallel_mater::sim::Component::soft_body,0.16F,0.30F,1.0F);
+        chip(parallel_mater::sim::Component::rope,1.0F,0.48F,0.08F);
+        chip(parallel_mater::sim::Component::smoke,0.92F,0.94F,0.98F);
+        row_y+=row_height;
+    }
+    glDisable(GL_BLEND);
+    glEnable(GL_TEXTURE_2D);
+    glColor4f(1,1,1,1);
+}
+
 struct SkinDebugData {
     std::vector<float3> positions;
     std::vector<float3> normals;
@@ -1420,6 +1614,11 @@ struct WireframeDebugData {
     std::vector<std::uint8_t> voxel_edge_active;
     std::uint32_t voxels_per_instance{};
     float voxel_radius{};
+};
+
+struct SmokeDebugData {
+    std::vector<float3> positions;
+    std::vector<float> temperatures;
 };
 
 template <typename T>
@@ -1539,6 +1738,21 @@ void download_wireframe_debug(const Interaction& input,
     data.voxel_radius = lattice.voxel_radius;
 }
 
+void download_smoke_debug(const parallel_mater::physics::Smoke* smoke,
+    SmokeDebugData& data)
+{
+    if (smoke==nullptr || !smoke->initialized()) {
+        data.positions.clear();
+        data.temperatures.clear();
+        return;
+    }
+    const auto view=smoke->particles();
+    copy_device_vector(data.positions,view.positions,view.count,
+        "download smoke positions");
+    copy_device_vector(data.temperatures,view.temperatures,view.count,
+        "download smoke temperatures");
+}
+
 struct ScreenPoint {
     float x{};
     float y{};
@@ -1568,6 +1782,55 @@ ScreenPoint project_point(
         0.5F * static_cast<float>(height) * (1.0F - ndc_y),
         depth,
         std::abs(ndc_x) <= 1.1F && std::abs(ndc_y) <= 1.1F};
+}
+
+void draw_smoke_particles(const SmokeDebugData& data,
+    parallel_mater::sim::ExampleContext context,const waterlab::Camera& camera,
+    int width,int height)
+{
+    if (data.positions.empty()) return;
+    struct Projected { ScreenPoint point; float temperature; };
+    std::vector<Projected> points;
+    points.reserve(data.positions.size());
+    for (std::size_t index=0;index<data.positions.size();++index) {
+        const ScreenPoint point=project_point(data.positions[index],camera,width,height);
+        if (point.visible) points.push_back({point,index<data.temperatures.size()
+            ? data.temperatures[index] : 0.0F});
+    }
+    std::stable_sort(points.begin(),points.end(),[](const auto& a,const auto& b) {
+        return a.point.depth>b.point.depth;
+    });
+    const bool steam=context==parallel_mater::sim::ExampleContext::fluid_smoke;
+    glDisable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_POINT_SMOOTH);
+    glPointSize(steam ? 14.0F : 16.0F);
+    glBegin(GL_POINTS);
+    for (const auto& particle:points) {
+        const float fade=std::clamp(particle.temperature,0.0F,1.0F);
+        const float grey=steam ? 0.88F+0.10F*fade : 0.22F+0.38F*fade;
+        glColor4f(grey,grey,steam ? std::min(1.0F,grey+0.05F) : grey,
+            0.025F+0.055F*fade);
+        glVertex2f(2.0F*particle.point.x/static_cast<float>(width)-1.0F,
+            1.0F-2.0F*particle.point.y/static_cast<float>(height));
+    }
+    glEnd();
+    glPointSize(steam ? 6.0F : 7.0F);
+    glBegin(GL_POINTS);
+    for (const auto& particle:points) {
+        const float fade=std::clamp(particle.temperature,0.0F,1.0F);
+        const float grey=steam ? 0.96F : 0.42F+0.42F*fade;
+        glColor4f(grey,grey,steam ? 1.0F : grey,0.10F+0.22F*fade);
+        glVertex2f(2.0F*particle.point.x/static_cast<float>(width)-1.0F,
+            1.0F-2.0F*particle.point.y/static_cast<float>(height));
+    }
+    glEnd();
+    glPointSize(1.0F);
+    glDisable(GL_POINT_SMOOTH);
+    glDisable(GL_BLEND);
+    glEnable(GL_TEXTURE_2D);
+    glColor4f(1,1,1,1);
 }
 
 void emit_screen_line(ScreenPoint a, ScreenPoint b, int width, int height)
@@ -1877,6 +2140,7 @@ void draw_wireframe_debug(const Interaction& input, const WireframeDebugData& da
 
 void draw_timings(int width, int height, bool visible, const Interaction& input,
                   const waterlab::HybridTimings& t, float visual, float raytrace,
+                  const parallel_mater::physics::SmokeTimings& smoke,
                   float debug_draw, float wall)
 {
     if (!visible) return;
@@ -1937,9 +2201,14 @@ void draw_timings(int width, int height, bool visible, const Interaction& input,
         rows.emplace_back("RIGID CONTACT", t.update_rigid_body_contact_ms);
     }
     if (visual > 0.0F) rows.emplace_back("WATER FOAM", visual);
+    if (context_has_smoke(input.context)) {
+        rows.emplace_back("SMOKE ADVECT",smoke.integrate_ms);
+        if (smoke.couple_ms>0.0F) rows.emplace_back("SMOKE COUPLE",smoke.couple_ms);
+    }
     rows.emplace_back("RAYTRACE", raytrace);
     if (debug_draw > 0.0F) rows.emplace_back("DEBUG DRAW", debug_draw);
-    rows.emplace_back("GPU TOTAL", t.gpu_total_ms() + visual + raytrace);
+    rows.emplace_back("GPU TOTAL", t.gpu_total_ms() + visual + raytrace +
+        smoke.gpu_total_ms());
     rows.emplace_back("FRAME WALL", wall);
     glDisable(GL_TEXTURE_2D);
     glEnable(GL_BLEND);
@@ -2388,6 +2657,7 @@ int run_profile(const Options& options)
                 physics_options.arena == waterlab::GalleryArena::bowl ||
                 physics_options.arena == waterlab::GalleryArena::rope_post ||
                 physics_options.arena == waterlab::GalleryArena::rope_bridge ||
+                physics_options.arena == waterlab::GalleryArena::grass ||
                 physics_options.arena == waterlab::GalleryArena::fishing_tank) {
                 render_box.center = rigid_sphere.center;
                 render_box.half_extents = make_float3(
@@ -2614,6 +2884,8 @@ int run_interactive(const Options& options)
     std::optional<waterlab::HybridDroplet> droplet_storage;
     droplet_storage.emplace(physics_options);
     waterlab::HybridDroplet& droplet = *droplet_storage;
+    std::optional<parallel_mater::physics::Smoke> smoke_storage=
+        create_smoke_system(input.context);
     begin_context_particle_spawn(input,droplet);
     std::unique_ptr<waterlab::SoftBodyCourse> soft_bodies;
     if (input.course_mode) {
@@ -2647,6 +2919,8 @@ int run_interactive(const Options& options)
     waterlab::HybridTimings timings;
     SkinDebugData skin_debug;
     WireframeDebugData wireframe_debug;
+    SmokeDebugData smoke_debug;
+    parallel_mater::physics::SmokeTimings smoke_timings{};
     float raytrace_ms = 0.0F;
     float debug_draw_ms = 0.0F;
     float wall_ms = 0.0F;
@@ -2695,6 +2969,7 @@ int run_interactive(const Options& options)
             physics_options = waterlab::gallery::make_context_physics(
                 input.context, overrides);
             droplet_storage.emplace(physics_options);
+            smoke_storage=create_smoke_system(input.context);
             begin_context_particle_spawn(input,droplet);
             visuals.set_active_count(droplet.options().particle_count);
             visuals.set_foam_settings(context_foam_settings(input.context));
@@ -2718,6 +2993,8 @@ int run_interactive(const Options& options)
             input.course_motion_adjustment = 0;
             input.fishing_head_x=0.0F;
             input.fishing_rope_scale=1.0F;
+            input.smoke_rotor_angle=0.0F;
+            input.smoke_rotor_angular_velocity=0.0F;
             input.have_follow_center = false;
             configure_context_camera(input);
             capture.clear();
@@ -2914,6 +3191,11 @@ int run_interactive(const Options& options)
                 input.paused = true;
             } else {
                 droplet.reset();
+                if (smoke_storage) {
+                    const parallel_mater::Status reset=smoke_storage->reset();
+                    if (!reset.ok()) throw std::runtime_error(
+                        std::string("reset smoke: ")+reset.message);
+                }
                 begin_context_particle_spawn(input,droplet);
                 visuals.set_active_count(droplet.options().particle_count);
                 if (soft_bodies != nullptr) {
@@ -3015,6 +3297,7 @@ int run_interactive(const Options& options)
                 restored_replay_index = replay_index;
             }
         } else if (!input.paused) {
+            smoke_timings={};
             advance_context_particle_spawn(input,droplet);
             if (visuals.view().particle_count!=droplet.options().particle_count)
                 visuals.set_active_count(droplet.options().particle_count);
@@ -3028,6 +3311,19 @@ int run_interactive(const Options& options)
             }
             // Exactly one fixed 1/60-second tick. A slow render delays simulated time;
             // it never launches catch-up ticks or drops a partial collider trajectory.
+            if (smoke_storage) {
+                parallel_mater::physics::SmokeSphereCollider collider{
+                    rigid_sphere.center,rigid_sphere.velocity,rigid_sphere.radius,0.20F};
+                const bool collide_sphere=
+                    input.context==parallel_mater::sim::ExampleContext::smoke ||
+                    input.context==parallel_mater::sim::ExampleContext::soft_body_smoke ||
+                    input.context==parallel_mater::sim::ExampleContext::rope_smoke;
+                const parallel_mater::Status status=smoke_storage->step({{},
+                    collide_sphere ? &collider : nullptr,collide_sphere ? 1U : 0U},
+                    smoke_timings);
+                if (!status.ok()) throw std::runtime_error(
+                    std::string("step smoke: ")+status.message);
+            }
             const bool particle_context = context_has_particles(input.context);
             if (particle_context) {
                 const bool dynamic_sphere =
@@ -3041,6 +3337,11 @@ int run_interactive(const Options& options)
                         ? &water_wheel : nullptr,
                     input.context == parallel_mater::sim::ExampleContext::water_soft_body
                         ? &input.course_gravity : nullptr);
+                if (input.context==parallel_mater::sim::ExampleContext::fluid_smoke &&
+                    droplet.statistics().particle_count>256U &&
+                    (droplet.statistics().frame_index&1U)==0U)
+                    droplet.resize_particles(std::max(256U,
+                        droplet.statistics().particle_count-16U));
                 visual_ms = needs_fluid_visual_update(input)
                     ? visuals.update(droplet.particle_positions(),
                         droplet.particle_velocities(), droplet.particle_hierarchy(),
@@ -3062,7 +3363,34 @@ int run_interactive(const Options& options)
                     input.context == parallel_mater::sim::ExampleContext::cloth_rope ||
                     input.context == parallel_mater::sim::ExampleContext::soft_body_rope;
                 waterlab::SoftBodyTimings soft{};
-                if (input.context == parallel_mater::sim::ExampleContext::rope) {
+                if (smoke_storage && context_has_smoke(input.context)) {
+                    if (input.context==parallel_mater::sim::ExampleContext::cloth_smoke) {
+                        soft_bodies->set_pinned_rotation_z(
+                            make_float3(0.0F,0.15F,-1.20F),input.smoke_rotor_angle);
+                    }
+                    const bool rolling=
+                        input.context==parallel_mater::sim::ExampleContext::soft_body_smoke ||
+                        input.context==parallel_mater::sim::ExampleContext::rope_smoke;
+                    const float3 body_gravity=
+                        input.context==parallel_mater::sim::ExampleContext::soft_body_smoke
+                        ? input.course_gravity : make_float3(0.0F,0.0F,0.0F);
+                    soft=step_smoke_coupled_body(*soft_bodies,*smoke_storage,
+                        rolling ? &rigid_sphere : nullptr,body_gravity,
+                        input.course_gravity,droplet.options().arena,
+                        droplet.options().physics_iterations,droplet.options().fixed_dt,
+                        smoke_timings);
+                    if (input.context==parallel_mater::sim::ExampleContext::cloth_smoke) {
+                        const float torque=soft_bodies->wheel_rim_reaction_torque(
+                            make_float3(0.0F,0.15F,-1.20F));
+                        const float dt=droplet.options().fixed_dt;
+                        const float acceleration=std::clamp(0.00025F*torque,-8.0F,8.0F);
+                        input.smoke_rotor_angular_velocity=std::clamp(
+                            (input.smoke_rotor_angular_velocity+acceleration*dt)/
+                                (1.0F+0.8F*dt),-3.0F,3.0F);
+                        input.smoke_rotor_angle+=
+                            input.smoke_rotor_angular_velocity*dt;
+                    }
+                } else if (input.context == parallel_mater::sim::ExampleContext::rope) {
                     const auto lattice = soft_bodies->lattice_view();
                     soft = soft_bodies->step_with_tethered_rigid_spheres(
                         rigid_sphere, lattice.voxels_per_instance - 1U,
@@ -3088,6 +3416,20 @@ int run_interactive(const Options& options)
                 timings.update_soft_body_render_ms = soft.render_deformation_ms;
                 timings.update_rigid_body_contact_ms = soft.rigid_contact_ms;
                 visual_ms = 0.0F;
+            } else if (input.context==parallel_mater::sim::ExampleContext::smoke) {
+                const float dt=droplet.options().fixed_dt;
+                rigid_sphere.velocity=add(rigid_sphere.velocity,
+                    multiply(input.course_gravity,dt));
+                rigid_sphere.velocity=multiply(rigid_sphere.velocity,
+                    1.0F/(1.0F+0.12F*dt));
+                rigid_sphere.center=add(rigid_sphere.center,
+                    multiply(rigid_sphere.velocity,dt));
+                waterlab::project_gallery_contact(rigid_sphere.center,
+                    rigid_sphere.velocity,rigid_sphere.radius,droplet.options().arena);
+                waterlab::advance_rigid_sphere_rotation(rigid_sphere,
+                    droplet.options().arena,5.0F,dt);
+                timings={};
+                visual_ms=0.0F;
             }
             if (input.context == parallel_mater::sim::ExampleContext::water) {
                 input.painted_fraction = raytracer.update_bowl_paint(
@@ -3158,6 +3500,8 @@ int run_interactive(const Options& options)
                 droplet.options().arena == waterlab::GalleryArena::bowl ||
                 droplet.options().arena == waterlab::GalleryArena::rope_post ||
                 droplet.options().arena == waterlab::GalleryArena::rope_bridge ||
+                droplet.options().arena == waterlab::GalleryArena::ground ||
+                droplet.options().arena == waterlab::GalleryArena::grass ||
                 droplet.options().arena == waterlab::GalleryArena::fishing_tank)) {
             render_box.center = rigid_sphere.center;
             render_box.half_extents = make_float3(
@@ -3197,6 +3541,7 @@ int run_interactive(const Options& options)
         const auto debug_download_begin=std::chrono::steady_clock::now();
         download_skin_debug(input, droplet, skin_debug);
         download_wireframe_debug(input, droplet, soft_bodies.get(), wireframe_debug);
+        download_smoke_debug(smoke_storage ? &*smoke_storage : nullptr,smoke_debug);
         debug_draw_ms=std::chrono::duration<float,std::milli>(
             std::chrono::steady_clock::now()-debug_download_begin).count();
 
@@ -3220,6 +3565,7 @@ int run_interactive(const Options& options)
         glTexCoord2f(0,0); glVertex2f(-1,1);
         glEnd();
         const auto debug_render_begin=std::chrono::steady_clock::now();
+        draw_smoke_particles(smoke_debug,input.context,camera,width,height);
         draw_wireframe_debug(input, wireframe_debug, camera, width, height);
         draw_skin_debug(input, skin_debug, camera, width, height);
         debug_draw_ms+=std::chrono::duration<float,std::milli>(
@@ -3227,7 +3573,7 @@ int run_interactive(const Options& options)
         wall_ms = std::chrono::duration<float, std::milli>(
             std::chrono::steady_clock::now() - begin).count();
         draw_timings(width, height, input.show_timings, input,
-            timings, visual_ms, raytrace_ms, debug_draw_ms, wall_ms);
+            timings, visual_ms, raytrace_ms, smoke_timings,debug_draw_ms, wall_ms);
         draw_course_hud(width, height, input, droplet.options(),
             droplet.statistics(), soft_bodies.get());
         draw_physics_panel(width, height, input.show_physics,
@@ -3243,6 +3589,7 @@ int run_interactive(const Options& options)
                 ? &rigid_sphere : nullptr, &visuals);
         draw_quantity_panel(width, height, input.show_quantities,
             input, droplet.options(), soft_bodies.get());
+        draw_context_browser(width,height,input);
         glfwSwapBuffers(window);
 
         const waterlab::HybridStatistics stats = droplet.statistics();
