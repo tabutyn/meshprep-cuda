@@ -4,11 +4,11 @@
 #include "obstacle_course.hpp"
 #include "particle_cells.cuh"
 #include "course_rotation.cuh"
+#include "nvtx_range.hpp"
 #include "status_exception.hpp"
 
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
-#include <nvtx3/nvtx3.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -1664,7 +1664,7 @@ HybridTimings HybridDroplet::step(
     WaterWheelState* water_wheel,
     const float3* rigid_sphere_gravity_override)
 {
-    nvtx3::scoped_range frame{"bounded_force/frame"};
+    detail::NvtxRange frame{"bounded_force/frame"};
     if (!finite3(rectangle_control_force) || !std::isfinite(rectangle_control_torque)) {
         throw std::invalid_argument("non-finite rectangle control force");
     }

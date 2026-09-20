@@ -2,9 +2,9 @@
 #include "water_lab.hpp"
 #include "obstacle_course.hpp"
 #include "fluid_surface.cuh"
+#include "nvtx_range.hpp"
 
 #include <cuda_runtime.h>
-#include <nvtx3/nvtx3.hpp>
 
 #include <cmath>
 #include <cstddef>
@@ -3152,7 +3152,7 @@ float RayTracer::render_hybrid(
         throw std::invalid_argument("foam display requires a complete pool and hierarchy");
     }
     reserve(width, height);
-    nvtx3::scoped_range operation_range{"waterlab/hybrid_raytrace"};
+    detail::NvtxRange operation_range{"waterlab/hybrid_raytrace"};
     check(cudaEventRecord(render_begin_, stream), "record hybrid render begin");
     const dim3 threads(16, 8);
     const dim3 blocks(

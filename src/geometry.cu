@@ -2,8 +2,11 @@
 #include <parallel_mater/geometry.hpp>
 
 #include <cub/cub.cuh>
-#if PARALLEL_MATER_ENABLE_NVTX
+#if PARALLEL_MATER_ENABLE_NVTX && __has_include(<nvtx3/nvtx3.hpp>)
 #include <nvtx3/nvtx3.hpp>
+#define PARALLEL_MATER_HAS_NVTX3 1
+#else
+#define PARALLEL_MATER_HAS_NVTX3 0
 #endif
 
 #include <algorithm>
@@ -24,17 +27,17 @@ constexpr float degenerate_epsilon = 1.0e-20F;
 class StageRange {
   public:
     explicit StageRange(const char *name)
-#if PARALLEL_MATER_ENABLE_NVTX
+#if PARALLEL_MATER_HAS_NVTX3
         : range_(name)
 #endif
     {
-#if !PARALLEL_MATER_ENABLE_NVTX
+#if !PARALLEL_MATER_HAS_NVTX3
         (void)name;
 #endif
     }
 
   private:
-#if PARALLEL_MATER_ENABLE_NVTX
+#if PARALLEL_MATER_HAS_NVTX3
     nvtx3::scoped_range range_;
 #endif
 };
@@ -884,7 +887,7 @@ const char *status_code_name(StatusCode code) noexcept {
 Status compute_normals(DeviceMeshView mesh, SharpEdgeView sharp_edges, Workspace &workspace,
                        NormalOutput &output, cudaStream_t stream) {
 #if PARALLEL_MATER_ENABLE_NVTX
-    nvtx3::scoped_range function_range{"parallel_mater::compute_normals"};
+    StageRange function_range{"parallel_mater::compute_normals"};
 #endif
     output.statistics_ = {};
     Status status = validate_arguments_host(mesh, sharp_edges);
@@ -1074,7 +1077,7 @@ Status compute_normals(DeviceMeshView mesh, SharpEdgeView sharp_edges, Workspace
 Status build_hierarchy(DeviceMeshView mesh, HierarchyOptions options, Workspace &workspace,
                        Hierarchy &output, cudaStream_t stream) {
 #if PARALLEL_MATER_ENABLE_NVTX
-    nvtx3::scoped_range function_range{"parallel_mater::build_hierarchy"};
+    StageRange function_range{"parallel_mater::build_hierarchy"};
 #endif
     output.statistics_ = {};
     Status status = validate_arguments_host(mesh, {});
@@ -1416,7 +1419,7 @@ Status build_hierarchy(DeviceMeshView mesh, HierarchyOptions options, Workspace 
 
 Status refit_hierarchy(DeviceAabbView primitives, Hierarchy &hierarchy, cudaStream_t stream) {
 #if PARALLEL_MATER_ENABLE_NVTX
-    nvtx3::scoped_range function_range{"parallel_mater::refit_hierarchy"};
+    StageRange function_range{"parallel_mater::refit_hierarchy"};
 #endif
     if (primitives.bounds == nullptr || primitives.primitive_count == 0U) {
         return invalid("refit AABB view must contain bounds");
@@ -1466,7 +1469,7 @@ Status refit_hierarchy(DeviceAabbView primitives, Hierarchy &hierarchy, cudaStre
 Status refit_hierarchy_unchecked_async(DeviceAabbView primitives, Hierarchy &hierarchy,
                                        cudaStream_t stream) {
 #if PARALLEL_MATER_ENABLE_NVTX
-    nvtx3::scoped_range function_range{"parallel_mater::refit_hierarchy_async"};
+    StageRange function_range{"parallel_mater::refit_hierarchy_async"};
 #endif
     if (primitives.bounds == nullptr || primitives.primitive_count == 0U) {
         return invalid("refit AABB view must contain bounds");
@@ -1495,7 +1498,7 @@ Status refit_hierarchy_unchecked_async(DeviceAabbView primitives, Hierarchy &hie
 Status build_hierarchy(DeviceAabbView primitives, HierarchyOptions options, Workspace &workspace,
                        Hierarchy &output, cudaStream_t stream) {
 #if PARALLEL_MATER_ENABLE_NVTX
-    nvtx3::scoped_range function_range{"parallel_mater::build_aabb_hierarchy"};
+    StageRange function_range{"parallel_mater::build_aabb_hierarchy"};
 #endif
     if (primitives.bounds == nullptr || primitives.primitive_count == 0) {
         return invalid("AABB view must contain bounds");

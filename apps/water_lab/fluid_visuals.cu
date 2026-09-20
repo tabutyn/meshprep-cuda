@@ -2,11 +2,11 @@
 #include "fluid_visuals.hpp"
 
 #include "fluid_surface.cuh"
+#include "nvtx_range.hpp"
 #include "obstacle_course.hpp"
 #include "particle_cells.cuh"
 
 #include <cuda_runtime.h>
-#include <nvtx3/nvtx3.hpp>
 
 #include <cmath>
 #include <stdexcept>
@@ -519,7 +519,7 @@ float FluidVisuals::update(const float3* positions, const float3* velocities,
     const parallel_mater::Hierarchy& hierarchy, float support_radius, float3 gravity,
     float dt, cudaStream_t stream, bool obstacle_course, ParticleCellView cells)
 {
-    nvtx3::scoped_range range{"waterlab/fluid_visuals"};
+    detail::NvtxRange range{"waterlab/fluid_visuals"};
     const auto statistics = hierarchy.statistics();
     if (!positions || !velocities || !hierarchy.nodes() || !hierarchy.primitive_indices() ||
         statistics.node_count == 0U || statistics.max_depth > 18U ||
