@@ -58,9 +58,10 @@ bindings rather than attempting forward-compatible interpretation.
 
 ## Optional gallery simulation/render views
 
-`<parallel_mater/game.hpp>` is the CUDA-free configuration and campaign entry
-point. It provides fifteen `LevelDefinition` records, fluent
-`SimulationConfig`, validation, goal evaluation, and `Campaign`. The catalog
+`<parallel_mater/recipes.hpp>` is the CUDA-free recipe configuration entry
+point. It provides fifteen `SimulationRecipeInfo` records, fluent
+`RecipeConfig`, and validation; gallery objectives and progression are private
+to the native application. The catalog
 is deliberately component-oriented: the five individual simulations come
 first, followed by fluid pairs, then the remaining cloth, soft-body, and rope
 pairs. Recipes are selected in the native browser or by stable textual slugs;
@@ -76,7 +77,7 @@ be reacquired after every step.
 ```cpp
 parallel_mater::sim::GallerySimulation simulation;
 auto status = parallel_mater::sim::SimulationBuilder(
-        parallel_mater::sim::ExampleContext::water_rope)
+        parallel_mater::sim::SimulationRecipe::water_rope)
     .particles(40'000)
     .rope_nodes(96)
     .iterations(4)
@@ -98,6 +99,9 @@ bond endpoints/rest lengths and per-instance activity. Offset a local endpoint
 by `instance * nodes_per_instance`, render only active bonds, and reacquire the
 view after stepping because solver buffers may swap. The gallery API performs
 no rendering and has no GLFW or OpenGL types.
+
+The complete first-pass public-symbol inventory is in
+[`API_INVENTORY.md`](API_INVENTORY.md).
 
 ## Views and ownership
 

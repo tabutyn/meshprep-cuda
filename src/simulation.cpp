@@ -103,15 +103,15 @@ void check_cuda(cudaError_t status, const char* operation)
                 waterlab::SoftBodyOptions::maximum_instances;
 }
 
-[[nodiscard]] const ExampleContextInfo* context_info(ExampleContext context) noexcept
+[[nodiscard]] const SimulationRecipeInfo* recipe_info(SimulationRecipe recipe) noexcept
 {
-    for (const auto& candidate : example_contexts) {
-        if (candidate.id == context) return &candidate;
+    for (const auto& candidate : simulation_recipes) {
+        if (candidate.recipe == recipe) return &candidate;
     }
     return nullptr;
 }
 
-physics::SmokeOptions smoke_options(ExampleContext context,float timestep)
+physics::SmokeOptions smoke_options(SimulationRecipe context,float timestep)
 {
     physics::SmokeOptions options;
     options.timestep=timestep;
@@ -120,14 +120,14 @@ physics::SmokeOptions smoke_options(ExampleContext context,float timestep)
     options.emitter_center={-2.15F,-0.30F,-1.20F};
     options.emitter_half_extents={0.05F,0.48F,0.52F};
     options.initial_velocity={2.8F,0.12F,0.0F};
-    if (context==ExampleContext::fluid_smoke) {
+    if (context==SimulationRecipe::fluid_smoke) {
         options.particle_count=7'500U;
         options.emitter_center={0.0F,-0.78F,-1.20F};
         options.emitter_half_extents={1.15F,0.04F,0.78F};
         options.initial_velocity={0.0F,0.42F,0.0F};
         options.buoyancy=1.85F;
         options.turbulence_strength=0.72F;
-    } else if (context==ExampleContext::cloth_smoke) {
+    } else if (context==SimulationRecipe::cloth_smoke) {
         options.emitter_center={0.0F,0.10F,1.10F};
         options.emitter_half_extents={0.95F,0.95F,0.04F};
         options.initial_velocity={0.0F,0.05F,-2.9F};
@@ -174,19 +174,19 @@ struct GallerySimulation::Impl {
     [[nodiscard]] std::uint32_t cloth_detail() const noexcept
     {
         return options_.cloth_detail_override.value_or(
-            waterlab::gallery::default_cloth_detail(options_.context));
+            waterlab::gallery::default_cloth_detail(options_.recipe));
     }
 
     explicit Impl(GallerySimulationOptions requested, cudaStream_t stream)
         : options_(requested), asset_path_(requested.soft_body_asset_path)
     {
         options_.soft_body_asset_path = asset_path_;
-        info_ = context_info(options_.context);
+        info_ = recipe_info(options_.recipe);
         if (info_ == nullptr) throw std::invalid_argument("unknown gallery context");
         if (!valid(options_)) {
             throw std::invalid_argument("invalid gallery fixed-step options");
         }
-        if (requires_soft_body_asset(options_.context) && asset_path_.empty()) {
+        if (requires_soft_body_asset(options_.recipe) && asset_path_.empty()) {
             throw std::invalid_argument("gallery context requires a soft-body asset");
         }
 
@@ -195,34 +195,34 @@ struct GallerySimulation::Impl {
             has_component(info_->components, Component::hand_particles);
         const bool water_skin = has_component(info_->components, Component::water_skin);
         const bool deformable = (has_component(info_->components, Component::cloth) &&
-                options_.context!=ExampleContext::water_cloth) ||
+                options_.recipe!=SimulationRecipe::water_cloth) ||
             has_component(info_->components, Component::soft_body) ||
             has_component(info_->components, Component::rope);
         const bool rigid = has_component(info_->components, Component::rigid_bodies);
 
-        const waterlab::gallery::ContextPhysicsOverrides overrides{
+        const waterlab::gallery::RecipePhysicsOverrides overrides{
             options_.fixed_step.timestep,
             options_.solver_iterations_override,
             options_.gravity_override,
             options_.particle_count_override,
             options_.physical_skin_frequency_override};
         const waterlab::HybridOptions physics =
-            waterlab::gallery::make_context_physics(options_.context, overrides);
+            waterlab::gallery::make_recipe_physics(options_.recipe, overrides);
         resolved_physics_ = {
             {physics.fixed_dt}, physics.physics_iterations, physics.gravity,
             physics.obstacle_course};
 
         if (particles || water_skin) {
             hybrid_ = std::make_unique<waterlab::HybridDroplet>(physics);
-            if (options_.context==ExampleContext::water_soft_body &&
+            if (options_.recipe==SimulationRecipe::water_soft_body &&
                 physics.particle_count>256U) {
                 staged_particle_target_=physics.particle_count;
                 hybrid_->resize_particles(256U,stream);
             }
         }
         if (deformable) {
-            deformable_ = waterlab::gallery::make_context_deformable(
-                options_.context, physics, asset_path_, rope_node_count(),
+            deformable_ = waterlab::gallery::make_recipe_deformable(
+                options_.recipe, physics, asset_path_, rope_node_count(),
                 cloth_detail(),
                 options_.bridge_columns_override.value_or(
                     waterlab::rope_bridge_columns),
@@ -237,7 +237,7 @@ struct GallerySimulation::Impl {
         if (has_component(info_->components,Component::smoke)) {
             smoke_=std::make_unique<physics::Smoke>();
             waterlab::detail::throw_if_failed(smoke_->initialize(
-                smoke_options(options_.context,physics.fixed_dt),stream),
+                smoke_options(options_.recipe,physics.fixed_dt),stream),
                 "initialize gallery smoke");
         }
         if (rigid) initialize_rigid_arena(stream);
@@ -252,7 +252,7 @@ struct GallerySimulation::Impl {
         caged_rigid_sphere_view_index_=std::numeric_limits<std::uint32_t>::max();
         rigid_wheel_first_fin_=std::numeric_limits<std::uint32_t>::max();
         rigid_wheel_first_rung_=std::numeric_limits<std::uint32_t>::max();
-        if (options_.context == ExampleContext::water) {
+        if (options_.recipe == SimulationRecipe::water) {
             constexpr std::uint32_t segments = 40U;
             constexpr std::uint32_t rings = 16U;
             std::vector<float3> vertices;
@@ -325,7 +325,7 @@ struct GallerySimulation::Impl {
                 {waterlab::bowl_inner_radius + waterlab::bowl_wall_thickness,
                  waterlab::bowl_inner_radius + waterlab::bowl_wall_thickness,
                  waterlab::bowl_inner_radius + waterlab::bowl_wall_thickness}};
-            rigid_sphere_ = waterlab::gallery::initial_rigid_sphere(options_.context);
+            rigid_sphere_ = waterlab::gallery::initial_rigid_sphere(options_.recipe);
             rigid_views_[1] = {{rigid_vertices_.get() + sphere_vertex_first,
                     sphere.positions.size(),
                     rigid_triangles_.get() + sphere_triangle_first,
@@ -347,10 +347,10 @@ struct GallerySimulation::Impl {
             rigid_count_ = 2U + waterlab::bowl_peg_count;
             return;
         }
-        if (options_.context == ExampleContext::rope ||
-            options_.context == ExampleContext::cloth_rope ||
-            options_.context == ExampleContext::soft_body_rope ||
-            options_.context == ExampleContext::rope_smoke) {
+        if (options_.recipe == SimulationRecipe::rope ||
+            options_.recipe == SimulationRecipe::cloth_rope ||
+            options_.recipe == SimulationRecipe::soft_body_rope ||
+            options_.recipe == SimulationRecipe::rope_smoke) {
             constexpr std::array<float3, 8U> cube_vertices{{
                 {-1.0F, -1.0F, -1.0F}, {1.0F, -1.0F, -1.0F},
                 {1.0F, 1.0F, -1.0F}, {-1.0F, 1.0F, -1.0F},
@@ -374,7 +374,7 @@ struct GallerySimulation::Impl {
             rigid_vertices_.upload(vertices.data(), vertices.size(), stream);
             rigid_triangles_.upload(triangles.data(), triangles.size(), stream);
             rigid_sphere_ = waterlab::gallery::initial_rigid_sphere(
-                options_.context, rope_node_count());
+                options_.recipe, rope_node_count());
             caged_rigid_sphere_ = waterlab::gallery::initial_caged_rigid_sphere(
                 rope_node_count());
             rigid_views_[0] = {{rigid_vertices_.get(), sphere.positions.size(),
@@ -385,7 +385,7 @@ struct GallerySimulation::Impl {
             const DeviceMeshView cube{rigid_vertices_.get() + cube_vertex_first,
                 cube_vertices.size(), rigid_triangles_.get() + cube_triangle_first,
                 cube_triangles.size()};
-            if (options_.context == ExampleContext::rope) {
+            if (options_.recipe == SimulationRecipe::rope) {
                 rigid_views_[1] = {{rigid_vertices_.get(), sphere.positions.size(),
                         rigid_triangles_.get(), sphere.triangles.size()},
                     caged_rigid_sphere_.center, {0,0,0,1},
@@ -410,17 +410,17 @@ struct GallerySimulation::Impl {
                          0.5F*std::fabs(outer-inner)}};
                 }
             }
-            rigid_count_ = options_.context==ExampleContext::rope ? 4U : 3U;
+            rigid_count_ = options_.recipe==SimulationRecipe::rope ? 4U : 3U;
             return;
         }
-        if (options_.context == ExampleContext::cloth ||
-            options_.context == ExampleContext::soft_body ||
-            options_.context == ExampleContext::water_rope ||
-            options_.context == ExampleContext::cloth_soft_body ||
-            options_.context == ExampleContext::smoke ||
-            options_.context == ExampleContext::fluid_smoke ||
-            options_.context == ExampleContext::cloth_smoke ||
-            options_.context == ExampleContext::soft_body_smoke) {
+        if (options_.recipe == SimulationRecipe::cloth ||
+            options_.recipe == SimulationRecipe::soft_body ||
+            options_.recipe == SimulationRecipe::water_rope ||
+            options_.recipe == SimulationRecipe::cloth_soft_body ||
+            options_.recipe == SimulationRecipe::smoke ||
+            options_.recipe == SimulationRecipe::fluid_smoke ||
+            options_.recipe == SimulationRecipe::cloth_smoke ||
+            options_.recipe == SimulationRecipe::soft_body_smoke) {
             constexpr std::array<float3, 8U> cube_vertices{{
                 {-1.0F, -1.0F, -1.0F}, {1.0F, -1.0F, -1.0F},
                 {1.0F, 1.0F, -1.0F}, {-1.0F, 1.0F, -1.0F},
@@ -446,7 +446,7 @@ struct GallerySimulation::Impl {
             rigid_vertices_.upload(vertices.data(), vertices.size(), stream);
             rigid_triangles_.upload(triangles.data(), triangles.size(), stream);
             rigid_sphere_ = waterlab::gallery::initial_rigid_sphere(
-                options_.context, rope_node_count());
+                options_.recipe, rope_node_count());
             rigid_views_[0] = {{rigid_vertices_.get(), sphere.positions.size(),
                     rigid_triangles_.get(), sphere.triangles.size()},
                 rigid_sphere_.center, {0.0F, 0.0F, 0.0F, 1.0F},
@@ -455,13 +455,13 @@ struct GallerySimulation::Impl {
             const DeviceMeshView cube{rigid_vertices_.get() + cube_vertex_first,
                 cube_vertices.size(), rigid_triangles_.get() + cube_triangle_first,
                 cube_triangles.size()};
-            const float3 c = options_.context==ExampleContext::water_rope
+            const float3 c = options_.recipe==SimulationRecipe::water_rope
                 ? waterlab::fishing_tank_center
-                : (options_.context == ExampleContext::soft_body
+                : (options_.recipe == SimulationRecipe::soft_body
                     ? waterlab::low_gallery_box_center : waterlab::gallery_box_center);
-            const float3 h = options_.context==ExampleContext::water_rope
+            const float3 h = options_.recipe==SimulationRecipe::water_rope
                 ? waterlab::fishing_tank_half_extents
-                : (options_.context == ExampleContext::soft_body
+                : (options_.recipe == SimulationRecipe::soft_body
                     ? waterlab::low_gallery_box_half_extents
                     : waterlab::gallery_box_half_extents);
             constexpr float thickness = 0.045F;
@@ -478,25 +478,25 @@ struct GallerySimulation::Impl {
             rigid_views_[6] = {cube, {c.x, c.y, c.z + h.z + thickness}, {0,0,0,1},
                 {h.x, h.y, thickness}};
             rigid_count_ = 7U;
-            if (options_.context == ExampleContext::water_rope) {
+            if (options_.recipe == SimulationRecipe::water_rope) {
                 rigid_views_[0].mesh=cube;
                 rigid_views_[0].scale={1.30F*rigid_sphere_.radius,
                     0.75F*rigid_sphere_.radius,0.72F*rigid_sphere_.radius};
             }
-            if (options_.context == ExampleContext::cloth_soft_body) {
+            if (options_.recipe == SimulationRecipe::cloth_soft_body) {
                 for (std::uint32_t wall = 0U; wall < 6U; ++wall)
                     rigid_views_[wall] = rigid_views_[wall + 1U];
                 rigid_sphere_view_index_ = std::numeric_limits<std::uint32_t>::max();
                 rigid_count_ = 6U;
             }
-            if (options_.context == ExampleContext::smoke ||
-                options_.context == ExampleContext::fluid_smoke ||
-                options_.context == ExampleContext::cloth_smoke ||
-                options_.context == ExampleContext::soft_body_smoke)
+            if (options_.recipe == SimulationRecipe::smoke ||
+                options_.recipe == SimulationRecipe::fluid_smoke ||
+                options_.recipe == SimulationRecipe::cloth_smoke ||
+                options_.recipe == SimulationRecipe::soft_body_smoke)
                 rigid_count_=2U;
             return;
         }
-        if (options_.context == ExampleContext::water_soft_body) {
+        if (options_.recipe == SimulationRecipe::water_soft_body) {
             constexpr std::uint32_t segments = 64U;
             constexpr float shell_half_thickness = 0.045F;
             const float outer = waterlab::water_wheel_shell_radius + shell_half_thickness;
@@ -893,7 +893,7 @@ struct GallerySimulation::Impl {
         if (smoke_) {
             const physics::SmokeParticleView view=smoke_->particles();
             particle_views_[particle_count_++]={view.positions,view.velocities,
-                view.count,view.radius,options_.context==ExampleContext::fluid_smoke
+                view.count,view.radius,options_.recipe==SimulationRecipe::fluid_smoke
                     ? ParticleMaterial::steam : ParticleMaterial::smoke};
         }
         if (hybrid_ && has_component(info_->components, Component::water_skin)) {
@@ -908,7 +908,7 @@ struct GallerySimulation::Impl {
             // historical cage-bound "glass skin" is deliberately not part of
             // the public render surface now that the glass object is a rigid
             // body in rigid_bodies[1].
-            if (options_.context!=ExampleContext::rope) {
+            if (options_.recipe!=SimulationRecipe::rope) {
                 surface_views_[surface_count_++] = {
                     {view.positions, view.vertex_count, view.triangles,
                      view.triangle_count},view.vertex_normals,view.texcoords,
@@ -962,9 +962,9 @@ struct GallerySimulation::Impl {
             physics::SmokeSphereCollider collider{
                 rigid_sphere_.center,rigid_sphere_.velocity,
                 rigid_sphere_.radius,0.2F};
-            const bool collide=options_.context==ExampleContext::smoke ||
-                options_.context==ExampleContext::soft_body_smoke ||
-                options_.context==ExampleContext::rope_smoke;
+            const bool collide=options_.recipe==SimulationRecipe::smoke ||
+                options_.recipe==SimulationRecipe::soft_body_smoke ||
+                options_.recipe==SimulationRecipe::rope_smoke;
             waterlab::detail::throw_if_failed(smoke_->step(
                 {{},collide ? &collider : nullptr,collide ? 1U : 0U},
                 smoke_timing,stream),"advance gallery smoke");
@@ -978,31 +978,31 @@ struct GallerySimulation::Impl {
                     256U+(range*staged_spawn_frame_+299U)/300U),stream);
             }
             const bool dynamic_sphere =
-                options_.context == ExampleContext::water ||
-                options_.context == ExampleContext::water_rope ||
-                options_.context == ExampleContext::water_soft_body;
+                options_.recipe == SimulationRecipe::water ||
+                options_.recipe == SimulationRecipe::water_rope ||
+                options_.recipe == SimulationRecipe::water_soft_body;
             const auto timing = hybrid_->step(
                 {}, 0.0F, stream, deformable_.get(), false,
                 dynamic_sphere ? &rigid_sphere_ : nullptr,
-                options_.context == ExampleContext::water_soft_body
+                options_.recipe == SimulationRecipe::water_soft_body
                     ? &water_wheel_ : nullptr,
-                options_.context == ExampleContext::water_soft_body
+                options_.recipe == SimulationRecipe::water_soft_body
                     ? &resolved_physics_.gravity : nullptr);
             gpu_time += timing.gpu_total_ms();
-            if (options_.context==ExampleContext::fluid_smoke &&
+            if (options_.recipe==SimulationRecipe::fluid_smoke &&
                 hybrid_->statistics().particle_count>256U &&
                 (hybrid_->statistics().frame_index&1U)==0U)
                 hybrid_->resize_particles(std::max(256U,
                     hybrid_->statistics().particle_count-16U),stream);
         } else if (deformable_) {
-            const bool rolling_rigid = options_.context == ExampleContext::cloth ||
-                options_.context == ExampleContext::soft_body ||
-                options_.context == ExampleContext::rope ||
-                options_.context == ExampleContext::cloth_rope ||
-                options_.context == ExampleContext::soft_body_rope;
+            const bool rolling_rigid = options_.recipe == SimulationRecipe::cloth ||
+                options_.recipe == SimulationRecipe::soft_body ||
+                options_.recipe == SimulationRecipe::rope ||
+                options_.recipe == SimulationRecipe::cloth_rope ||
+                options_.recipe == SimulationRecipe::soft_body_rope;
             waterlab::SoftBodyTimings timing{};
             if (smoke_) {
-                if (options_.context==ExampleContext::cloth_smoke) {
+                if (options_.recipe==SimulationRecipe::cloth_smoke) {
                     deformable_->set_pinned_rotation_z(
                         make_float3(0.0F,0.15F,-1.20F),smoke_rotor_angle_,stream);
                 }
@@ -1010,9 +1010,9 @@ struct GallerySimulation::Impl {
                 const std::uint32_t substeps=resolved_physics_.solver_iterations;
                 const float dt=resolved_physics_.fixed_step.timestep/
                     static_cast<float>(substeps);
-                const bool rolling=options_.context==ExampleContext::soft_body_smoke ||
-                    options_.context==ExampleContext::rope_smoke;
-                const float3 body_gravity=options_.context==ExampleContext::soft_body_smoke
+                const bool rolling=options_.recipe==SimulationRecipe::soft_body_smoke ||
+                    options_.recipe==SimulationRecipe::rope_smoke;
+                const float3 body_gravity=options_.recipe==SimulationRecipe::soft_body_smoke
                     ? resolved_physics_.gravity : make_float3(0,0,0);
                 for (std::uint32_t substep=0U;substep<substeps;++substep) {
                     if (rolling) {
@@ -1024,8 +1024,8 @@ struct GallerySimulation::Impl {
                         rigid_sphere_.center.z+=rigid_sphere_.velocity.z*dt;
                         waterlab::project_gallery_contact(rigid_sphere_.center,
                             rigid_sphere_.velocity,rigid_sphere_.radius,
-                            waterlab::gallery::make_context_physics(
-                                options_.context).arena);
+                            waterlab::gallery::make_recipe_physics(
+                                options_.recipe).arena);
                     }
                     deformable_->prepare_substep(dt,body_gravity,stream);
                     if (rolling)
@@ -1040,7 +1040,7 @@ struct GallerySimulation::Impl {
                     deformable_->finish_substep(dt,body_gravity,stream);
                 }
                 timing=deformable_->finish_frame(stream);
-                if (options_.context==ExampleContext::cloth_smoke) {
+                if (options_.recipe==SimulationRecipe::cloth_smoke) {
                     const float torque=deformable_->wheel_rim_reaction_torque(
                         make_float3(0.0F,0.15F,-1.20F),stream);
                     const float dt=resolved_physics_.fixed_step.timestep;
@@ -1051,15 +1051,15 @@ struct GallerySimulation::Impl {
                             (1.0F+0.8F*dt),-3.0F,3.0F);
                     smoke_rotor_angle_+=smoke_rotor_angular_velocity_*dt;
                 }
-            } else if (options_.context == ExampleContext::rope) {
+            } else if (options_.recipe == SimulationRecipe::rope) {
                 const auto lattice = deformable_->lattice_view();
                 timing = deformable_->step_with_tethered_rigid_spheres(
                     rigid_sphere_, lattice.voxels_per_instance - 1U,
                     rigid_sphere_.radius + lattice.voxel_radius,
                     caged_rigid_sphere_,
                     resolved_physics_.gravity, stream);
-            } else if (options_.context == ExampleContext::cloth_rope ||
-                       options_.context == ExampleContext::soft_body_rope) {
+            } else if (options_.recipe == SimulationRecipe::cloth_rope ||
+                       options_.recipe == SimulationRecipe::soft_body_rope) {
                 timing = deformable_->step_with_rigid_sphere(rigid_sphere_,
                     make_float3(0.0F,0.0F,0.0F),resolved_physics_.gravity,stream);
             } else if (rolling_rigid) {
@@ -1069,7 +1069,7 @@ struct GallerySimulation::Impl {
                 timing = deformable_->step(resolved_physics_.gravity, stream);
             }
             gpu_time += timing.gpu_total_ms()+smoke_timing.couple_ms;
-        } else if (smoke_ && options_.context==ExampleContext::smoke) {
+        } else if (smoke_ && options_.recipe==SimulationRecipe::smoke) {
             const float dt=resolved_physics_.fixed_step.timestep;
             rigid_sphere_.velocity.x+=resolved_physics_.gravity.x*dt;
             rigid_sphere_.velocity.y+=resolved_physics_.gravity.y*dt;
@@ -1097,37 +1097,37 @@ struct GallerySimulation::Impl {
             }
         }
         if (deformable_) {
-            if (options_.context == ExampleContext::water_soft_body) {
+            if (options_.recipe == SimulationRecipe::water_soft_body) {
                 deformable_->set_pinned_rotation_z(
                     waterlab::water_wheel_center, 0.0F, stream);
             }
             deformable_->reset(stream);
-            waterlab::gallery::initialize_context_motion(
-                options_.context, *deformable_);
+            waterlab::gallery::initialize_recipe_motion(
+                options_.recipe, *deformable_);
         }
         if (smoke_) waterlab::detail::throw_if_failed(
             smoke_->reset(stream),"reset gallery smoke");
         smoke_rotor_angle_=0.0F;
         smoke_rotor_angular_velocity_=0.0F;
-        if (options_.context == ExampleContext::cloth ||
-            options_.context == ExampleContext::soft_body ||
-            options_.context == ExampleContext::water ||
-            options_.context == ExampleContext::water_rope ||
-            options_.context == ExampleContext::rope ||
-            options_.context == ExampleContext::cloth_rope ||
-            options_.context == ExampleContext::soft_body_rope ||
-            options_.context == ExampleContext::smoke ||
-            options_.context == ExampleContext::fluid_smoke ||
-            options_.context == ExampleContext::cloth_smoke ||
-            options_.context == ExampleContext::soft_body_smoke ||
-            options_.context == ExampleContext::rope_smoke) {
+        if (options_.recipe == SimulationRecipe::cloth ||
+            options_.recipe == SimulationRecipe::soft_body ||
+            options_.recipe == SimulationRecipe::water ||
+            options_.recipe == SimulationRecipe::water_rope ||
+            options_.recipe == SimulationRecipe::rope ||
+            options_.recipe == SimulationRecipe::cloth_rope ||
+            options_.recipe == SimulationRecipe::soft_body_rope ||
+            options_.recipe == SimulationRecipe::smoke ||
+            options_.recipe == SimulationRecipe::fluid_smoke ||
+            options_.recipe == SimulationRecipe::cloth_smoke ||
+            options_.recipe == SimulationRecipe::soft_body_smoke ||
+            options_.recipe == SimulationRecipe::rope_smoke) {
             rigid_sphere_ = waterlab::gallery::initial_rigid_sphere(
-                options_.context, rope_node_count());
-            if (options_.context==ExampleContext::rope)
+                options_.recipe, rope_node_count());
+            if (options_.recipe==SimulationRecipe::rope)
                 caged_rigid_sphere_=waterlab::gallery::initial_caged_rigid_sphere(
                     rope_node_count());
         }
-        if (options_.context == ExampleContext::water_soft_body)
+        if (options_.recipe == SimulationRecipe::water_soft_body)
             water_wheel_ = {};
         refresh_views();
         refresh_statistics(0.0F);
@@ -1136,7 +1136,7 @@ struct GallerySimulation::Impl {
     GallerySimulationOptions options_{};
     ResolvedPhysicsOptions resolved_physics_{};
     std::string asset_path_;
-    const ExampleContextInfo* info_{};
+    const SimulationRecipeInfo* info_{};
     std::unique_ptr<waterlab::HybridDroplet> hybrid_;
     std::unique_ptr<waterlab::SoftBodyCourse> deformable_;
     std::unique_ptr<physics::Smoke> smoke_;
@@ -1185,13 +1185,13 @@ Status GallerySimulation::create(
 Status GallerySimulation::initialize(
     GallerySimulationOptions options, cudaStream_t stream) noexcept
 {
-    if (context_info(options.context) == nullptr) {
+    if (recipe_info(options.recipe) == nullptr) {
         return invalid("unknown gallery simulation context");
     }
     if (!valid(options)) {
         return invalid("invalid gallery simulation options");
     }
-    if (requires_soft_body_asset(options.context) &&
+    if (requires_soft_body_asset(options.recipe) &&
         options.soft_body_asset_path.empty()) {
         return invalid("this gallery context requires a soft-body .msb asset path");
     }
@@ -1269,9 +1269,9 @@ bool GallerySimulation::initialized() const noexcept
     return static_cast<bool>(impl_);
 }
 
-ExampleContext GallerySimulation::context() const noexcept
+SimulationRecipe GallerySimulation::recipe() const noexcept
 {
-    return impl_ ? impl_->options_.context : ExampleContext::water;
+    return impl_ ? impl_->options_.recipe : SimulationRecipe::water;
 }
 
 GallerySimulationOptions GallerySimulation::options() const noexcept
@@ -1370,10 +1370,11 @@ SimulationBuilder& SimulationBuilder::soft_body_asset(std::string path)
 Status SimulationBuilder::build(
     GallerySimulation& output, cudaStream_t stream) const noexcept
 {
-    const ConfigError error = validate(config_);
-    if (error != ConfigError::none) return invalid(describe(error).data());
+    const RecipeConfigError error = validate_recipe_config(config_);
+    if (error != RecipeConfigError::none)
+        return invalid(recipe_config_error_message(error).data());
     GallerySimulationOptions options;
-    options.context = config_.context;
+    options.recipe = config_.recipe;
     options.fixed_step.timestep = config_.fixed_timestep;
     options.solver_iterations_override = config_.solver_iterations;
     options.gravity_override = gravity_;

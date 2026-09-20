@@ -14,28 +14,28 @@
 
 namespace waterlab::gallery {
 
-const meshprep::sim::ExampleContextInfo& context_info(
-    meshprep::sim::ExampleContext context) noexcept
+const meshprep::sim::SimulationRecipeInfo& recipe_info(
+    meshprep::sim::SimulationRecipe context) noexcept
 {
-    for (const auto& item : meshprep::sim::example_contexts) {
-        if (item.id == context) return item;
+    for (const auto& item : meshprep::sim::simulation_recipes) {
+        if (item.recipe == context) return item;
     }
-    return meshprep::sim::example_contexts.front();
+    return meshprep::sim::simulation_recipes.front();
 }
 
-bool context_has(
-    meshprep::sim::ExampleContext context,
+bool recipe_has(
+    meshprep::sim::SimulationRecipe context,
     meshprep::sim::Component component) noexcept
 {
-    return meshprep::sim::has_component(context_info(context).components, component);
+    return meshprep::sim::has_component(recipe_info(context).components, component);
 }
 
-HybridOptions make_context_physics(
-    meshprep::sim::ExampleContext context,
-    const ContextPhysicsOverrides& overrides) noexcept
+HybridOptions make_recipe_physics(
+    meshprep::sim::SimulationRecipe context,
+    const RecipePhysicsOverrides& overrides) noexcept
 {
-    using meshprep::sim::ExampleContext;
-    const bool course = context == ExampleContext::water_cloth;
+    using meshprep::sim::SimulationRecipe;
+    const bool course = context == SimulationRecipe::water_cloth;
     HybridOptions options = course ? course_options() : HybridOptions{};
     if (course) {
         // Water-Cloth's authored neutral preset. These values are deliberately
@@ -56,7 +56,7 @@ HybridOptions make_context_physics(
         options.physical_skin_frequency = 3U;
         options.render_skin_frequency = 12U;
     }
-    if (context == ExampleContext::water) {
+    if (context == SimulationRecipe::water) {
         options.gravity = make_float3(0.0F, -19.62F, 0.0F);
         options.particle_count = 20'000U;
         options.particle_capacity = 20'000U;
@@ -64,7 +64,7 @@ HybridOptions make_context_physics(
         // A lower-repulsion HCP fill retains a compact pile instead of
         // spreading across the bowl under the authored two-g load.
         options.particle_repulsion = 50.0F;
-    } else if (context == ExampleContext::water_rope) {
+    } else if (context == SimulationRecipe::water_rope) {
         options.particle_count = 40'000U;
         options.particle_capacity = 40'000U;
         options.particle_initial_center = make_float3(0.0F,-0.78F,-1.15F);
@@ -73,13 +73,13 @@ HybridOptions make_context_physics(
         // authored stiffness at four substeps; 500 merely hides a sparse
         // initial fill and makes the explicit particle solve much harsher.
         options.particle_repulsion = 120.0F;
-    } else if (context == ExampleContext::water_soft_body) {
+    } else if (context == SimulationRecipe::water_soft_body) {
         options.particle_count = 20'000U;
         options.particle_capacity = 20'000U;
         const float spawn_x = water_wheel_entry_x - 2.15F;
         options.particle_initial_center = make_float3(
             spawn_x, water_wheel_inlet_height(spawn_x) + 0.32F, 0.0F);
-    } else if (context == ExampleContext::fluid_smoke) {
+    } else if (context == SimulationRecipe::fluid_smoke) {
         // A shallow pool sits on the heated floor while the independent smoke
         // system emits steam above it. Keeping the two particle populations
         // separate makes the phase boundary explicit in the public API.
@@ -106,42 +106,42 @@ HybridOptions make_context_physics(
     }
     options.obstacle_course = course;
     if (course) options.arena = GalleryArena::course;
-    else if (context == ExampleContext::water)
+    else if (context == SimulationRecipe::water)
         options.arena = GalleryArena::bowl;
-    else if (context == ExampleContext::water_soft_body)
+    else if (context == SimulationRecipe::water_soft_body)
         options.arena = GalleryArena::water_wheel;
-    else if (context == ExampleContext::water_rope)
+    else if (context == SimulationRecipe::water_rope)
         options.arena = GalleryArena::fishing_tank;
-    else if (context == ExampleContext::soft_body)
+    else if (context == SimulationRecipe::soft_body)
         options.arena = GalleryArena::low_ceiling_box;
-    else if (context == ExampleContext::cloth)
+    else if (context == SimulationRecipe::cloth)
         options.arena = GalleryArena::enclosed_box;
-    else if (context == ExampleContext::cloth_soft_body)
+    else if (context == SimulationRecipe::cloth_soft_body)
         options.arena = GalleryArena::ground_box;
-    else if (context == ExampleContext::rope)
+    else if (context == SimulationRecipe::rope)
         options.arena = GalleryArena::rope_post;
-    else if (context == ExampleContext::soft_body_rope)
+    else if (context == SimulationRecipe::soft_body_rope)
         options.arena = GalleryArena::rope_bridge;
-    else if (context == ExampleContext::cloth_rope)
+    else if (context == SimulationRecipe::cloth_rope)
         options.arena = GalleryArena::rope_bridge;
-    else if (context == ExampleContext::smoke ||
-            context == ExampleContext::cloth_smoke)
+    else if (context == SimulationRecipe::smoke ||
+            context == SimulationRecipe::cloth_smoke)
         options.arena = GalleryArena::ground;
-    else if (context == ExampleContext::soft_body_smoke)
+    else if (context == SimulationRecipe::soft_body_smoke)
         options.arena = GalleryArena::grass;
-    else if (context == ExampleContext::fluid_smoke)
+    else if (context == SimulationRecipe::fluid_smoke)
         options.arena = GalleryArena::hot_pan;
-    else if (context == ExampleContext::rope_smoke)
+    else if (context == SimulationRecipe::rope_smoke)
         options.arena = GalleryArena::rope_bridge;
     options.particle_skin_coupling =
-        context != ExampleContext::water &&
-        context != ExampleContext::water_rope &&
-        context != ExampleContext::water_soft_body;
+        context != SimulationRecipe::water &&
+        context != SimulationRecipe::water_rope &&
+        context != SimulationRecipe::water_soft_body;
     return options;
 }
 
-std::unique_ptr<SoftBodyCourse> make_context_deformable(
-    meshprep::sim::ExampleContext context,
+std::unique_ptr<SoftBodyCourse> make_recipe_deformable(
+    meshprep::sim::SimulationRecipe context,
     const HybridOptions& physics,
     std::string_view soft_body_asset_path,
     std::uint32_t rope_node_count,
@@ -154,30 +154,30 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
     SoftBodyOptions options;
     options.fixed_dt = physics.fixed_dt;
     options.solver_substeps = physics.physics_iterations;
-    if (context == meshprep::sim::ExampleContext::soft_body ||
-        context == meshprep::sim::ExampleContext::water_soft_body ||
-        context == meshprep::sim::ExampleContext::cloth_soft_body ||
-        context == meshprep::sim::ExampleContext::water_rope ||
-        context == meshprep::sim::ExampleContext::rope ||
-        context == meshprep::sim::ExampleContext::cloth_rope ||
-        context == meshprep::sim::ExampleContext::soft_body_rope)
+    if (context == meshprep::sim::SimulationRecipe::soft_body ||
+        context == meshprep::sim::SimulationRecipe::water_soft_body ||
+        context == meshprep::sim::SimulationRecipe::cloth_soft_body ||
+        context == meshprep::sim::SimulationRecipe::water_rope ||
+        context == meshprep::sim::SimulationRecipe::rope ||
+        context == meshprep::sim::SimulationRecipe::cloth_rope ||
+        context == meshprep::sim::SimulationRecipe::soft_body_rope)
         options.spring_solver_iterations = 16U;
     options.maximum_speed = physics.maximum_skin_speed;
     // The cloth carries its own weight from two pins before any impact.
     options.strength_multiplier =
-        context_has(context, meshprep::sim::Component::cloth) ||
-        context == meshprep::sim::ExampleContext::soft_body ||
-        context == meshprep::sim::ExampleContext::water_soft_body ||
-        context == meshprep::sim::ExampleContext::cloth_soft_body
+        recipe_has(context, meshprep::sim::Component::cloth) ||
+        context == meshprep::sim::SimulationRecipe::soft_body ||
+        context == meshprep::sim::SimulationRecipe::water_soft_body ||
+        context == meshprep::sim::SimulationRecipe::cloth_soft_body
         ? 1.5F : 0.5F;
-    if (context == meshprep::sim::ExampleContext::soft_body) {
+    if (context == meshprep::sim::SimulationRecipe::soft_body) {
         // A bonded column must support gravity before any impact. These values
         // sit well below the live maxima, leaving meaningful room for both the
         // SOFT SPRING and SOFT BOND controls to strengthen it further.
         options.spring_stiffness = 80'000.0F;
         options.strength_multiplier = 8.0F;
         options.velocity_damping = 0.45F;
-    } else if (context == meshprep::sim::ExampleContext::cloth_soft_body) {
+    } else if (context == meshprep::sim::SimulationRecipe::cloth_soft_body) {
         // The free sphere is a load-bearing volume, not a tearable cloth. Its
         // dense rest graph and non-bonded barrier preserve volume while the
         // low ground drag above lets that volume translate and roll.
@@ -187,7 +187,7 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         options.unbonded_voxel_collisions = true;
         options.velocity_damping = 0.45F;
         options.cross_source_mass_multiplier = 8.0F;
-    } else if (context == meshprep::sim::ExampleContext::cloth) {
+    } else if (context == meshprep::sim::SimulationRecipe::cloth) {
         // Impact strain is sampled before projection in this scene. Require a
         // persistent but locally reachable strain so rolling contact can tear
         // the sheet without treating one gravity-loaded solve as damage.
@@ -197,25 +197,25 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         // the measured rigid-contact impulse in the contact pass below.
         options.strength_multiplier = 8.0F;
         options.fracture_persistence_substeps = 16U;
-    } else if (context == meshprep::sim::ExampleContext::water_rope) {
+    } else if (context == meshprep::sim::SimulationRecipe::water_rope) {
         options.spring_stiffness = 22'000.0F;
         options.strength_multiplier = 64.0F;
         options.spring_damping_ratio = 0.92F;
         options.velocity_damping = 0.65F;
         options.render_internal_members = true;
-    } else if (context == meshprep::sim::ExampleContext::water_soft_body) {
+    } else if (context == meshprep::sim::SimulationRecipe::water_soft_body) {
         // Shared by the top stage and the extruded outer wheel. It controls
         // rigid-ball rolling only; water and wheel gravity remain authored.
         options.ground_friction = 10.0F;
-    } else if (context == meshprep::sim::ExampleContext::rope) {
+    } else if (context == meshprep::sim::SimulationRecipe::rope) {
         options.spring_stiffness = 18'000.0F;
         options.strength_multiplier = 64.0F;
         options.spring_damping_ratio = 0.9F;
         options.velocity_damping = 0.35F;
         options.render_internal_members = true;
-    } else if (context == meshprep::sim::ExampleContext::cloth_rope ||
-               context == meshprep::sim::ExampleContext::soft_body_rope ||
-               context == meshprep::sim::ExampleContext::rope_smoke) {
+    } else if (context == meshprep::sim::SimulationRecipe::cloth_rope ||
+               context == meshprep::sim::SimulationRecipe::soft_body_rope ||
+               context == meshprep::sim::SimulationRecipe::rope_smoke) {
         options.spring_stiffness = 32'000.0F;
         options.strength_multiplier = 64.0F;
         options.spring_damping_ratio = 0.92F;
@@ -223,31 +223,31 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         options.render_internal_members = true;
     }
     options.course_board_collisions =
-        context != meshprep::sim::ExampleContext::water_soft_body;
+        context != meshprep::sim::SimulationRecipe::water_soft_body;
     options.arena = physics.arena;
     options.render_internal_members =
-        context == meshprep::sim::ExampleContext::water_rope ||
-        context == meshprep::sim::ExampleContext::rope ||
-        context == meshprep::sim::ExampleContext::cloth_rope ||
-        context == meshprep::sim::ExampleContext::soft_body_rope ||
-        context == meshprep::sim::ExampleContext::rope_smoke;
+        context == meshprep::sim::SimulationRecipe::water_rope ||
+        context == meshprep::sim::SimulationRecipe::rope ||
+        context == meshprep::sim::SimulationRecipe::cloth_rope ||
+        context == meshprep::sim::SimulationRecipe::soft_body_rope ||
+        context == meshprep::sim::SimulationRecipe::rope_smoke;
     options.fracture_before_projection =
-        context == meshprep::sim::ExampleContext::cloth ||
-        context == meshprep::sim::ExampleContext::cloth_soft_body;
+        context == meshprep::sim::SimulationRecipe::cloth ||
+        context == meshprep::sim::SimulationRecipe::cloth_soft_body;
     options.preserve_fractured_triangle_shape =
-        context == meshprep::sim::ExampleContext::cloth ||
-        context == meshprep::sim::ExampleContext::cloth_soft_body;
+        context == meshprep::sim::SimulationRecipe::cloth ||
+        context == meshprep::sim::SimulationRecipe::cloth_soft_body;
 
-    using meshprep::sim::ExampleContext;
-    if (context == ExampleContext::water ||
-        context == ExampleContext::water_cloth ||
-        context == ExampleContext::smoke ||
-        context == ExampleContext::fluid_smoke) return {};
+    using meshprep::sim::SimulationRecipe;
+    if (context == SimulationRecipe::water ||
+        context == SimulationRecipe::water_cloth ||
+        context == SimulationRecipe::smoke ||
+        context == SimulationRecipe::fluid_smoke) return {};
 
     options.instance_count = 1U;
     options.use_course_layout = false;
     options.require_1000_voxels = false;
-    if (context == ExampleContext::rope) {
+    if (context == SimulationRecipe::rope) {
         rope_node_count = std::clamp(rope_node_count, 8U, 512U);
         const std::uint32_t authored_nodes=std::max(16U,rope_node_count);
         const std::uint32_t trunk_nodes=std::max(8U,authored_nodes/2U);
@@ -260,7 +260,7 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         rope = translate_soft_body_asset(std::move(rope), rope_anchor);
         return std::make_unique<SoftBodyCourse>(std::move(rope), options);
     }
-    if (context == ExampleContext::water_rope) {
+    if (context == SimulationRecipe::water_rope) {
         rope_node_count=std::clamp(rope_node_count,16U,512U);
         const float spacing=3.85F/static_cast<float>(rope_node_count-1U);
         SoftBodyAsset fishing_rope=make_soft_rope(rope_node_count,spacing);
@@ -275,21 +275,21 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
             std::move(fishing_rope),hanging);
         return std::make_unique<SoftBodyCourse>(std::move(fishing_rope),options);
     }
-    if (context == ExampleContext::cloth_rope ||
-        context == ExampleContext::soft_body_rope ||
-        context == ExampleContext::rope_smoke) {
+    if (context == SimulationRecipe::cloth_rope ||
+        context == SimulationRecipe::soft_body_rope ||
+        context == SimulationRecipe::rope_smoke) {
         bridge_columns=std::clamp(bridge_columns,2U,16U);
         bridge_rows=std::clamp(bridge_rows,2U,64U);
         options.rope_bridge_columns=bridge_columns;
         options.rope_bridge_rows=bridge_rows;
         options.rope_bridge_nodes_per_tile=
-            context==ExampleContext::soft_body_rope ? 256U : 36U;
-        SoftBodyAsset bridge = context==ExampleContext::soft_body_rope
+            context==SimulationRecipe::soft_body_rope ? 256U : 36U;
+        SoftBodyAsset bridge = context==SimulationRecipe::soft_body_rope
             ? make_dense_tile_rope_bridge(bridge_columns,bridge_rows)
             : make_rope_bridge(bridge_columns,bridge_rows,true);
         return std::make_unique<SoftBodyCourse>(std::move(bridge), options);
     }
-    if (context == ExampleContext::cloth_smoke) {
+    if (context == SimulationRecipe::cloth_smoke) {
         // Four independent cloth blades share a pinned hub. The blades are
         // pitched 30 degrees about their radial axes so the smoke stream has
         // a non-zero tangential load instead of striking a symmetric sheet.
@@ -324,7 +324,7 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         options.velocity_damping=0.6F;
         return std::make_unique<SoftBodyCourse>(std::move(windmill),options);
     }
-    if (context == ExampleContext::cloth) {
+    if (context == SimulationRecipe::cloth) {
         cloth_detail = cloth_detail == 0U
             ? default_cloth_detail(context)
             : std::clamp(cloth_detail, 1U, 8U);
@@ -364,7 +364,7 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         return std::make_unique<SoftBodyCourse>(std::move(asset), options);
     }
 
-    if (context == ExampleContext::cloth_soft_body) {
+    if (context == SimulationRecipe::cloth_soft_body) {
         SoftBodyAsset sphere = make_soft_sphere();
         const float spacing = sphere.nominal_spacing;
         sphere = translate_soft_body_asset(std::move(sphere),
@@ -425,11 +425,11 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         SoftBodyAsset cloth_surfaces = merge_soft_body_assets(curtain, ground_cloth);
         auto result = std::make_unique<SoftBodyCourse>(
             merge_soft_body_assets(sphere, cloth_surfaces), options);
-        initialize_context_motion(context, *result);
+        initialize_recipe_motion(context, *result);
         return result;
     }
 
-    if (context == ExampleContext::water_soft_body) {
+    if (context == SimulationRecipe::water_soft_body) {
         // Compact cross arms terminate at the smaller external inertial wheel.
         SoftBodyAsset front = translate_soft_body_asset(
             make_soft_cross(17U, 5U, 0.085F), make_float3(
@@ -451,7 +451,7 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
 
     SoftBodyAsset cylinder = load_soft_body_asset(std::string(soft_body_asset_path));
 
-    if (context == ExampleContext::soft_body_smoke) {
+    if (context == SimulationRecipe::soft_body_smoke) {
         // Reuse the imported volumetric lattice as a field of short green
         // bristles. Each instance retains its pinned root and all internal
         // bonds, so smoke and the rolling sphere bend actual soft bodies.
@@ -482,7 +482,7 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
         return std::make_unique<SoftBodyCourse>(std::move(cylinder),options);
     }
 
-    if (context == ExampleContext::soft_body) {
+    if (context == SimulationRecipe::soft_body) {
         cylinder_columns=std::clamp(cylinder_columns,1U,16U);
         cylinder_rows=std::clamp(cylinder_rows,1U,16U);
         while (cylinder_columns*cylinder_rows>SoftBodyOptions::maximum_instances)
@@ -545,23 +545,23 @@ std::unique_ptr<SoftBodyCourse> make_context_deformable(
     return std::make_unique<SoftBodyCourse>(std::move(cylinder), options);
 }
 
-FluidDisplay default_context_display(meshprep::sim::ExampleContext context) noexcept
+FluidDisplay default_recipe_display(meshprep::sim::SimulationRecipe context) noexcept
 {
-    return context == meshprep::sim::ExampleContext::water_cloth ||
-        context == meshprep::sim::ExampleContext::water ||
-        context == meshprep::sim::ExampleContext::water_rope ||
-        context == meshprep::sim::ExampleContext::water_soft_body ||
-        context == meshprep::sim::ExampleContext::fluid_smoke
+    return context == meshprep::sim::SimulationRecipe::water_cloth ||
+        context == meshprep::sim::SimulationRecipe::water ||
+        context == meshprep::sim::SimulationRecipe::water_rope ||
+        context == meshprep::sim::SimulationRecipe::water_soft_body ||
+        context == meshprep::sim::SimulationRecipe::fluid_smoke
         ? FluidDisplay::Surface : FluidDisplay::Particles;
 }
 
 RigidSphereState initial_rigid_sphere(
-    meshprep::sim::ExampleContext context, std::uint32_t rope_node_count) noexcept
+    meshprep::sim::SimulationRecipe context, std::uint32_t rope_node_count) noexcept
 {
     RigidSphereState sphere;
     sphere.radius = 0.40F;
     sphere.mass = 20.0F;
-    if (context == meshprep::sim::ExampleContext::water) {
+    if (context == meshprep::sim::SimulationRecipe::water) {
         sphere.radius = 0.34F;
         // One particle has unit simulation mass. This exceeds the roughly
         // 2,500 particles displaced by the sphere, so it settles on the bowl
@@ -569,14 +569,14 @@ RigidSphereState initial_rigid_sphere(
         sphere.mass = 3'500.0F;
         sphere.center = make_float3(0.0F, 0.80F, -1.8F);
         sphere.velocity = make_float3(0.35F, -0.15F, 0.0F);
-    } else if (context == meshprep::sim::ExampleContext::cloth) {
+    } else if (context == meshprep::sim::SimulationRecipe::cloth) {
         // Start far enough from the tensioned cloth to make the approach
         // legible. Its lower pinned row is buried below the floor rather than
         // protruding into the sphere's path as an invisible curb.
         sphere.center = make_float3(0.0F, 0.18F, 1.45F);
         sphere.velocity = make_float3(0.0F, 0.0F, 0.0F);
         sphere.mass = 250.0F;
-    } else if (context == meshprep::sim::ExampleContext::water_rope) {
+    } else if (context == meshprep::sim::SimulationRecipe::water_rope) {
         // A sphere remains the conservative fluid/contact proxy while the
         // renderer presents it as a treasure chest.
         sphere.radius = fishing_chest_radius;
@@ -585,12 +585,12 @@ RigidSphereState initial_rigid_sphere(
         sphere.mass = 3'500.0F;
         sphere.center = fishing_chest_start;
         sphere.velocity = {};
-    } else if (context == meshprep::sim::ExampleContext::soft_body) {
+    } else if (context == meshprep::sim::SimulationRecipe::soft_body) {
         sphere.radius = 0.34F;
         sphere.mass = 80.0F;
         sphere.center = make_float3(-2.0F, course_floor_y + sphere.radius, -1.8F);
         sphere.velocity = make_float3(1.8F, 0.0F, 0.0F);
-    } else if (context == meshprep::sim::ExampleContext::water_soft_body) {
+    } else if (context == meshprep::sim::SimulationRecipe::water_soft_body) {
         // Start on the right stage and cross over the wheel toward the open
         // left exit. Bumper rails confine lateral motion to the stage.
         sphere.radius = 0.26F;
@@ -601,7 +601,7 @@ RigidSphereState initial_rigid_sphere(
             water_wheel_top_platform_y + sphere.radius,
             water_wheel_stage_z);
         sphere.velocity = {};
-    } else if (context == meshprep::sim::ExampleContext::rope) {
+    } else if (context == meshprep::sim::SimulationRecipe::rope) {
         rope_node_count = std::clamp(rope_node_count, 16U, 512U);
         const std::uint32_t trunk_nodes=std::max(8U,rope_node_count/2U);
         const std::uint32_t branch_nodes=std::max(
@@ -623,29 +623,29 @@ RigidSphereState initial_rigid_sphere(
             endpoint.y,
             endpoint.z+direction.z*(sphere.radius+node_radius));
         sphere.velocity = {};
-    } else if (context == meshprep::sim::ExampleContext::cloth_rope ||
-               context == meshprep::sim::ExampleContext::soft_body_rope ||
-               context == meshprep::sim::ExampleContext::rope_smoke) {
+    } else if (context == meshprep::sim::SimulationRecipe::cloth_rope ||
+               context == meshprep::sim::SimulationRecipe::soft_body_rope ||
+               context == meshprep::sim::SimulationRecipe::rope_smoke) {
         sphere.radius = 0.34F;
-        sphere.mass = context==meshprep::sim::ExampleContext::cloth_rope
+        sphere.mass = context==meshprep::sim::SimulationRecipe::cloth_rope
             ? 180.0F : 45.0F;
         sphere.center = make_float3(0.0F,
             rope_bridge_land_y + sphere.radius,
             rope_bridge_land_inner_z + 0.65F);
         sphere.velocity = {};
-    } else if (context == meshprep::sim::ExampleContext::smoke) {
+    } else if (context == meshprep::sim::SimulationRecipe::smoke) {
         sphere.radius=0.36F;
         sphere.mass=28.0F;
         sphere.center=make_float3(-1.8F,course_floor_y+sphere.radius,-1.2F);
         sphere.velocity=make_float3(1.35F,0.0F,0.0F);
-    } else if (context == meshprep::sim::ExampleContext::soft_body_smoke) {
+    } else if (context == meshprep::sim::SimulationRecipe::soft_body_smoke) {
         sphere.radius=0.30F;
         sphere.mass=45.0F;
         sphere.center=make_float3(-1.75F,course_floor_y+sphere.radius,-1.25F);
         sphere.velocity=make_float3(0.9F,0.0F,0.0F);
-    } else if (context == meshprep::sim::ExampleContext::cloth_smoke) {
+    } else if (context == meshprep::sim::SimulationRecipe::cloth_smoke) {
         sphere.center=make_float3(3.0F,course_floor_y+sphere.radius,-1.2F);
-    } else if (context == meshprep::sim::ExampleContext::fluid_smoke) {
+    } else if (context == meshprep::sim::SimulationRecipe::fluid_smoke) {
         sphere.center=make_float3(3.0F,course_floor_y+sphere.radius,-1.2F);
     } else {
         // A grazing track loads the breakable wall while not demanding that a
@@ -656,8 +656,8 @@ RigidSphereState initial_rigid_sphere(
     return sphere;
 }
 
-void initialize_context_motion(
-    meshprep::sim::ExampleContext context, SoftBodyCourse& body)
+void initialize_recipe_motion(
+    meshprep::sim::SimulationRecipe context, SoftBodyCourse& body)
 {
     // Cloth-Softbody is driven by the same live gravity tilt as every other
     // gallery scene. It starts from rest so translation and rotation come

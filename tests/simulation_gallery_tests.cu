@@ -22,7 +22,7 @@
 
 namespace {
 
-using meshprep::sim::ExampleContext;
+using meshprep::sim::SimulationRecipe;
 
 void require(bool condition, const char* message)
 {
@@ -43,45 +43,45 @@ bool finite(const waterlab::HybridTimings& timings)
 
 void host_catalog_test()
 {
-    constexpr std::array<ExampleContext, 15U> expected_contexts{
-        ExampleContext::water,ExampleContext::cloth,ExampleContext::soft_body,
-        ExampleContext::rope,ExampleContext::smoke,ExampleContext::water_cloth,
-        ExampleContext::water_soft_body,ExampleContext::water_rope,
-        ExampleContext::fluid_smoke,ExampleContext::cloth_soft_body,
-        ExampleContext::cloth_rope,ExampleContext::cloth_smoke,
-        ExampleContext::soft_body_rope,ExampleContext::soft_body_smoke,
-        ExampleContext::rope_smoke};
+    constexpr std::array<SimulationRecipe, 15U> expected_contexts{
+        SimulationRecipe::water,SimulationRecipe::cloth,SimulationRecipe::soft_body,
+        SimulationRecipe::rope,SimulationRecipe::smoke,SimulationRecipe::water_cloth,
+        SimulationRecipe::water_soft_body,SimulationRecipe::water_rope,
+        SimulationRecipe::fluid_smoke,SimulationRecipe::cloth_soft_body,
+        SimulationRecipe::cloth_rope,SimulationRecipe::cloth_smoke,
+        SimulationRecipe::soft_body_rope,SimulationRecipe::soft_body_smoke,
+        SimulationRecipe::rope_smoke};
     constexpr std::array<std::uint32_t, 15U> expected_component_counts{
         2U,2U,2U,2U,2U,4U,3U,3U,2U,3U,3U,3U,3U,3U,3U};
     for (std::size_t index = 0U;
-         index < meshprep::sim::example_contexts.size(); ++index) {
+         index < meshprep::sim::simulation_recipes.size(); ++index) {
         const auto context = expected_contexts[index];
-        const auto& info = waterlab::gallery::context_info(context);
-        require(info.id == context &&
-                meshprep::sim::example_contexts[index].id == context,
+        const auto& info = waterlab::gallery::recipe_info(context);
+        require(info.recipe == context &&
+                meshprep::sim::simulation_recipes[index].recipe == context,
             "gallery context order diverged from the installed catalog");
         require(std::popcount(static_cast<std::uint32_t>(info.components)) ==
                 expected_component_counts[index],
             "gallery context has the wrong component count");
-        require(waterlab::gallery::default_context_display(context) ==
-                (context == ExampleContext::water_cloth
-                 || context == ExampleContext::water
-                 || context == ExampleContext::water_rope
-                 || context == ExampleContext::water_soft_body
-                 || context == ExampleContext::fluid_smoke
+        require(waterlab::gallery::default_recipe_display(context) ==
+                (context == SimulationRecipe::water_cloth
+                 || context == SimulationRecipe::water
+                 || context == SimulationRecipe::water_rope
+                 || context == SimulationRecipe::water_soft_body
+                 || context == SimulationRecipe::fluid_smoke
                     ? waterlab::FluidDisplay::Surface
                     : waterlab::FluidDisplay::Particles),
             "gallery context has the wrong default display");
 
-        const bool course = context == ExampleContext::water_cloth;
+        const bool course = context == SimulationRecipe::water_cloth;
         const waterlab::HybridOptions options =
-            waterlab::gallery::make_context_physics(context);
+            waterlab::gallery::make_recipe_physics(context);
         require(options.obstacle_course == course,
             "gallery context configured an undeclared rigid arena");
         require(options.particle_skin_coupling ==
-                (context != ExampleContext::water &&
-                 context != ExampleContext::water_rope &&
-                 context != ExampleContext::water_soft_body),
+                (context != SimulationRecipe::water &&
+                 context != SimulationRecipe::water_rope &&
+                 context != SimulationRecipe::water_soft_body),
             "gallery context configured the wrong fluid/skin coupling");
         require(options.physics_iterations ==
                 (course ? 8U : 4U),
@@ -89,12 +89,12 @@ void host_catalog_test()
         require(options.gravity.x == 0.0F && options.gravity.z == 0.0F &&
                 options.gravity.y ==
                     (course ? -14.4F :
-                     context == ExampleContext::water ? -19.62F : -9.81F),
+                     context == SimulationRecipe::water ? -19.62F : -9.81F),
             "gallery context selected the wrong gravity preset");
         require(options.particle_repulsion ==
-                (context == ExampleContext::water ? 50.0F :
-                 context == ExampleContext::water_rope ? 120.0F :
-                 context == ExampleContext::fluid_smoke ? 60.0F :
+                (context == SimulationRecipe::water ? 50.0F :
+                 context == SimulationRecipe::water_rope ? 120.0F :
+                 context == SimulationRecipe::fluid_smoke ? 60.0F :
                  course ? 20.0F : waterlab::HybridOptions{}.particle_repulsion),
             "gallery context selected the wrong material preset");
         if (course) {
@@ -103,54 +103,54 @@ void host_catalog_test()
                     options.render_skin_frequency == 10U,
                 "context 1 did not retain its authored neutral quantities");
         }
-        if (context == ExampleContext::water)
+        if (context == SimulationRecipe::water)
             require(options.particle_count == 20'000U,
                 "context 2 did not retain its 20k fluid preset");
-        if (context == ExampleContext::water_rope)
+        if (context == SimulationRecipe::water_rope)
             require(options.particle_count == 40'000U,
                 "fishing context did not retain its full 40k tank fill");
-        if (context == ExampleContext::water_soft_body)
+        if (context == SimulationRecipe::water_soft_body)
             require(options.particle_count == 20'000U,
                 "Water-Softbody did not retain its 20k particle preset");
-        if (context == ExampleContext::cloth_soft_body)
+        if (context == SimulationRecipe::cloth_soft_body)
             require(options.arena == waterlab::GalleryArena::ground_box,
                 "context 7 omitted its closed frictional arena");
-        if (context == ExampleContext::soft_body)
+        if (context == SimulationRecipe::soft_body)
             require(options.arena == waterlab::GalleryArena::low_ceiling_box,
                 "context 4 omitted its lowered collision ceiling");
-        if (context == ExampleContext::rope)
+        if (context == SimulationRecipe::rope)
             require(options.arena == waterlab::GalleryArena::rope_post,
                 "context 8 omitted its post arena");
-        if (context == ExampleContext::soft_body_rope)
+        if (context == SimulationRecipe::soft_body_rope)
             require(options.arena == waterlab::GalleryArena::rope_bridge,
                 "context 0 omitted its suspended bridge arena");
-        if (context == ExampleContext::cloth_rope)
+        if (context == SimulationRecipe::cloth_rope)
             require(options.arena == waterlab::GalleryArena::rope_bridge,
                 "context 9 omitted its cloth-rope floor arena");
-        if (context == ExampleContext::fluid_smoke)
+        if (context == SimulationRecipe::fluid_smoke)
             require(options.arena == waterlab::GalleryArena::hot_pan,
                 "fluid-smoke omitted its heated-pan arena");
-        if (context == ExampleContext::soft_body_smoke)
+        if (context == SimulationRecipe::soft_body_smoke)
             require(options.arena == waterlab::GalleryArena::grass,
                 "softbody-smoke omitted its green ground-and-grass arena");
     }
 
-    waterlab::gallery::ContextPhysicsOverrides overrides;
+    waterlab::gallery::RecipePhysicsOverrides overrides;
     overrides.fixed_dt = 1.0F / 120.0F;
     overrides.physics_iterations = 2U;
     overrides.gravity = make_float3(1.0F, 2.0F, 3.0F);
     const waterlab::HybridOptions overridden =
-        waterlab::gallery::make_context_physics(
-            ExampleContext::water_cloth, overrides);
+        waterlab::gallery::make_recipe_physics(
+            SimulationRecipe::water_cloth, overrides);
     require(overridden.fixed_dt == 1.0F / 120.0F &&
             overridden.physics_iterations == 2U &&
             overridden.gravity.x == 1.0F && overridden.gravity.y == 2.0F &&
             overridden.gravity.z == 3.0F && overridden.obstacle_course,
         "explicit recipe physics overrides were not applied exactly");
     require(waterlab::gallery::gravity_tilt_degrees(
-                ExampleContext::water_rope) == 20.0F &&
+                SimulationRecipe::water_rope) == 20.0F &&
             waterlab::gallery::gravity_tilt_degrees(
-                ExampleContext::cloth_soft_body) == 38.0F,
+                SimulationRecipe::cloth_soft_body) == 38.0F,
         "pair-context gravity tilt recipe regressed");
 
     float3 point = make_float3(
@@ -213,13 +213,13 @@ void host_catalog_test()
             waterlab::ground_pit_half_extents.y < ground_cloth_half_span,
         "context-7 pit is not centered beneath and fully covered by ground cloth");
     require(waterlab::gallery::initial_rigid_sphere(
-                ExampleContext::water).mass > 3'000.0F,
+                SimulationRecipe::water).mass > 3'000.0F,
         "context 2 rigid sphere is not heavy enough to displace the particle fluid");
     require(waterlab::gallery::initial_rigid_sphere(
-                ExampleContext::cloth).mass >= 250.0F,
+                SimulationRecipe::cloth).mass >= 250.0F,
         "context 3 rigid sphere is not heavy enough to pass through the cloth");
     require(waterlab::gallery::initial_rigid_sphere(
-                ExampleContext::cloth).velocity.z == 0.0F,
+                SimulationRecipe::cloth).velocity.z == 0.0F,
         "context 3 still has an undeclared startup push");
 
     const float expected_first_rail = waterlab::cloth_basin_center.z +
@@ -300,7 +300,7 @@ void host_catalog_test()
             velocity.z<=1.0e-6F,
         "context 6 stage bumper did not confine the player sphere");
     const auto wheel_sphere=waterlab::gallery::initial_rigid_sphere(
-        ExampleContext::water_soft_body);
+        SimulationRecipe::water_soft_body);
     require(wheel_sphere.center.x>waterlab::water_wheel_center.x &&
             wheel_sphere.center.z==waterlab::water_wheel_stage_z,
         "context 6 player sphere does not start on the right stage");
@@ -339,10 +339,10 @@ void gpu_fixture_test()
     }};
 
     for (std::size_t index = 0U; index < expected.size(); ++index) {
-        const auto context = static_cast<ExampleContext>(index + 1U);
+        const auto context = static_cast<SimulationRecipe>(index + 1U);
         const waterlab::HybridOptions physics =
-            waterlab::gallery::make_context_physics(context);
-        auto deformable = waterlab::gallery::make_context_deformable(
+            waterlab::gallery::make_recipe_physics(context);
+        auto deformable = waterlab::gallery::make_recipe_deformable(
             context, physics, MESHPREP_SOFT_BODY_TEST_ASSET);
         require(static_cast<bool>(deformable) == (expected[index].instances != 0U),
             "gallery context created the wrong number of deformable systems");
@@ -359,7 +359,7 @@ void gpu_fixture_test()
                 initial.total_voxel_count == expected[index].voxels,
             "gallery context created the wrong deformable instance/voxel count");
 
-        if (context == ExampleContext::cloth) {
+        if (context == SimulationRecipe::cloth) {
             require(deformable->material().ground_friction==5.0F,
                 "context 3 did not select its friction-5 contact preset");
             const auto voxels = deformable->voxel_view();
@@ -386,7 +386,7 @@ void gpu_fixture_test()
                 "context 3 bottom anchor is not buried or the sphere starts too close");
         }
 
-        if (context == ExampleContext::soft_body) {
+        if (context == SimulationRecipe::soft_body) {
             const auto lattice = deformable->lattice_view();
             std::vector<std::uint32_t> flags(lattice.voxel_count);
             std::vector<waterlab::SoftBodyEdge> edges(lattice.edges_per_instance);
@@ -430,16 +430,16 @@ void gpu_fixture_test()
                 "context 4 half-height cylinders are not visibly ceiling-attached");
             require(deformable->render_view().member_count == 0U,
                 "context 4 retained the removed internal material rendering");
-        } else if (context != ExampleContext::rope &&
-                   context != ExampleContext::water_rope &&
-                   context != ExampleContext::cloth_rope &&
-                   context != ExampleContext::soft_body_rope &&
-                   context != ExampleContext::rope_smoke) {
+        } else if (context != SimulationRecipe::rope &&
+                   context != SimulationRecipe::water_rope &&
+                   context != SimulationRecipe::cloth_rope &&
+                   context != SimulationRecipe::soft_body_rope &&
+                   context != SimulationRecipe::rope_smoke) {
             require(deformable->render_view().member_count == 0U,
                 "strength-member rendering leaked into another context");
         }
 
-        if (context == ExampleContext::rope) {
+        if (context == SimulationRecipe::rope) {
             const auto lattice = deformable->lattice_view();
             require(lattice.voxels_per_instance >
                         waterlab::gallery::default_rope_nodes &&
@@ -447,11 +447,11 @@ void gpu_fixture_test()
                         deformable->statistics().total_edge_count,
                 "context 8 did not expose its rope nodes and structural links");
         }
-        if (context == ExampleContext::cloth_rope ||
-            context == ExampleContext::rope_smoke ||
-            context == ExampleContext::soft_body_rope) {
+        if (context == SimulationRecipe::cloth_rope ||
+            context == SimulationRecipe::rope_smoke ||
+            context == SimulationRecipe::soft_body_rope) {
             const auto lattice = deformable->lattice_view();
-            const bool dense=context==ExampleContext::soft_body_rope;
+            const bool dense=context==SimulationRecipe::soft_body_rope;
             const std::uint32_t nodes_per_tile=dense ? 256U : 36U;
             constexpr std::uint32_t shared_edges =
                 (waterlab::rope_bridge_columns-1U)*waterlab::rope_bridge_rows+
@@ -487,7 +487,7 @@ void gpu_fixture_test()
                 "rope bridge must pin only its two land-connected end rows");
         }
 
-        if (context == ExampleContext::water_rope) {
+        if (context == SimulationRecipe::water_rope) {
             const auto voxels = deformable->voxel_view();
             std::vector<std::uint32_t> flags(voxels.voxel_count);
             require(cudaMemcpy(flags.data(), voxels.flags,
@@ -511,11 +511,11 @@ void gpu_fixture_test()
                 "fishing-rope smooth-shading normals were not generated");
         }
 
-        const bool representative = context == ExampleContext::cloth ||
-            context == ExampleContext::cloth_soft_body ||
-            context == ExampleContext::soft_body;
+        const bool representative = context == SimulationRecipe::cloth ||
+            context == SimulationRecipe::cloth_soft_body ||
+            context == SimulationRecipe::soft_body;
         if (representative) {
-            if (context == ExampleContext::cloth) {
+            if (context == SimulationRecipe::cloth) {
                 auto material = deformable->material();
                 material.spring_stiffness -= 100.0F;
                 material.velocity_damping += 0.1F;
@@ -531,23 +531,23 @@ void gpu_fixture_test()
                     "live soft-body P material controls did not persist");
             }
             auto timings = deformable->step(physics.gravity);
-            if (context == ExampleContext::cloth) {
+            if (context == SimulationRecipe::cloth) {
                 for (std::uint32_t frame=1U;frame<120U;++frame)
                     timings=deformable->step(physics.gravity);
             }
             const auto after = deformable->statistics();
             require(finite(timings) && after.finite_failure_count == 0U &&
                     after.frame_index ==
-                        (context==ExampleContext::cloth ? 120U : 1U),
+                        (context==SimulationRecipe::cloth ? 120U : 1U),
                 "representative gallery deformable failed its first fixed step");
-            if (context==ExampleContext::cloth)
+            if (context==SimulationRecipe::cloth)
                 require(after.broken_edge_count==0U,
                     "Cloth fractured under gravity before rigid contact");
         }
     }
 
     const waterlab::HybridOptions particle_options =
-        waterlab::gallery::make_context_physics(ExampleContext::water);
+        waterlab::gallery::make_recipe_physics(SimulationRecipe::water);
     waterlab::HybridDroplet particles(particle_options);
     const auto timings = particles.step();
     require(finite(timings) && particles.statistics().finite_failures == 0U &&
@@ -557,11 +557,11 @@ void gpu_fixture_test()
 
 void gpu_bowl_surface_measurement()
 {
-    auto options = waterlab::gallery::make_context_physics(
-        ExampleContext::water);
+    auto options = waterlab::gallery::make_recipe_physics(
+        SimulationRecipe::water);
     waterlab::HybridDroplet bowl(options);
     waterlab::RigidSphereState sphere =
-        waterlab::gallery::initial_rigid_sphere(ExampleContext::water);
+        waterlab::gallery::initial_rigid_sphere(SimulationRecipe::water);
     for (std::uint32_t frame = 0U; frame < 900U; ++frame) {
         const auto timings = bowl.step(
             {}, 0.0F, nullptr, nullptr, false, &sphere);
@@ -695,14 +695,14 @@ void gpu_mixed_context_hold_test()
         waterlab::gallery::catch_cloth_spacing;
     // Water-Rope is covered by its tank/rope fixture below; this long hold
     // retains the water-wheel-specific recycling and launch-height audit.
-    constexpr std::array<ExampleContext, 1U> mixed_contexts{
-        ExampleContext::water_soft_body,
+    constexpr std::array<SimulationRecipe, 1U> mixed_contexts{
+        SimulationRecipe::water_soft_body,
     };
-    for (const ExampleContext context : mixed_contexts) {
+    for (const SimulationRecipe context : mixed_contexts) {
         const waterlab::HybridOptions physics =
-            waterlab::gallery::make_context_physics(context);
+            waterlab::gallery::make_recipe_physics(context);
         waterlab::HybridDroplet particles(physics);
-        auto deformable = waterlab::gallery::make_context_deformable(
+        auto deformable = waterlab::gallery::make_recipe_deformable(
             context, physics, MESHPREP_SOFT_BODY_TEST_ASSET);
         require(deformable != nullptr,
             "mixed gallery context omitted its deformable");
@@ -718,12 +718,12 @@ void gpu_mixed_context_hold_test()
             waterlab::gallery::initial_rigid_sphere(context);
         waterlab::WaterWheelState wheel{};
         const std::uint32_t frame_count =
-            context == ExampleContext::water_soft_body ? 900U : 600U;
+            context == SimulationRecipe::water_soft_body ? 900U : 600U;
         for (std::uint32_t frame = 0U; frame < frame_count; ++frame) {
             const auto timings = particles.step({}, 0.0F, nullptr,
                 deformable.get(), false,
-                context == ExampleContext::water_rope ? &sphere : nullptr,
-                context == ExampleContext::water_soft_body ? &wheel : nullptr);
+                context == SimulationRecipe::water_rope ? &sphere : nullptr,
+                context == SimulationRecipe::water_soft_body ? &wheel : nullptr);
             require(finite(timings) &&
                     particles.statistics().finite_failures == 0U &&
                     deformable->statistics().finite_failure_count == 0U,
@@ -732,7 +732,7 @@ void gpu_mixed_context_hold_test()
             recycled_particles += particles.statistics().recycled_particles;
             deepest_contact = std::max(deepest_contact,
                 particles.statistics().maximum_soft_body_penetration);
-            if (context == ExampleContext::water_soft_body && frame % 10U == 0U) {
+            if (context == SimulationRecipe::water_soft_body && frame % 10U == 0U) {
                 waterlab::HybridState wheel_particles;
                 particles.capture_state(wheel_particles);
                 for (std::size_t particle = 0U;
@@ -745,7 +745,7 @@ void gpu_mixed_context_hold_test()
                         wheel_particles.particle_velocities[particle].y);
                 }
             }
-            if (context == ExampleContext::water_rope &&
+            if (context == SimulationRecipe::water_rope &&
                 ((frame + 1U) == 60U || (frame + 1U) == 300U ||
                  (frame + 1U) == 600U)) {
                 waterlab::HybridState snapshot;
@@ -785,7 +785,7 @@ void gpu_mixed_context_hold_test()
         }
         require(stats.broken_edge_count < stats.total_edge_count / 10U,
             "gravity/contact loaded gallery fixture suffered a fracture avalanche");
-        if (context == ExampleContext::water_rope) {
+        if (context == SimulationRecipe::water_rope) {
             waterlab::HybridState fluid_state;
             waterlab::SoftBodyState cloth_state;
             particles.capture_state(fluid_state);
@@ -885,7 +885,7 @@ void gpu_mixed_context_hold_test()
                     sphere.center.y - sphere.radius >= sphere_support_y - 0.03F,
                 "centered catching cloth failed containment or geometry gates");
         }
-        if (context == ExampleContext::water_soft_body) {
+        if (context == SimulationRecipe::water_soft_body) {
             waterlab::SoftBodyState cross_state;
             deformable->capture_state(cross_state);
             float maximum_motion{};
@@ -950,9 +950,9 @@ void gpu_mixed_context_hold_test()
 
 void gpu_soft_sphere_cloth_contact_test()
 {
-    const auto context = ExampleContext::cloth_soft_body;
-    const auto physics = waterlab::gallery::make_context_physics(context);
-    auto deformable = waterlab::gallery::make_context_deformable(
+    const auto context = SimulationRecipe::cloth_soft_body;
+    const auto physics = waterlab::gallery::make_recipe_physics(context);
+    auto deformable = waterlab::gallery::make_recipe_deformable(
         context, physics, MESHPREP_SOFT_BODY_TEST_ASSET);
     require(deformable != nullptr, "soft sphere/cloth fixture is absent");
     waterlab::SoftBodyState baseline;
@@ -1024,7 +1024,7 @@ void gpu_soft_sphere_cloth_contact_test()
     // Mirror the free sphere to the far side of the authored cloth. The
     // collision law must not depend on triangle winding or a hard-coded +Z
     // front side.
-    auto reverse = waterlab::gallery::make_context_deformable(
+    auto reverse = waterlab::gallery::make_recipe_deformable(
         context, physics, MESHPREP_SOFT_BODY_TEST_ASSET);
     waterlab::SoftBodyState reverse_baseline;
     reverse->capture_state(reverse_baseline);
@@ -1052,7 +1052,7 @@ void gpu_soft_sphere_cloth_contact_test()
     // Regression for the interactive SOFT MASS control: a heavier source
     // must transfer enough pre-projection strain to tear the target cloth.
     // Source-body bonds are outside the fracture range and must remain whole.
-    auto heavy = waterlab::gallery::make_context_deformable(
+    auto heavy = waterlab::gallery::make_recipe_deformable(
         context, physics, MESHPREP_SOFT_BODY_TEST_ASSET);
     heavy->set_primary_body_mass(2.0F);
     for (std::uint32_t frame=0U;frame<180U;++frame) {
@@ -1108,17 +1108,17 @@ void gpu_free_soft_body_gravity_test()
 
 void gpu_physical_skin_detail_test()
 {
-    waterlab::gallery::ContextPhysicsOverrides overrides;
+    waterlab::gallery::RecipePhysicsOverrides overrides;
     overrides.physical_skin_frequency = 5U;
-    auto options = waterlab::gallery::make_context_physics(
-        ExampleContext::water_cloth, overrides);
+    auto options = waterlab::gallery::make_recipe_physics(
+        SimulationRecipe::water_cloth, overrides);
     waterlab::HybridDroplet coarse(options);
     require(coarse.statistics().physical_skin_vertices == 252U &&
             coarse.statistics().physical_skin_triangles == 500U,
         "physical water skin frequency 5 produced wrong topology");
     overrides.physical_skin_frequency = 12U;
-    options = waterlab::gallery::make_context_physics(
-        ExampleContext::water_cloth, overrides);
+    options = waterlab::gallery::make_recipe_physics(
+        SimulationRecipe::water_cloth, overrides);
     waterlab::HybridDroplet detailed(options);
     require(detailed.statistics().physical_skin_vertices == 1'442U &&
             detailed.statistics().physical_skin_triangles == 2'880U,
@@ -1127,9 +1127,9 @@ void gpu_physical_skin_detail_test()
 
 void gpu_rolling_rigid_cloth_test()
 {
-    const auto context = ExampleContext::cloth;
-    const auto physics = waterlab::gallery::make_context_physics(context);
-    auto deformable = waterlab::gallery::make_context_deformable(
+    const auto context = SimulationRecipe::cloth;
+    const auto physics = waterlab::gallery::make_recipe_physics(context);
+    auto deformable = waterlab::gallery::make_recipe_deformable(
         context, physics, MESHPREP_SOFT_BODY_TEST_ASSET);
     auto sphere = waterlab::gallery::initial_rigid_sphere(context);
     const auto initial_view = deformable->render_view();
@@ -1237,9 +1237,9 @@ void gpu_rolling_rigid_cloth_test()
 
 void gpu_rolling_rigid_post_test()
 {
-    const auto context = ExampleContext::soft_body;
-    const auto physics = waterlab::gallery::make_context_physics(context);
-    auto deformable = waterlab::gallery::make_context_deformable(
+    const auto context = SimulationRecipe::soft_body;
+    const auto physics = waterlab::gallery::make_recipe_physics(context);
+    auto deformable = waterlab::gallery::make_recipe_deformable(
         context, physics, MESHPREP_SOFT_BODY_TEST_ASSET);
     auto sphere = waterlab::gallery::initial_rigid_sphere(context);
     waterlab::SoftBodyState initial;
@@ -1287,7 +1287,7 @@ void gpu_rolling_rigid_post_test()
     std::fprintf(stderr, "rigid/post 900: height %.3f, broken %u\n",
         recovered_maximum->y - recovered_minimum->y,
         deformable->statistics().broken_edge_count);
-    auto no_hit = waterlab::gallery::make_context_deformable(
+    auto no_hit = waterlab::gallery::make_recipe_deformable(
         context, physics, MESHPREP_SOFT_BODY_TEST_ASSET);
     for (std::uint32_t frame = 0U; frame < 900U; ++frame) {
         const auto timing = no_hit->step(physics.gravity);
@@ -1312,9 +1312,9 @@ void gpu_rolling_rigid_post_test()
 
 void gpu_rope_rigid_test()
 {
-    const auto context = ExampleContext::rope;
-    const auto physics = waterlab::gallery::make_context_physics(context);
-    auto rope = waterlab::gallery::make_context_deformable(
+    const auto context = SimulationRecipe::rope;
+    const auto physics = waterlab::gallery::make_recipe_physics(context);
+    auto rope = waterlab::gallery::make_recipe_deformable(
         context, physics, MESHPREP_SOFT_BODY_TEST_ASSET, 40U);
     auto sphere = waterlab::gallery::initial_rigid_sphere(context, 40U);
     const auto lattice = rope->lattice_view();
@@ -1382,7 +1382,7 @@ void gpu_rope_rigid_test()
             final_reach <= maximum_reach * 1.08F,
         "rope endpoint detached or graph allowed unbounded rigid-body travel");
 
-    auto enclosed=waterlab::gallery::make_context_deformable(
+    auto enclosed=waterlab::gallery::make_recipe_deformable(
         context,physics,MESHPREP_SOFT_BODY_TEST_ASSET,40U);
     auto tethered=waterlab::gallery::initial_rigid_sphere(context,40U);
     auto glass=waterlab::gallery::initial_caged_rigid_sphere(40U);
@@ -1446,9 +1446,9 @@ void gpu_rope_rigid_test()
 
 void gpu_rope_bridge_crossing_test()
 {
-    const auto context = ExampleContext::soft_body_rope;
-    const auto physics = waterlab::gallery::make_context_physics(context);
-    auto bridge = waterlab::gallery::make_context_deformable(
+    const auto context = SimulationRecipe::soft_body_rope;
+    const auto physics = waterlab::gallery::make_recipe_physics(context);
+    auto bridge = waterlab::gallery::make_recipe_deformable(
         context, physics, MESHPREP_SOFT_BODY_TEST_ASSET);
     auto sphere = waterlab::gallery::initial_rigid_sphere(context);
     waterlab::SoftBodyState baseline;
@@ -1492,9 +1492,9 @@ void gpu_rope_bridge_crossing_test()
 
 void gpu_segmented_rope_contact_test()
 {
-    const auto context=ExampleContext::cloth_rope;
-    const auto physics=waterlab::gallery::make_context_physics(context);
-    auto bridge=waterlab::gallery::make_context_deformable(
+    const auto context=SimulationRecipe::cloth_rope;
+    const auto physics=waterlab::gallery::make_recipe_physics(context);
+    auto bridge=waterlab::gallery::make_recipe_deformable(
         context,physics,MESHPREP_SOFT_BODY_TEST_ASSET);
     auto sphere=waterlab::gallery::initial_rigid_sphere(context);
     waterlab::SoftBodyState baseline;

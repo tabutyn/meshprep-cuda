@@ -15,7 +15,7 @@ int main()
     // pulled into the installed headless library.
     const parallel_mater::Status initialized =
         parallel_mater::sim::SimulationBuilder(
-            parallel_mater::sim::ExampleContext::water)
+            parallel_mater::sim::SimulationRecipe::water)
             .particles(512U)
             .timestep(1.0F / 60.0F)
             .build(simulation);

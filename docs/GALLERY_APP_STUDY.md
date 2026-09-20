@@ -23,19 +23,19 @@ library targets.
 
 ## Reading order
 
-1. `include/parallel_mater/game.hpp` forwards to the portable scene recipe,
-   component, level-goal, and campaign API.
+1. `include/parallel_mater/recipes.hpp` forwards to the portable scene recipe
+   and component configuration API.
 2. `include/parallel_mater/gallery.hpp` forwards to the owning headless CUDA
    gallery API and its borrowed render views.
-3. `src/game.cpp` implements validation and level progression without CUDA or a
+3. `src/recipes.cpp` implements portable recipe validation without CUDA or a
    window system.
 4. `src/simulation.cpp` adapts the scene recipes to the CUDA simulation
    components and exposes `GallerySimulation`.
-5. `apps/water_lab/main.cpp` is the native renderer and interaction layer. Its
-   `Options` and `Interaction` state use `parallel_mater::sim` types. The key
-   callback maps `1`–`9` to `ExampleContext`, while the frame boundary applies
-   the pending context and rebuilds that recipe.
-6. `apps/water_lab/simulation_gallery.cpp` contains the advanced native fixture
+5. `apps/water_lab/campaign.cpp` owns objectives and auto-progression solely for
+   the example gallery.
+6. `apps/water_lab/main.cpp` is the native renderer and interaction layer; the
+   Tab browser selects a pending recipe that is rebuilt at the frame boundary.
+7. `apps/water_lab/simulation_gallery.cpp` contains the advanced native fixture
    assembly still needed by the renderer. It is compiled into
    `ParallelMater::gallery`, not privately into the executable.
 

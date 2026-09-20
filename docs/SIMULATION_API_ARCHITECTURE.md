@@ -8,12 +8,12 @@ gallery application.
 1. `ParallelMater::geometry` builds normals and deterministic hierarchies.
 2. `ParallelMater::physics` owns general fixed-topology lattice state and
    exposes borrowed CUDA node/bond views.
-3. `ParallelMater::game` is CUDA-free: component flags, fifteen recipes, goals,
-   validation, and campaign progression.
+3. `ParallelMater::recipes` is CUDA-free: component flags, fifteen recipes, and
+   portable recipe validation.
 4. `ParallelMater::gallery` adapts the production solvers behind
    `GallerySimulation` and borrowed render views.
 5. `parallel-mater-lab` supplies GLFW input, OpenGL/CUDA rendering, HUD,
-   capture/playback, and authored minigame controls.
+   capture/playback, authored objectives, progression, and minigame controls.
 
 The gallery recipes do not have independent solver implementations. They
 compose Water, Cloth, Softbody, Rope, and Smoke with rigid fixtures. Catalog

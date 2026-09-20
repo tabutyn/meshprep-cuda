@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
-#include <meshprep/game.hpp>
+#include <meshprep/recipes.hpp>
 
 #ifndef PARALLEL_MATER_NAMESPACE_ALIAS_DEFINED
 #define PARALLEL_MATER_NAMESPACE_ALIAS_DEFINED

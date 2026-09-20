@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "hybrid_lab.hpp"
+#include "campaign.hpp"
 #include "cloth.hpp"
 #include "fluid_visuals.hpp"
 #include "obstacle_course.hpp"
@@ -55,8 +56,8 @@ struct Options {
     std::uint32_t warmups{10U};
     std::uint32_t physics_iterations{}; // zero selects the scene preset
     Scene scene{Scene::Course};
-    parallel_mater::sim::ExampleContext context{
-        parallel_mater::sim::ExampleContext::water};
+    parallel_mater::sim::SimulationRecipe context{
+        parallel_mater::sim::SimulationRecipe::water};
     waterlab::FluidDisplay fluid_display{waterlab::FluidDisplay::Surface};
     bool view_explicit{};
     bool show_foam{true};
@@ -84,8 +85,8 @@ struct Interaction {
     bool replay_mode{};
     bool course_mode{true};
     bool course_finished{};
-    parallel_mater::sim::Campaign campaign{};
-    parallel_mater::sim::LevelProgress level_progress{};
+    waterlab::GalleryProgression progression{};
+    waterlab::ObjectiveProgress objective_progress{};
     float painted_fraction{};
     bool reset_bowl_paint{true};
     float rope_turns{};
@@ -93,11 +94,10 @@ struct Interaction {
     bool have_previous_rope_angle{};
     float3 previous_rigid_center{};
     bool have_previous_rigid_center{};
-    bool level_cloth_passed{};
     bool goal_cloth_damaged{};
     std::uint32_t inspected_broken_edges{};
-    parallel_mater::sim::ExampleContext context{parallel_mater::sim::ExampleContext::water};
-    parallel_mater::sim::ExampleContext pending_context{parallel_mater::sim::ExampleContext::water};
+    parallel_mater::sim::SimulationRecipe context{parallel_mater::sim::SimulationRecipe::water};
+    parallel_mater::sim::SimulationRecipe pending_context{parallel_mater::sim::SimulationRecipe::water};
     bool have_follow_center{};
     bool rotate_left{};
     bool rotate_right{};
@@ -144,7 +144,7 @@ void begin_context_particle_spawn(
 {
     input.staged_particle_target=droplet.options().particle_count;
     input.staged_spawn_frame=0U;
-    if (input.context==parallel_mater::sim::ExampleContext::water_soft_body &&
+    if (input.context==parallel_mater::sim::SimulationRecipe::water_soft_body &&
         input.staged_particle_target>256U)
         droplet.resize_particles(256U);
 }
@@ -152,7 +152,7 @@ void begin_context_particle_spawn(
 void advance_context_particle_spawn(
     Interaction& input, waterlab::HybridDroplet& droplet)
 {
-    if (input.context!=parallel_mater::sim::ExampleContext::water_soft_body ||
+    if (input.context!=parallel_mater::sim::SimulationRecipe::water_soft_body ||
         input.staged_particle_target<=droplet.options().particle_count) return;
     input.staged_spawn_frame=std::min(300U,input.staged_spawn_frame+1U);
     const std::uint32_t range=input.staged_particle_target-256U;
@@ -162,19 +162,19 @@ void advance_context_particle_spawn(
 }
 
 constexpr int physics_parameter_count = 31;
-bool context_has_particles(parallel_mater::sim::ExampleContext context);
+bool recipe_has_particles(parallel_mater::sim::SimulationRecipe context);
 std::vector<int> relevant_physics_parameters(const Interaction& input)
 {
     std::vector<int> result{0};
-    const bool particles = context_has_particles(input.context);
-    const bool water_skin = waterlab::gallery::context_has(
+    const bool particles = recipe_has_particles(input.context);
+    const bool water_skin = waterlab::gallery::recipe_has(
         input.context, parallel_mater::sim::Component::water_skin);
-    const bool deformable = waterlab::gallery::context_has(
+    const bool deformable = waterlab::gallery::recipe_has(
         input.context, parallel_mater::sim::Component::soft_body) ||
-        (input.context!=parallel_mater::sim::ExampleContext::water_cloth &&
-         waterlab::gallery::context_has(
+        (input.context!=parallel_mater::sim::SimulationRecipe::water_cloth &&
+         waterlab::gallery::recipe_has(
             input.context, parallel_mater::sim::Component::cloth)) ||
-        waterlab::gallery::context_has(
+        waterlab::gallery::recipe_has(
             input.context, parallel_mater::sim::Component::rope);
     if (particles) {
         result.insert(result.end(), {1, 2, 3});
@@ -187,25 +187,25 @@ std::vector<int> relevant_physics_parameters(const Interaction& input)
         result.insert(result.end(), {9, 10, 11, 13, 14});
     }
     if (deformable) result.insert(result.end(), {15, 19, 20, 21, 22, 28});
-    if (input.context == parallel_mater::sim::ExampleContext::cloth ||
-        input.context == parallel_mater::sim::ExampleContext::soft_body ||
-        input.context == parallel_mater::sim::ExampleContext::water ||
-        input.context == parallel_mater::sim::ExampleContext::water_rope ||
-        input.context == parallel_mater::sim::ExampleContext::water_soft_body ||
-        input.context == parallel_mater::sim::ExampleContext::rope ||
-        input.context == parallel_mater::sim::ExampleContext::cloth_rope ||
-        input.context == parallel_mater::sim::ExampleContext::soft_body_rope)
+    if (input.context == parallel_mater::sim::SimulationRecipe::cloth ||
+        input.context == parallel_mater::sim::SimulationRecipe::soft_body ||
+        input.context == parallel_mater::sim::SimulationRecipe::water ||
+        input.context == parallel_mater::sim::SimulationRecipe::water_rope ||
+        input.context == parallel_mater::sim::SimulationRecipe::water_soft_body ||
+        input.context == parallel_mater::sim::SimulationRecipe::rope ||
+        input.context == parallel_mater::sim::SimulationRecipe::cloth_rope ||
+        input.context == parallel_mater::sim::SimulationRecipe::soft_body_rope)
         result.push_back(23);
-    if (input.context == parallel_mater::sim::ExampleContext::cloth ||
-        input.context == parallel_mater::sim::ExampleContext::soft_body ||
-        input.context == parallel_mater::sim::ExampleContext::water_soft_body ||
-        input.context == parallel_mater::sim::ExampleContext::cloth_soft_body ||
-        input.context == parallel_mater::sim::ExampleContext::rope ||
-        input.context == parallel_mater::sim::ExampleContext::cloth_rope ||
-        input.context == parallel_mater::sim::ExampleContext::soft_body_rope)
+    if (input.context == parallel_mater::sim::SimulationRecipe::cloth ||
+        input.context == parallel_mater::sim::SimulationRecipe::soft_body ||
+        input.context == parallel_mater::sim::SimulationRecipe::water_soft_body ||
+        input.context == parallel_mater::sim::SimulationRecipe::cloth_soft_body ||
+        input.context == parallel_mater::sim::SimulationRecipe::rope ||
+        input.context == parallel_mater::sim::SimulationRecipe::cloth_rope ||
+        input.context == parallel_mater::sim::SimulationRecipe::soft_body_rope)
         result.push_back(24);
-    if (input.context == parallel_mater::sim::ExampleContext::cloth_rope ||
-        input.context == parallel_mater::sim::ExampleContext::soft_body_rope)
+    if (input.context == parallel_mater::sim::SimulationRecipe::cloth_rope ||
+        input.context == parallel_mater::sim::SimulationRecipe::soft_body_rope)
         result.insert(result.end(), {29,30});
     result.push_back(18);
     return result;
@@ -214,25 +214,25 @@ std::vector<int> relevant_physics_parameters(const Interaction& input)
 std::vector<int> relevant_quantity_parameters(const Interaction& input)
 {
     std::vector<int> result;
-    if (context_has_particles(input.context)) result.push_back(0);
-    if (waterlab::gallery::context_has(
+    if (recipe_has_particles(input.context)) result.push_back(0);
+    if (waterlab::gallery::recipe_has(
             input.context, parallel_mater::sim::Component::water_skin)) {
         result.push_back(1);
         result.push_back(2);
     }
-    if (waterlab::gallery::context_has(
+    if (waterlab::gallery::recipe_has(
             input.context, parallel_mater::sim::Component::soft_body) ||
-        waterlab::gallery::context_has(
+        waterlab::gallery::recipe_has(
             input.context, parallel_mater::sim::Component::cloth) ||
-        waterlab::gallery::context_has(
+        waterlab::gallery::recipe_has(
             input.context, parallel_mater::sim::Component::rope))
         result.push_back(3);
-    if (input.context == parallel_mater::sim::ExampleContext::rope ||
-        input.context == parallel_mater::sim::ExampleContext::water_rope)
+    if (input.context == parallel_mater::sim::SimulationRecipe::rope ||
+        input.context == parallel_mater::sim::SimulationRecipe::water_rope)
         result.push_back(4);
-    if (input.context == parallel_mater::sim::ExampleContext::cloth)
+    if (input.context == parallel_mater::sim::SimulationRecipe::cloth)
         result.push_back(5);
-    if (input.context == parallel_mater::sim::ExampleContext::soft_body)
+    if (input.context == parallel_mater::sim::SimulationRecipe::soft_body)
         result.insert(result.end(),{6,7});
     return result;
 }
@@ -242,29 +242,29 @@ static_assert(sizeof(waterlab::FoamParticle) == 48U,
 
 bool needs_fluid_visual_update(const Interaction& input)
 {
-    return waterlab::gallery::context_has(
+    return waterlab::gallery::recipe_has(
                input.context, parallel_mater::sim::Component::fluid_particles) &&
         input.fluid_display == waterlab::FluidDisplay::Surface;
 }
 
-bool context_has_particles(parallel_mater::sim::ExampleContext context)
+bool recipe_has_particles(parallel_mater::sim::SimulationRecipe context)
 {
-    return waterlab::gallery::context_has(
+    return waterlab::gallery::recipe_has(
                context, parallel_mater::sim::Component::fluid_particles) ||
-        waterlab::gallery::context_has(
+        waterlab::gallery::recipe_has(
             context, parallel_mater::sim::Component::hand_particles);
 }
 
-bool context_has_smoke(parallel_mater::sim::ExampleContext context)
+bool recipe_has_smoke(parallel_mater::sim::SimulationRecipe context)
 {
-    return waterlab::gallery::context_has(
+    return waterlab::gallery::recipe_has(
         context,parallel_mater::sim::Component::smoke);
 }
 
 parallel_mater::physics::SmokeOptions smoke_options_for(
-    parallel_mater::sim::ExampleContext context)
+    parallel_mater::sim::SimulationRecipe context)
 {
-    using parallel_mater::sim::ExampleContext;
+    using parallel_mater::sim::SimulationRecipe;
     parallel_mater::physics::SmokeOptions options;
     options.particle_count=6'000U;
     options.capacity=12'000U;
@@ -272,7 +272,7 @@ parallel_mater::physics::SmokeOptions smoke_options_for(
     options.emitter_half_extents=make_float3(0.05F,0.48F,0.52F);
     options.initial_velocity=make_float3(2.8F,0.12F,0.0F);
     options.turbulence_strength=1.15F;
-    if (context==ExampleContext::fluid_smoke) {
+    if (context==SimulationRecipe::fluid_smoke) {
         options.particle_count=7'500U;
         options.emitter_center=make_float3(0.0F,-0.78F,-1.20F);
         options.emitter_half_extents=make_float3(1.15F,0.04F,0.78F);
@@ -280,14 +280,14 @@ parallel_mater::physics::SmokeOptions smoke_options_for(
         options.buoyancy=1.85F;
         options.turbulence_strength=0.72F;
         options.lifetime=3.6F;
-    } else if (context==ExampleContext::cloth_smoke) {
+    } else if (context==SimulationRecipe::cloth_smoke) {
         // Windmill is in XY with its axle along Z; smoke travels toward -Z.
         options.emitter_center=make_float3(0.0F,0.10F,1.10F);
         options.emitter_half_extents=make_float3(0.95F,0.95F,0.04F);
         options.initial_velocity=make_float3(0.0F,0.05F,-2.9F);
         options.buoyancy=0.18F;
-    } else if (context==ExampleContext::soft_body_smoke ||
-              context==ExampleContext::rope_smoke) {
+    } else if (context==SimulationRecipe::soft_body_smoke ||
+              context==SimulationRecipe::rope_smoke) {
         options.emitter_center=make_float3(-2.25F,-0.35F,-1.20F);
         options.emitter_half_extents=make_float3(0.05F,0.32F,1.05F);
         options.initial_velocity=make_float3(3.0F,0.12F,0.0F);
@@ -297,9 +297,9 @@ parallel_mater::physics::SmokeOptions smoke_options_for(
 }
 
 std::optional<parallel_mater::physics::Smoke> create_smoke_system(
-    parallel_mater::sim::ExampleContext context)
+    parallel_mater::sim::SimulationRecipe context)
 {
-    if (!context_has_smoke(context)) return std::nullopt;
+    if (!recipe_has_smoke(context)) return std::nullopt;
     parallel_mater::physics::Smoke smoke;
     const parallel_mater::Status status=smoke.initialize(smoke_options_for(context));
     if (!status.ok()) throw std::runtime_error(
@@ -308,9 +308,9 @@ std::optional<parallel_mater::physics::Smoke> create_smoke_system(
 }
 
 waterlab::FoamSettings context_foam_settings(
-    parallel_mater::sim::ExampleContext context) noexcept
+    parallel_mater::sim::SimulationRecipe context) noexcept
 {
-    if (context == parallel_mater::sim::ExampleContext::water)
+    if (context == parallel_mater::sim::SimulationRecipe::water)
         return {32.0F, 2.0F, 1.6F};
     return {};
 }
@@ -321,22 +321,22 @@ void configure_context_camera(Interaction& input)
     input.orbit_yaw = 0.0F;
     input.camera_target = make_float3(0.0F, -0.10F, -0.75F);
     input.orbit_radius = 5.2F;
-    if (input.context == parallel_mater::sim::ExampleContext::water) {
+    if (input.context == parallel_mater::sim::SimulationRecipe::water) {
         input.camera_target = make_float3(0.0F, -0.35F, -1.0F);
         input.orbit_radius = 7.0F;
-    } else if (input.context == parallel_mater::sim::ExampleContext::cloth) {
+    } else if (input.context == parallel_mater::sim::SimulationRecipe::cloth) {
         input.camera_target = make_float3(0.0F, -0.15F, -0.62F);
         input.orbit_radius = 4.2F;
         input.orbit_pitch = 0.22F;
-    } else if (input.context == parallel_mater::sim::ExampleContext::soft_body) {
+    } else if (input.context == parallel_mater::sim::SimulationRecipe::soft_body) {
         input.camera_target = make_float3(-0.55F, -0.18F, -1.8F);
         input.orbit_radius = 5.0F;
         input.orbit_pitch = 0.32F;
-    } else if (input.context == parallel_mater::sim::ExampleContext::water_rope) {
+    } else if (input.context == parallel_mater::sim::SimulationRecipe::water_rope) {
         input.camera_target = waterlab::fishing_tank_center;
         input.orbit_radius = 6.2F;
         input.orbit_pitch = 0.08F;
-    } else if (input.context == parallel_mater::sim::ExampleContext::water_soft_body) {
+    } else if (input.context == parallel_mater::sim::SimulationRecipe::water_soft_body) {
         input.camera_target = make_float3(
             0.5F * (waterlab::water_wheel_entry_x +
                 waterlab::water_wheel_collector_start_x),
@@ -345,30 +345,30 @@ void configure_context_camera(Interaction& input)
             waterlab::water_wheel_center.z);
         input.orbit_radius = 8.4F;
         input.orbit_pitch = 0.78539816F;
-    } else if (input.context == parallel_mater::sim::ExampleContext::cloth_soft_body) {
+    } else if (input.context == parallel_mater::sim::SimulationRecipe::cloth_soft_body) {
         input.camera_target = make_float3(0.0F, -0.35F, -1.05F);
         input.orbit_radius = 4.6F;
         input.orbit_pitch = 0.28F;
-    } else if (input.context == parallel_mater::sim::ExampleContext::rope) {
+    } else if (input.context == parallel_mater::sim::SimulationRecipe::rope) {
         input.camera_target = make_float3(0.85F, -0.20F, waterlab::rope_anchor.z);
         input.orbit_radius = 4.8F;
         input.orbit_pitch = 0.30F;
-    } else if (input.context == parallel_mater::sim::ExampleContext::cloth_rope ||
-               input.context == parallel_mater::sim::ExampleContext::soft_body_rope ||
-               input.context == parallel_mater::sim::ExampleContext::rope_smoke) {
+    } else if (input.context == parallel_mater::sim::SimulationRecipe::cloth_rope ||
+               input.context == parallel_mater::sim::SimulationRecipe::soft_body_rope ||
+               input.context == parallel_mater::sim::SimulationRecipe::rope_smoke) {
         input.camera_target = make_float3(0.0F, -0.45F, 0.0F);
         input.orbit_radius = 7.2F;
         input.orbit_pitch = 0.42F;
-    } else if (input.context == parallel_mater::sim::ExampleContext::smoke ||
-               input.context == parallel_mater::sim::ExampleContext::soft_body_smoke) {
+    } else if (input.context == parallel_mater::sim::SimulationRecipe::smoke ||
+               input.context == parallel_mater::sim::SimulationRecipe::soft_body_smoke) {
         input.camera_target=make_float3(0.0F,-0.35F,-1.2F);
         input.orbit_radius=5.4F;
         input.orbit_pitch=0.28F;
-    } else if (input.context == parallel_mater::sim::ExampleContext::fluid_smoke) {
+    } else if (input.context == parallel_mater::sim::SimulationRecipe::fluid_smoke) {
         input.camera_target=make_float3(0.0F,-0.15F,-1.2F);
         input.orbit_radius=5.6F;
         input.orbit_pitch=0.46F;
-    } else if (input.context == parallel_mater::sim::ExampleContext::cloth_smoke) {
+    } else if (input.context == parallel_mater::sim::SimulationRecipe::cloth_smoke) {
         input.camera_target=make_float3(0.0F,0.0F,-1.2F);
         input.orbit_radius=4.8F;
         input.orbit_pitch=0.12F;
@@ -789,9 +789,9 @@ bool parse_options(int argc, char** argv, Options& options)
             else if (value == "lab") options.scene = Scene::Lab;
             else return false;
         } else if (argument == "--context") {
-            const auto* context = parallel_mater::sim::find_example_context(value);
+            const auto* context = parallel_mater::sim::find_simulation_recipe(value);
             if (context == nullptr) return false;
-            options.context = context->id;
+            options.context = context->recipe;
             options.scene = Scene::Course;
         } else if (argument == "--view") {
             if (value == "surface") options.fluid_display = waterlab::FluidDisplay::Surface;
@@ -812,7 +812,7 @@ bool parse_options(int argc, char** argv, Options& options)
     }
     if (options.view_explicit &&
         options.fluid_display == waterlab::FluidDisplay::Surface &&
-        !waterlab::gallery::context_has(
+        !waterlab::gallery::recipe_has(
             options.context, parallel_mater::sim::Component::fluid_particles)) {
         return false;
     }
@@ -954,15 +954,14 @@ void follow_course(Interaction& input, const CaptureFrame& frame)
 
 void reset_level_tracking(Interaction& input, const waterlab::RigidSphereState& sphere)
 {
-    input.campaign.select(input.context);
-    input.level_progress = {input.context};
+    input.progression.select(input.context);
+    input.objective_progress = {input.context};
     input.painted_fraction = 0.0F;
     input.reset_bowl_paint = true;
     input.rope_turns = 0.0F;
     input.have_previous_rope_angle = false;
     input.previous_rigid_center = sphere.center;
     input.have_previous_rigid_center = true;
-    input.level_cloth_passed = false;
     input.goal_cloth_damaged = false;
     input.inspected_broken_edges = 0U;
     input.fishing_latched = false;
@@ -974,16 +973,16 @@ void update_level_progress(Interaction& input,
     const waterlab::RigidSphereState& rigid_sphere)
 {
     if (!input.course_mode || input.replay_mode || input.paused) return;
-    using parallel_mater::sim::ExampleContext;
-    parallel_mater::sim::LevelMetrics metrics;
+    using parallel_mater::sim::SimulationRecipe;
+    waterlab::ObjectiveMetrics metrics;
     metrics.course_goal_reached = input.course_finished;
 
-    if (input.context == ExampleContext::water ||
-        input.context == ExampleContext::soft_body)
+    if (input.context == SimulationRecipe::water ||
+        input.context == SimulationRecipe::soft_body)
         metrics.painted_fraction = input.painted_fraction;
     if (soft_bodies != nullptr) {
         const std::uint32_t broken = soft_bodies->statistics().broken_edge_count;
-        if (input.context == ExampleContext::cloth_soft_body) {
+        if (input.context == SimulationRecipe::cloth_soft_body) {
             // The merged asset stores sphere nodes first, then the 24x24 goal
             // curtain, then the ground cloth. Only a broken goal-curtain bond
             // completes this level; damage in the rolling body or pit cover
@@ -1020,13 +1019,13 @@ void update_level_progress(Interaction& input,
             metrics.broken_connections = broken;
         }
     }
-    metrics.exit_reached = input.context == ExampleContext::soft_body &&
+    metrics.exit_reached = input.context == SimulationRecipe::soft_body &&
         rigid_sphere.center.x > 1.85F;
-    if (input.context == ExampleContext::cloth_rope ||
-        input.context == ExampleContext::soft_body_rope)
+    if (input.context == SimulationRecipe::cloth_rope ||
+        input.context == SimulationRecipe::soft_body_rope)
         metrics.exit_reached = rigid_sphere.center.z <
             -waterlab::rope_bridge_land_inner_z - 0.45F;
-    if (input.context == ExampleContext::water_soft_body) {
+    if (input.context == SimulationRecipe::water_soft_body) {
         const float start = waterlab::water_wheel_center.x +
             0.5F*(waterlab::water_wheel_top_platform_outer_x+
                 waterlab::water_wheel_top_platform_gap_half_width);
@@ -1036,23 +1035,8 @@ void update_level_progress(Interaction& input,
             (start-rigid_sphere.center.x)/std::max(start-exit,1.0e-5F),
             0.0F, 1.0F);
     }
-    if (input.context == ExampleContext::cloth_soft_body && soft_bodies != nullptr &&
-        soft_bodies->statistics().frame_index % 10U == 0U) {
-        const auto lattice = soft_bodies->lattice_view();
-        const std::uint32_t sphere_nodes = std::min(1'000U, lattice.voxel_count);
-        std::vector<float3> positions(sphere_nodes);
-        if (sphere_nodes != 0U && cudaMemcpy(positions.data(), lattice.positions,
-                static_cast<std::size_t>(sphere_nodes) * sizeof(float3),
-                cudaMemcpyDeviceToHost) == cudaSuccess) {
-            float mean_z = 0.0F;
-            for (const float3 position : positions) mean_z += position.z;
-            mean_z /= static_cast<float>(sphere_nodes);
-            input.level_cloth_passed = input.level_cloth_passed || mean_z < -2.05F;
-        }
-    }
-    metrics.cloth_passed = input.level_cloth_passed;
     metrics.treasure_caught = input.fishing_latched;
-    if (input.context == ExampleContext::water_rope && input.fishing_latched) {
+    if (input.context == SimulationRecipe::water_rope && input.fishing_latched) {
         const float start = waterlab::fishing_chest_start.y;
         const float recovered = waterlab::fishing_tank_center.y +
             waterlab::fishing_tank_half_extents.y - rigid_sphere.radius - 0.12F;
@@ -1060,7 +1044,7 @@ void update_level_progress(Interaction& input,
             (rigid_sphere.center.y - start) / std::max(recovered - start, 1.0e-5F),
             0.0F, 1.0F);
     }
-    if (input.context == ExampleContext::rope) {
+    if (input.context == SimulationRecipe::rope) {
         const float angle = std::atan2(
             rigid_sphere.center.z - waterlab::rope_post_center.z,
             rigid_sphere.center.x - waterlab::rope_post_center.x);
@@ -1078,9 +1062,9 @@ void update_level_progress(Interaction& input,
 
     input.previous_rigid_center = rigid_sphere.center;
     input.have_previous_rigid_center = true;
-    input.level_progress = input.campaign.update(metrics);
-    if (input.level_progress.advanced)
-        input.pending_context = input.campaign.current();
+    input.objective_progress = input.progression.update(metrics);
+    if (input.objective_progress.advanced)
+        input.pending_context = input.progression.current();
     (void)droplet;
 }
 
@@ -1098,7 +1082,7 @@ void update_course_gravity(
     float right_input = static_cast<float>(pressed(GLFW_KEY_D)) -
         static_cast<float>(pressed(GLFW_KEY_A));
     if (!input.show_physics && !input.show_quantities &&
-        input.context!=parallel_mater::sim::ExampleContext::water_rope) {
+        input.context!=parallel_mater::sim::SimulationRecipe::water_rope) {
         forward_input += static_cast<float>(pressed(GLFW_KEY_UP)) -
             static_cast<float>(pressed(GLFW_KEY_DOWN));
         right_input += static_cast<float>(pressed(GLFW_KEY_RIGHT)) -
@@ -1118,7 +1102,7 @@ void update_course_gravity(
         input.course_motion_adjustment = 0;
     }
     const bool sphere_only_gravity = input.context ==
-        parallel_mater::sim::ExampleContext::water_soft_body;
+        parallel_mater::sim::SimulationRecipe::water_soft_body;
     const float gravity_magnitude = sphere_only_gravity
         ? length(input.course_gravity) : length(droplet.options().gravity);
     const float maximum_tilt = waterlab::gallery::gravity_tilt_degrees(input.context) *
@@ -1147,7 +1131,7 @@ void update_course_gravity(
 void update_fishing_controls(GLFWwindow* window,Interaction& input,
     waterlab::SoftBodyCourse* rope,float dt)
 {
-    if (input.context!=parallel_mater::sim::ExampleContext::water_rope ||
+    if (input.context!=parallel_mater::sim::SimulationRecipe::water_rope ||
         rope==nullptr || input.show_physics || input.show_quantities) return;
     const auto pressed=[window](int key) {
         return glfwGetKey(window,key)==GLFW_PRESS;
@@ -1178,7 +1162,7 @@ void update_fishing_controls(GLFWwindow* window,Interaction& input,
 void update_fishing_latch(Interaction& input,waterlab::SoftBodyCourse* rope,
     waterlab::RigidSphereState& chest)
 {
-    if (input.context!=parallel_mater::sim::ExampleContext::water_rope || rope==nullptr)
+    if (input.context!=parallel_mater::sim::SimulationRecipe::water_rope || rope==nullptr)
         return;
     const auto lattice=rope->voxel_view();
     if (lattice.voxel_count==0U) return;
@@ -1316,7 +1300,7 @@ void key_callback(GLFWwindow* window, int key, int, int action, int modifiers)
     if (key == GLFW_KEY_E) input.rotate_right = action != GLFW_RELEASE;
     if (action == GLFW_PRESS) {
         if (input.show_context_browser) {
-            const int count=static_cast<int>(parallel_mater::sim::example_contexts.size());
+            const int count=static_cast<int>(parallel_mater::sim::simulation_recipes.size());
             if (key==GLFW_KEY_ESCAPE || key==GLFW_KEY_TAB) {
                 input.show_context_browser=false;
                 return;
@@ -1327,8 +1311,8 @@ void key_callback(GLFWwindow* window, int key, int, int action, int modifiers)
                 return;
             }
             if (key==GLFW_KEY_ENTER || key==GLFW_KEY_KP_ENTER) {
-                input.pending_context=parallel_mater::sim::example_contexts[
-                    static_cast<std::size_t>(input.context_browser_index)].id;
+                input.pending_context=parallel_mater::sim::simulation_recipes[
+                    static_cast<std::size_t>(input.context_browser_index)].recipe;
                 input.show_context_browser=false;
                 return;
             }
@@ -1336,12 +1320,12 @@ void key_callback(GLFWwindow* window, int key, int, int action, int modifiers)
         if (key == GLFW_KEY_ESCAPE) glfwSetWindowShouldClose(window, GLFW_TRUE);
         else if (key == GLFW_KEY_TAB) {
             input.show_context_browser=true;
-            const auto found=std::find_if(parallel_mater::sim::example_contexts.begin(),
-                parallel_mater::sim::example_contexts.end(),[&](const auto& item) {
-                    return item.id==input.context;
+            const auto found=std::find_if(parallel_mater::sim::simulation_recipes.begin(),
+                parallel_mater::sim::simulation_recipes.end(),[&](const auto& item) {
+                    return item.recipe==input.context;
                 });
-            input.context_browser_index=found==parallel_mater::sim::example_contexts.end()
-                ? 0 : static_cast<int>(found-parallel_mater::sim::example_contexts.begin());
+            input.context_browser_index=found==parallel_mater::sim::simulation_recipes.end()
+                ? 0 : static_cast<int>(found-parallel_mater::sim::simulation_recipes.begin());
         }
         else if (key == GLFW_KEY_SPACE) input.paused = !input.paused;
         else if (key == GLFW_KEY_P) {
@@ -1360,7 +1344,7 @@ void key_callback(GLFWwindow* window, int key, int, int action, int modifiers)
         }
         else if (key == GLFW_KEY_V) {
             const auto default_view =
-                waterlab::gallery::default_context_display(input.context);
+                waterlab::gallery::default_recipe_display(input.context);
             input.fluid_display = input.fluid_display == waterlab::FluidDisplay::Wireframe
                 ? (default_view == waterlab::FluidDisplay::Wireframe
                     ? waterlab::FluidDisplay::Particles : default_view)
@@ -1368,7 +1352,7 @@ void key_callback(GLFWwindow* window, int key, int, int action, int modifiers)
         }
         else if (key == GLFW_KEY_K) {
             input.fluid_display = input.fluid_display == waterlab::FluidDisplay::Billboards
-                ? waterlab::gallery::default_context_display(input.context)
+                ? waterlab::gallery::default_recipe_display(input.context)
                 : waterlab::FluidDisplay::Billboards;
         }
         else if (key == GLFW_KEY_F) input.show_foam = !input.show_foam;
@@ -1378,7 +1362,7 @@ void key_callback(GLFWwindow* window, int key, int, int action, int modifiers)
         else if (key == GLFW_KEY_C) input.show_particle_forces = !input.show_particle_forces;
         else if (key == GLFW_KEY_B) input.show_spring_forces = !input.show_spring_forces;
         else if (key == GLFW_KEY_M && !input.replay_mode &&
-                 input.context == parallel_mater::sim::ExampleContext::water_cloth) {
+                 input.context == parallel_mater::sim::SimulationRecipe::water_cloth) {
             input.capture_requested = true;
             input.paused = true;
         }
@@ -1391,7 +1375,7 @@ void key_callback(GLFWwindow* window, int key, int, int action, int modifiers)
         return;
     }
     if (input.course_mode &&
-        input.context == parallel_mater::sim::ExampleContext::water_cloth &&
+        input.context == parallel_mater::sim::SimulationRecipe::water_cloth &&
         !input.replay_mode &&
         (action == GLFW_PRESS || action == GLFW_REPEAT) &&
         (key == GLFW_KEY_LEFT_BRACKET || key == GLFW_KEY_RIGHT_BRACKET)) {
@@ -1399,11 +1383,11 @@ void key_callback(GLFWwindow* window, int key, int, int action, int modifiers)
         return;
     }
     const bool deformable_context =
-        waterlab::gallery::context_has(
+        waterlab::gallery::recipe_has(
             input.context, parallel_mater::sim::Component::soft_body) ||
-        waterlab::gallery::context_has(
+        waterlab::gallery::recipe_has(
             input.context, parallel_mater::sim::Component::cloth) ||
-        waterlab::gallery::context_has(
+        waterlab::gallery::recipe_has(
             input.context, parallel_mater::sim::Component::rope);
     if (input.course_mode && deformable_context && !input.replay_mode &&
         (action == GLFW_PRESS || action == GLFW_REPEAT) &&
@@ -1537,7 +1521,7 @@ void draw_context_browser(int width,int height,const Interaction& input)
     constexpr float panel_width=500.0F;
     constexpr float row_height=23.0F;
     const float panel_height=92.0F+row_height*
-        static_cast<float>(parallel_mater::sim::example_contexts.size());
+        static_cast<float>(parallel_mater::sim::simulation_recipes.size());
     const float x=0.5F*(static_cast<float>(width)-panel_width);
     const float y=std::max(12.0F,0.5F*(static_cast<float>(height)-panel_height));
     glDisable(GL_TEXTURE_2D);
@@ -1557,8 +1541,8 @@ void draw_context_browser(int width,int height,const Interaction& input)
         key_x+=static_cast<float>(std::strlen(key.label))*6.0F+30.0F;
     }
     float row_y=y+82.0F;
-    for (std::size_t index=0;index<parallel_mater::sim::example_contexts.size();++index) {
-        const auto& context=parallel_mater::sim::example_contexts[index];
+    for (std::size_t index=0;index<parallel_mater::sim::simulation_recipes.size();++index) {
+        const auto& context=parallel_mater::sim::simulation_recipes[index];
         if (static_cast<int>(index)==input.context_browser_index)
             rectangle(x+8.0F,row_y-4.0F,panel_width-16.0F,row_height-1.0F,
                 width,height,0.08F,0.22F,0.38F,0.95F);
@@ -1663,7 +1647,7 @@ void download_wireframe_debug(const Interaction& input,
 {
     const bool wireframe =
         input.fluid_display == waterlab::FluidDisplay::Wireframe;
-    const bool particle_points = context_has_particles(input.context) &&
+    const bool particle_points = recipe_has_particles(input.context) &&
         (wireframe || input.fluid_display == waterlab::FluidDisplay::Particles ||
             input.fluid_display == waterlab::FluidDisplay::Billboards);
     if (!wireframe && !particle_points) return;
@@ -1673,7 +1657,7 @@ void download_wireframe_debug(const Interaction& input,
     } else {
         data.fluid_positions.clear();
     }
-    if (wireframe && waterlab::gallery::context_has(
+    if (wireframe && waterlab::gallery::recipe_has(
             input.context, parallel_mater::sim::Component::water_skin)) {
         const parallel_mater::DeviceMeshView water = droplet.skin_mesh();
         copy_device_vector(data.water_positions, water.positions,
@@ -1775,7 +1759,7 @@ ScreenPoint project_point(
 }
 
 void draw_smoke_particles(const SmokeDebugData& data,
-    parallel_mater::sim::ExampleContext context,const waterlab::Camera& camera,
+    parallel_mater::sim::SimulationRecipe context,const waterlab::Camera& camera,
     int width,int height)
 {
     if (data.positions.empty()) return;
@@ -1790,7 +1774,7 @@ void draw_smoke_particles(const SmokeDebugData& data,
     std::stable_sort(points.begin(),points.end(),[](const auto& a,const auto& b) {
         return a.point.depth>b.point.depth;
     });
-    const bool steam=context==parallel_mater::sim::ExampleContext::fluid_smoke;
+    const bool steam=context==parallel_mater::sim::SimulationRecipe::fluid_smoke;
     glDisable(GL_TEXTURE_2D);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
@@ -2056,7 +2040,7 @@ void draw_wireframe_debug(const Interaction& input, const WireframeDebugData& da
 {
     const bool wireframe =
         input.fluid_display == waterlab::FluidDisplay::Wireframe;
-    const bool particle_points = context_has_particles(input.context) &&
+    const bool particle_points = recipe_has_particles(input.context) &&
         (wireframe || input.fluid_display == waterlab::FluidDisplay::Particles ||
             input.fluid_display == waterlab::FluidDisplay::Billboards);
     if (!wireframe && !particle_points) return;
@@ -2108,7 +2092,7 @@ void draw_wireframe_debug(const Interaction& input, const WireframeDebugData& da
         // In the particle/cloth diagnostic the dense spring lattice obscures
         // the particle and green-foam layers. Keep only a faint triangle wire
         // plus the node dots so both systems remain legible.
-        if (input.context != parallel_mater::sim::ExampleContext::water_rope) {
+        if (input.context != parallel_mater::sim::SimulationRecipe::water_rope) {
             draw_wire_mesh(data.soft_body_positions, data.soft_body_triangles,
                 &data.soft_body_triangle_active, camera,
                 width, height, 1.0F, 0.48F, 0.10F);
@@ -2134,26 +2118,26 @@ void draw_timings(int width, int height, bool visible, const Interaction& input,
                   float debug_draw, float wall)
 {
     if (!visible) return;
-    const bool particles = context_has_particles(input.context);
-    const bool water_skin = !input.course_mode || waterlab::gallery::context_has(
+    const bool particles = recipe_has_particles(input.context);
+    const bool water_skin = !input.course_mode || waterlab::gallery::recipe_has(
         input.context, parallel_mater::sim::Component::water_skin);
     const bool deformable = input.course_mode &&
-        input.context != parallel_mater::sim::ExampleContext::water_cloth && (
-        waterlab::gallery::context_has(input.context, parallel_mater::sim::Component::soft_body) ||
-        waterlab::gallery::context_has(input.context, parallel_mater::sim::Component::cloth) ||
-        waterlab::gallery::context_has(input.context, parallel_mater::sim::Component::rope));
-    const bool cloth = input.course_mode && waterlab::gallery::context_has(
+        input.context != parallel_mater::sim::SimulationRecipe::water_cloth && (
+        waterlab::gallery::recipe_has(input.context, parallel_mater::sim::Component::soft_body) ||
+        waterlab::gallery::recipe_has(input.context, parallel_mater::sim::Component::cloth) ||
+        waterlab::gallery::recipe_has(input.context, parallel_mater::sim::Component::rope));
+    const bool cloth = input.course_mode && waterlab::gallery::recipe_has(
         input.context, parallel_mater::sim::Component::cloth);
     std::vector<std::pair<const char*, float>> rows;
     if (particles) {
-        if (input.context == parallel_mater::sim::ExampleContext::water_soft_body)
+        if (input.context == parallel_mater::sim::SimulationRecipe::water_soft_body)
             rows.emplace_back("PARTICLE RECYCLE", t.particle_recycling_ms);
         rows.emplace_back("FLUID HIERARCHY", t.rebuild_fluid_hierarchy_ms);
         rows.emplace_back(
-            input.context == parallel_mater::sim::ExampleContext::water_soft_body
+            input.context == parallel_mater::sim::SimulationRecipe::water_soft_body
                 ? "FLUID + LIFT" :
-            (input.context == parallel_mater::sim::ExampleContext::water ||
-             input.context == parallel_mater::sim::ExampleContext::water_rope)
+            (input.context == parallel_mater::sim::SimulationRecipe::water ||
+             input.context == parallel_mater::sim::SimulationRecipe::water_rope)
                 ? "FLUID + RIGID" : "FLUID PHYSICS",
             t.update_fluid_physics_ms);
     }
@@ -2172,7 +2156,7 @@ void draw_timings(int width, int height, bool visible, const Interaction& input,
     if (!input.course_mode) rows.emplace_back("RECT PHYSICS", t.update_rectangle_physics_ms);
     if (deformable) {
         rows.emplace_back(input.context ==
-                parallel_mater::sim::ExampleContext::cloth_soft_body
+                parallel_mater::sim::SimulationRecipe::cloth_soft_body
                 ? "SOFT + CLOTH" : (cloth ? "CLOTH PHYSICS" : "SOFT PHYSICS"),
             t.update_soft_body_physics_ms);
         rows.emplace_back("MESH HIERARCHY", t.rebuild_soft_body_hierarchy_ms);
@@ -2180,18 +2164,18 @@ void draw_timings(int width, int height, bool visible, const Interaction& input,
         rows.emplace_back("MESH RENDER", t.update_soft_body_render_ms);
     }
     if (input.course_mode && (
-        input.context == parallel_mater::sim::ExampleContext::cloth ||
-        input.context == parallel_mater::sim::ExampleContext::soft_body ||
-        input.context == parallel_mater::sim::ExampleContext::water ||
-        input.context == parallel_mater::sim::ExampleContext::water_rope ||
-        input.context == parallel_mater::sim::ExampleContext::water_soft_body ||
-        input.context == parallel_mater::sim::ExampleContext::rope ||
-        input.context == parallel_mater::sim::ExampleContext::cloth_rope ||
-        input.context == parallel_mater::sim::ExampleContext::soft_body_rope)) {
+        input.context == parallel_mater::sim::SimulationRecipe::cloth ||
+        input.context == parallel_mater::sim::SimulationRecipe::soft_body ||
+        input.context == parallel_mater::sim::SimulationRecipe::water ||
+        input.context == parallel_mater::sim::SimulationRecipe::water_rope ||
+        input.context == parallel_mater::sim::SimulationRecipe::water_soft_body ||
+        input.context == parallel_mater::sim::SimulationRecipe::rope ||
+        input.context == parallel_mater::sim::SimulationRecipe::cloth_rope ||
+        input.context == parallel_mater::sim::SimulationRecipe::soft_body_rope)) {
         rows.emplace_back("RIGID CONTACT", t.update_rigid_body_contact_ms);
     }
     if (visual > 0.0F) rows.emplace_back("WATER FOAM", visual);
-    if (context_has_smoke(input.context)) {
+    if (recipe_has_smoke(input.context)) {
         rows.emplace_back("SMOKE ADVECT",smoke.integrate_ms);
         if (smoke.couple_ms>0.0F) rows.emplace_back("SMOKE COUPLE",smoke.couple_ms);
     }
@@ -2236,30 +2220,30 @@ void draw_course_hud(int width, int height, const Interaction& input,
     rectangle(x, y, 560.0F, 146.0F, width, height,
         0.015F, 0.025F, 0.045F, 0.86F);
     char status[96];
-    const auto& definition = parallel_mater::sim::level(input.context);
-    const auto& recipe = waterlab::gallery::context_info(input.context);
+    const auto& objective = waterlab::gallery_objective(input.context);
+    const auto& recipe = waterlab::gallery::recipe_info(input.context);
     std::snprintf(status, sizeof(status), "%.*s%s",
         static_cast<int>(recipe.title.size()), recipe.title.data(),
-        input.level_progress.won ? "  COMPLETE" : "");
+        input.objective_progress.completed ? "  COMPLETE" : "");
     text(status,
         x + 10.0F, y + 10.0F, 1.5F, width, height);
-    text(definition.objective, x + 10.0F, y + 31.0F, 1.25F, width, height);
+    text(objective.description, x + 10.0F, y + 31.0F, 1.25F, width, height);
     rectangle(x + 10.0F, y + 51.0F, 530.0F, 8.0F, width, height,
         0.08F, 0.11F, 0.15F, 0.95F);
     rectangle(x + 10.0F, y + 51.0F,
-        530.0F * input.level_progress.normalized, 8.0F, width, height,
+        530.0F * input.objective_progress.normalized, 8.0F, width, height,
         0.10F, 0.78F, 0.90F, 0.95F);
     text("Z NORMAL  X OBSTACLE  C PARTICLE  V VIEW  K BILLBOARD  B SPRING",
         x + 10.0F, y + 68.0F, 1.5F, width, height);
     text("R RESET  T TIMING  P PHYSICS  L LOAD  M CAPTURE",
         x + 10.0F, y + 91.0F, 1.5F, width, height);
-    if (input.context == parallel_mater::sim::ExampleContext::water_cloth) {
+    if (input.context == parallel_mater::sim::SimulationRecipe::water_cloth) {
         std::snprintf(status, sizeof(status), "[ ] SPEED %.0FX   N %u/16",
             waterlab::course_motion_multiplier(options), options.physics_iterations);
     } else {
         std::snprintf(status, sizeof(status), "[ ] COURSE SPEED   N %u   PARTICLES %u",
             options.physics_iterations,
-            context_has_particles(input.context) ? options.particle_count : 0U);
+            recipe_has_particles(input.context) ? options.particle_count : 0U);
     }
     text(status, x + 10.0F, y + 114.0F, 1.5F, width, height);
     glDisable(GL_BLEND);
@@ -2323,7 +2307,7 @@ void apply_physics_adjustment(Interaction& input, waterlab::HybridDroplet& dropl
         return;
     }
     if (input.physics_parameter == 28 && soft_bodies != nullptr) {
-        if (input.context==parallel_mater::sim::ExampleContext::cloth_soft_body)
+        if (input.context==parallel_mater::sim::SimulationRecipe::cloth_soft_body)
             soft_bodies->set_primary_body_mass(std::clamp(
                 soft_bodies->primary_body_mass()*std::pow(1.25F,amount),
                 soft_bodies->voxel_mass(),20'000.0F));
@@ -2373,7 +2357,7 @@ void apply_physics_adjustment(Interaction& input, waterlab::HybridDroplet& dropl
         const float3 direction = length(options.gravity) > 1.0e-8F
             ? normalize(options.gravity) : make_float3(0.0F, -1.0F, 0.0F);
         input.course_gravity = multiply(direction, magnitude);
-        if (input.context != parallel_mater::sim::ExampleContext::water_soft_body)
+        if (input.context != parallel_mater::sim::SimulationRecipe::water_soft_body)
             options.gravity = input.course_gravity;
         break;
     }
@@ -2426,7 +2410,7 @@ void draw_physics_panel(
         soft_material.ground_friction, foam.emission_rate,
         foam.radius_scale, foam.lifetime_scale,
         soft_bodies ? (input.context==
-            parallel_mater::sim::ExampleContext::cloth_soft_body
+            parallel_mater::sim::SimulationRecipe::cloth_soft_body
                 ? soft_bodies->primary_body_mass()
                 : soft_bodies->voxel_mass()) : 0.0F,
         static_cast<float>(input.bridge_columns),
@@ -2473,7 +2457,7 @@ void draw_quantity_panel(int width, int height, bool visible,
         "FLUID PARTICLES", "PHYS SKIN FREQ", "RENDER SKIN FREQ", "SOFT SOLVES",
         "ROPE NODES", "CLOTH DETAIL", "CYLINDER COLUMNS", "CYLINDER ROWS"};
     const float values[8]{static_cast<float>(input.context==
-            parallel_mater::sim::ExampleContext::water_soft_body &&
+            parallel_mater::sim::SimulationRecipe::water_soft_body &&
             input.staged_particle_target!=0U
         ? input.staged_particle_target : options.particle_count),
         static_cast<float>(options.physical_skin_frequency),
@@ -2533,11 +2517,11 @@ int run_profile(const Options& options)
 {
     waterlab::HybridOptions physics_options;
     if (options.scene == Scene::Course) {
-        waterlab::gallery::ContextPhysicsOverrides overrides;
+        waterlab::gallery::RecipePhysicsOverrides overrides;
         if (options.physics_iterations != 0U) {
             overrides.physics_iterations = options.physics_iterations;
         }
-        physics_options = waterlab::gallery::make_context_physics(
+        physics_options = waterlab::gallery::make_recipe_physics(
             options.context, overrides);
     } else {
         physics_options = waterlab::HybridOptions{};
@@ -2548,7 +2532,7 @@ int run_profile(const Options& options)
     waterlab::HybridDroplet droplet(physics_options);
     std::unique_ptr<waterlab::SoftBodyCourse> soft_bodies;
     if (options.scene == Scene::Course)
-        soft_bodies = waterlab::gallery::make_context_deformable(
+        soft_bodies = waterlab::gallery::make_recipe_deformable(
             options.context, physics_options, MESHPREP_SOFT_BODY_ASSET_PATH);
     waterlab::RigidSphereState rigid_sphere =
         waterlab::gallery::initial_rigid_sphere(options.context);
@@ -2565,7 +2549,7 @@ int run_profile(const Options& options)
     control.context = options.context;
     control.course_mode = options.scene == Scene::Course;
     control.fluid_display = options.view_explicit ? options.fluid_display :
-        waterlab::gallery::default_context_display(options.context);
+        waterlab::gallery::default_recipe_display(options.context);
     configure_context_camera(control);
     update_camera(control, camera);
     if (options.drive_box) control.rectangle_target.x = 0.0F;
@@ -2581,35 +2565,35 @@ int run_profile(const Options& options)
             ? rectangle_control_force(control, box, droplet.options())
             : options.scene == Scene::Lab ? multiply(box.velocity, -20.0F) : float3{};
         waterlab::HybridTimings timing{};
-        const bool particle_context = context_has_particles(options.context);
+        const bool particle_context = recipe_has_particles(options.context);
         if (options.scene == Scene::Lab || particle_context) {
             const bool dynamic_sphere = options.scene == Scene::Course &&
-                (options.context == parallel_mater::sim::ExampleContext::water ||
-                 options.context == parallel_mater::sim::ExampleContext::water_rope ||
-                 options.context == parallel_mater::sim::ExampleContext::water_soft_body);
+                (options.context == parallel_mater::sim::SimulationRecipe::water ||
+                 options.context == parallel_mater::sim::SimulationRecipe::water_rope ||
+                 options.context == parallel_mater::sim::SimulationRecipe::water_soft_body);
             timing = droplet.step(force, 0.0F, nullptr, soft_bodies.get(),
                 options.scene == Scene::Lab,
                 dynamic_sphere ? &rigid_sphere : nullptr,
-                options.context == parallel_mater::sim::ExampleContext::water_soft_body
+                options.context == parallel_mater::sim::SimulationRecipe::water_soft_body
                     ? &water_wheel : nullptr);
         } else if (soft_bodies) {
             const bool rolling_rigid =
-                options.context == parallel_mater::sim::ExampleContext::cloth ||
-                options.context == parallel_mater::sim::ExampleContext::soft_body ||
-                options.context == parallel_mater::sim::ExampleContext::rope ||
-                options.context == parallel_mater::sim::ExampleContext::cloth_rope ||
-                options.context == parallel_mater::sim::ExampleContext::soft_body_rope;
+                options.context == parallel_mater::sim::SimulationRecipe::cloth ||
+                options.context == parallel_mater::sim::SimulationRecipe::soft_body ||
+                options.context == parallel_mater::sim::SimulationRecipe::rope ||
+                options.context == parallel_mater::sim::SimulationRecipe::cloth_rope ||
+                options.context == parallel_mater::sim::SimulationRecipe::soft_body_rope;
             waterlab::SoftBodyTimings soft{};
-            if (options.context == parallel_mater::sim::ExampleContext::rope) {
+            if (options.context == parallel_mater::sim::SimulationRecipe::rope) {
                 const auto lattice = soft_bodies->lattice_view();
                 soft = soft_bodies->step_with_tethered_rigid_spheres(
                     rigid_sphere, lattice.voxels_per_instance - 1U,
                     rigid_sphere.radius + lattice.voxel_radius,caged_rigid_sphere,
                     physics_options.gravity);
             } else if (options.context ==
-                    parallel_mater::sim::ExampleContext::cloth_rope ||
+                    parallel_mater::sim::SimulationRecipe::cloth_rope ||
                 options.context ==
-                    parallel_mater::sim::ExampleContext::soft_body_rope) {
+                    parallel_mater::sim::SimulationRecipe::soft_body_rope) {
                 soft = soft_bodies->step_with_rigid_sphere(
                     rigid_sphere,make_float3(0.0F,0.0F,0.0F),
                     physics_options.gravity);
@@ -2660,13 +2644,13 @@ int run_profile(const Options& options)
                 render_box.yaw = water_wheel.rim_angle;
                 render_box.sphere_orientation = rigid_sphere.orientation;
             }
-            if (options.context==parallel_mater::sim::ExampleContext::rope) {
+            if (options.context==parallel_mater::sim::SimulationRecipe::rope) {
                 render_box.secondary_sphere_center=caged_rigid_sphere.center;
                 render_box.secondary_sphere_radius=caged_rigid_sphere.radius;
             }
         }
         const bool render_water_skin = options.scene == Scene::Lab ||
-            waterlab::gallery::context_has(
+            waterlab::gallery::recipe_has(
                 options.context, parallel_mater::sim::Component::water_skin);
         const float raytrace = raytracer.render_hybrid(
             droplet.skin_mesh(), droplet.skin_normals(),
@@ -2828,8 +2812,8 @@ int run_interactive(const Options& options)
     input.cloth_detail = waterlab::gallery::default_cloth_detail(input.context);
     input.fluid_display = options.view_explicit
         ? options.fluid_display
-        : waterlab::gallery::default_context_display(input.context);
-    input.show_foam = options.show_foam && context_has_particles(input.context);
+        : waterlab::gallery::default_recipe_display(input.context);
+    input.show_foam = options.show_foam && recipe_has_particles(input.context);
     configure_context_camera(input);
     input.replay_mode = !replay_frames.empty();
     input.course_mode = input.replay_mode
@@ -2858,11 +2842,11 @@ int run_interactive(const Options& options)
     if (input.replay_mode) {
         physics_options = replay_frames.front().state.options;
     } else if (input.course_mode) {
-        waterlab::gallery::ContextPhysicsOverrides overrides;
+        waterlab::gallery::RecipePhysicsOverrides overrides;
         if (options.physics_iterations != 0U) {
             overrides.physics_iterations = options.physics_iterations;
         }
-        physics_options = waterlab::gallery::make_context_physics(
+        physics_options = waterlab::gallery::make_recipe_physics(
             input.context, overrides);
     } else {
         physics_options = waterlab::HybridOptions{};
@@ -2879,7 +2863,7 @@ int run_interactive(const Options& options)
     begin_context_particle_spawn(input,droplet);
     std::unique_ptr<waterlab::SoftBodyCourse> soft_bodies;
     if (input.course_mode) {
-        soft_bodies = waterlab::gallery::make_context_deformable(
+        soft_bodies = waterlab::gallery::make_recipe_deformable(
             input.context, physics_options, MESHPREP_SOFT_BODY_ASSET_PATH,
             input.rope_node_count, input.cloth_detail,
             input.bridge_columns,input.bridge_rows,
@@ -2952,18 +2936,18 @@ int run_interactive(const Options& options)
             input.context = input.pending_context;
             input.cloth_detail = waterlab::gallery::default_cloth_detail(input.context);
             input.course_mode = true;
-            waterlab::gallery::ContextPhysicsOverrides overrides;
+            waterlab::gallery::RecipePhysicsOverrides overrides;
             if (options.physics_iterations != 0U) {
                 overrides.physics_iterations = options.physics_iterations;
             }
-            physics_options = waterlab::gallery::make_context_physics(
+            physics_options = waterlab::gallery::make_recipe_physics(
                 input.context, overrides);
             droplet_storage.emplace(physics_options);
             smoke_storage=create_smoke_system(input.context);
             begin_context_particle_spawn(input,droplet);
             visuals.set_active_count(droplet.options().particle_count);
             visuals.set_foam_settings(context_foam_settings(input.context));
-            soft_bodies = waterlab::gallery::make_context_deformable(
+            soft_bodies = waterlab::gallery::make_recipe_deformable(
                 input.context, physics_options, MESHPREP_SOFT_BODY_ASSET_PATH,
                 input.rope_node_count, input.cloth_detail,
                 input.bridge_columns,input.bridge_rows,
@@ -2975,8 +2959,8 @@ int run_interactive(const Options& options)
             reset_level_tracking(input, rigid_sphere);
             water_wheel = {};
             input.fluid_display =
-                waterlab::gallery::default_context_display(input.context);
-            input.show_foam = options.show_foam && context_has_particles(input.context);
+                waterlab::gallery::default_recipe_display(input.context);
+            input.show_foam = options.show_foam && recipe_has_particles(input.context);
             input.course_gravity = physics_options.gravity;
             input.course_finished = false;
             input.course_progress = 0.0F;
@@ -2998,7 +2982,7 @@ int run_interactive(const Options& options)
             } else {
                 visual_ms = 0.0F;
             }
-            const auto& selected = waterlab::gallery::context_info(input.context);
+            const auto& selected = waterlab::gallery::recipe_info(input.context);
             std::printf("Context: %.*s\n",
                 static_cast<int>(selected.title.size()), selected.title.data());
         }
@@ -3017,7 +3001,7 @@ int run_interactive(const Options& options)
                 case 0: {
                     const int step = 1'000;
                     const std::uint32_t current = input.context==
-                            parallel_mater::sim::ExampleContext::water_soft_body &&
+                            parallel_mater::sim::SimulationRecipe::water_soft_body &&
                             input.staged_particle_target!=0U
                         ? input.staged_particle_target : updated.particle_count;
                     const std::uint32_t count = static_cast<std::uint32_t>(std::clamp(
@@ -3090,7 +3074,7 @@ int run_interactive(const Options& options)
                     physics_options = updated;
                     droplet_storage.emplace(updated);
                     begin_context_particle_spawn(input,droplet);
-                    soft_bodies = waterlab::gallery::make_context_deformable(
+                    soft_bodies = waterlab::gallery::make_recipe_deformable(
                         input.context, updated, MESHPREP_SOFT_BODY_ASSET_PATH,
                         input.rope_node_count, input.cloth_detail,
                         input.bridge_columns,input.bridge_rows,
@@ -3124,8 +3108,8 @@ int run_interactive(const Options& options)
                 visuals.reset();
             }
             if (input.course_mode &&
-                (input.context==parallel_mater::sim::ExampleContext::cloth_rope ||
-                 input.context==parallel_mater::sim::ExampleContext::soft_body_rope) &&
+                (input.context==parallel_mater::sim::SimulationRecipe::cloth_rope ||
+                 input.context==parallel_mater::sim::SimulationRecipe::soft_body_rope) &&
                 (input.physics_parameter==29 || input.physics_parameter==30) &&
                 input.physics_adjustment!=0) {
                 if (input.physics_parameter==29)
@@ -3137,7 +3121,7 @@ int run_interactive(const Options& options)
                         static_cast<int>(input.bridge_rows)+input.physics_adjustment,
                         2,64));
                 input.physics_adjustment=0;
-                soft_bodies=waterlab::gallery::make_context_deformable(
+                soft_bodies=waterlab::gallery::make_recipe_deformable(
                     input.context,droplet.options(),MESHPREP_SOFT_BODY_ASSET_PATH,
                     input.rope_node_count,input.cloth_detail,
                     input.bridge_columns,input.bridge_rows,
@@ -3149,14 +3133,14 @@ int run_interactive(const Options& options)
                 reset_level_tracking(input,rigid_sphere);
             }
             apply_physics_adjustment(input, droplet, soft_bodies.get(),
-                input.context == parallel_mater::sim::ExampleContext::cloth ||
-                input.context == parallel_mater::sim::ExampleContext::soft_body ||
-                input.context == parallel_mater::sim::ExampleContext::water ||
-                input.context == parallel_mater::sim::ExampleContext::water_rope ||
-                input.context == parallel_mater::sim::ExampleContext::water_soft_body ||
-                input.context == parallel_mater::sim::ExampleContext::rope ||
-                input.context == parallel_mater::sim::ExampleContext::cloth_rope ||
-                input.context == parallel_mater::sim::ExampleContext::soft_body_rope
+                input.context == parallel_mater::sim::SimulationRecipe::cloth ||
+                input.context == parallel_mater::sim::SimulationRecipe::soft_body ||
+                input.context == parallel_mater::sim::SimulationRecipe::water ||
+                input.context == parallel_mater::sim::SimulationRecipe::water_rope ||
+                input.context == parallel_mater::sim::SimulationRecipe::water_soft_body ||
+                input.context == parallel_mater::sim::SimulationRecipe::rope ||
+                input.context == parallel_mater::sim::SimulationRecipe::cloth_rope ||
+                input.context == parallel_mater::sim::SimulationRecipe::soft_body_rope
                     ? &rigid_sphere : nullptr, &visuals);
             if (visuals.view().particle_count != droplet.options().particle_count) {
                 visuals.set_active_count(droplet.options().particle_count);
@@ -3168,7 +3152,7 @@ int run_interactive(const Options& options)
                     droplet.options().fixed_dt);
             }
             if (input.course_mode &&
-                input.context == parallel_mater::sim::ExampleContext::water_cloth) {
+                input.context == parallel_mater::sim::SimulationRecipe::water_cloth) {
                 apply_soft_body_strength(input, soft_bodies.get());
             } else if (input.course_mode) {
                 apply_soft_body_strength(input, soft_bodies.get());
@@ -3190,7 +3174,7 @@ int run_interactive(const Options& options)
                 visuals.set_active_count(droplet.options().particle_count);
                 if (soft_bodies != nullptr) {
                     if (input.context==
-                        parallel_mater::sim::ExampleContext::water_rope) {
+                        parallel_mater::sim::SimulationRecipe::water_rope) {
                         soft_bodies->translate_pinned(
                             make_float3(-input.fishing_head_x,0.0F,0.0F));
                         soft_bodies->scale_rest_lengths(1.0F/input.fishing_rope_scale);
@@ -3198,12 +3182,12 @@ int run_interactive(const Options& options)
                         input.fishing_rope_scale=1.0F;
                     }
                     if (input.context ==
-                        parallel_mater::sim::ExampleContext::water_soft_body) {
+                        parallel_mater::sim::SimulationRecipe::water_soft_body) {
                         soft_bodies->set_pinned_rotation_z(
                             waterlab::water_wheel_center, 0.0F);
                     }
                     soft_bodies->reset();
-                    waterlab::gallery::initialize_context_motion(
+                    waterlab::gallery::initialize_recipe_motion(
                         input.context, *soft_bodies);
                 }
                 rigid_sphere = waterlab::gallery::initial_rigid_sphere(
@@ -3228,7 +3212,7 @@ int run_interactive(const Options& options)
                     input.droplet_center = {};
                     input.follow_center = {};
                     configure_context_camera(input);
-                    input.course_gravity = waterlab::gallery::make_context_physics(
+                    input.course_gravity = waterlab::gallery::make_recipe_physics(
                         input.context).gravity;
                     waterlab::HybridOptions reset_options = droplet.options();
                     reset_options.gravity = input.course_gravity;
@@ -3255,7 +3239,7 @@ int run_interactive(const Options& options)
                 droplet.restore_state(frame.state);
                 if (frame.has_soft_body) {
                     if (soft_bodies == nullptr &&
-                        input.context != parallel_mater::sim::ExampleContext::water_cloth) {
+                        input.context != parallel_mater::sim::SimulationRecipe::water_cloth) {
                         throw std::runtime_error(
                             "capture contains soft-body state outside course mode");
                     }
@@ -3305,29 +3289,29 @@ int run_interactive(const Options& options)
                 parallel_mater::physics::SmokeSphereCollider collider{
                     rigid_sphere.center,rigid_sphere.velocity,rigid_sphere.radius,0.20F};
                 const bool collide_sphere=
-                    input.context==parallel_mater::sim::ExampleContext::smoke ||
-                    input.context==parallel_mater::sim::ExampleContext::soft_body_smoke ||
-                    input.context==parallel_mater::sim::ExampleContext::rope_smoke;
+                    input.context==parallel_mater::sim::SimulationRecipe::smoke ||
+                    input.context==parallel_mater::sim::SimulationRecipe::soft_body_smoke ||
+                    input.context==parallel_mater::sim::SimulationRecipe::rope_smoke;
                 const parallel_mater::Status status=smoke_storage->step({{},
                     collide_sphere ? &collider : nullptr,collide_sphere ? 1U : 0U},
                     smoke_timings);
                 if (!status.ok()) throw std::runtime_error(
                     std::string("step smoke: ")+status.message);
             }
-            const bool particle_context = context_has_particles(input.context);
+            const bool particle_context = recipe_has_particles(input.context);
             if (particle_context) {
                 const bool dynamic_sphere =
-                    input.context == parallel_mater::sim::ExampleContext::water ||
-                    input.context == parallel_mater::sim::ExampleContext::water_rope ||
-                    input.context == parallel_mater::sim::ExampleContext::water_soft_body;
+                    input.context == parallel_mater::sim::SimulationRecipe::water ||
+                    input.context == parallel_mater::sim::SimulationRecipe::water_rope ||
+                    input.context == parallel_mater::sim::SimulationRecipe::water_soft_body;
                 timings = droplet.step(
                     control_force, control_torque, nullptr, soft_bodies.get(),
                     !input.course_mode, dynamic_sphere ? &rigid_sphere : nullptr,
-                    input.context == parallel_mater::sim::ExampleContext::water_soft_body
+                    input.context == parallel_mater::sim::SimulationRecipe::water_soft_body
                         ? &water_wheel : nullptr,
-                    input.context == parallel_mater::sim::ExampleContext::water_soft_body
+                    input.context == parallel_mater::sim::SimulationRecipe::water_soft_body
                         ? &input.course_gravity : nullptr);
-                if (input.context==parallel_mater::sim::ExampleContext::fluid_smoke &&
+                if (input.context==parallel_mater::sim::SimulationRecipe::fluid_smoke &&
                     droplet.statistics().particle_count>256U &&
                     (droplet.statistics().frame_index&1U)==0U)
                     droplet.resize_particles(std::max(256U,
@@ -3339,7 +3323,7 @@ int run_interactive(const Options& options)
                         droplet.options().gravity, droplet.options().fixed_dt,
                         nullptr, droplet.options().obstacle_course, droplet.particle_cells())
                     : 0.0F;
-                if (input.context == parallel_mater::sim::ExampleContext::water_cloth) {
+                if (input.context == parallel_mater::sim::SimulationRecipe::water_cloth) {
                     capture.record(droplet, timings, input.rectangle_target,
                         control_force, control_torque, visuals, visual_ms,
                         soft_bodies.get());
@@ -3347,29 +3331,29 @@ int run_interactive(const Options& options)
                 }
             } else if (soft_bodies != nullptr) {
                 const bool rolling_rigid =
-                    input.context == parallel_mater::sim::ExampleContext::cloth ||
-                    input.context == parallel_mater::sim::ExampleContext::soft_body ||
-                    input.context == parallel_mater::sim::ExampleContext::rope ||
-                    input.context == parallel_mater::sim::ExampleContext::cloth_rope ||
-                    input.context == parallel_mater::sim::ExampleContext::soft_body_rope;
+                    input.context == parallel_mater::sim::SimulationRecipe::cloth ||
+                    input.context == parallel_mater::sim::SimulationRecipe::soft_body ||
+                    input.context == parallel_mater::sim::SimulationRecipe::rope ||
+                    input.context == parallel_mater::sim::SimulationRecipe::cloth_rope ||
+                    input.context == parallel_mater::sim::SimulationRecipe::soft_body_rope;
                 waterlab::SoftBodyTimings soft{};
-                if (smoke_storage && context_has_smoke(input.context)) {
-                    if (input.context==parallel_mater::sim::ExampleContext::cloth_smoke) {
+                if (smoke_storage && recipe_has_smoke(input.context)) {
+                    if (input.context==parallel_mater::sim::SimulationRecipe::cloth_smoke) {
                         soft_bodies->set_pinned_rotation_z(
                             make_float3(0.0F,0.15F,-1.20F),input.smoke_rotor_angle);
                     }
                     const bool rolling=
-                        input.context==parallel_mater::sim::ExampleContext::soft_body_smoke ||
-                        input.context==parallel_mater::sim::ExampleContext::rope_smoke;
+                        input.context==parallel_mater::sim::SimulationRecipe::soft_body_smoke ||
+                        input.context==parallel_mater::sim::SimulationRecipe::rope_smoke;
                     const float3 body_gravity=
-                        input.context==parallel_mater::sim::ExampleContext::soft_body_smoke
+                        input.context==parallel_mater::sim::SimulationRecipe::soft_body_smoke
                         ? input.course_gravity : make_float3(0.0F,0.0F,0.0F);
                     soft=step_smoke_coupled_body(*soft_bodies,*smoke_storage,
                         rolling ? &rigid_sphere : nullptr,body_gravity,
                         input.course_gravity,droplet.options().arena,
                         droplet.options().physics_iterations,droplet.options().fixed_dt,
                         smoke_timings);
-                    if (input.context==parallel_mater::sim::ExampleContext::cloth_smoke) {
+                    if (input.context==parallel_mater::sim::SimulationRecipe::cloth_smoke) {
                         const float torque=soft_bodies->wheel_rim_reaction_torque(
                             make_float3(0.0F,0.15F,-1.20F));
                         const float dt=droplet.options().fixed_dt;
@@ -3380,7 +3364,7 @@ int run_interactive(const Options& options)
                         input.smoke_rotor_angle+=
                             input.smoke_rotor_angular_velocity*dt;
                     }
-                } else if (input.context == parallel_mater::sim::ExampleContext::rope) {
+                } else if (input.context == parallel_mater::sim::SimulationRecipe::rope) {
                     const auto lattice = soft_bodies->lattice_view();
                     soft = soft_bodies->step_with_tethered_rigid_spheres(
                         rigid_sphere, lattice.voxels_per_instance - 1U,
@@ -3388,9 +3372,9 @@ int run_interactive(const Options& options)
                         caged_rigid_sphere,
                         input.course_gravity);
                 } else if (input.context ==
-                        parallel_mater::sim::ExampleContext::cloth_rope ||
+                        parallel_mater::sim::SimulationRecipe::cloth_rope ||
                     input.context ==
-                        parallel_mater::sim::ExampleContext::soft_body_rope) {
+                        parallel_mater::sim::SimulationRecipe::soft_body_rope) {
                     soft = soft_bodies->step_with_rigid_sphere(
                         rigid_sphere,make_float3(0.0F,0.0F,0.0F),
                         input.course_gravity);
@@ -3406,7 +3390,7 @@ int run_interactive(const Options& options)
                 timings.update_soft_body_render_ms = soft.render_deformation_ms;
                 timings.update_rigid_body_contact_ms = soft.rigid_contact_ms;
                 visual_ms = 0.0F;
-            } else if (input.context==parallel_mater::sim::ExampleContext::smoke) {
+            } else if (input.context==parallel_mater::sim::SimulationRecipe::smoke) {
                 const float dt=droplet.options().fixed_dt;
                 rigid_sphere.velocity=add(rigid_sphere.velocity,
                     multiply(input.course_gravity,dt));
@@ -3421,13 +3405,13 @@ int run_interactive(const Options& options)
                 timings={};
                 visual_ms=0.0F;
             }
-            if (input.context == parallel_mater::sim::ExampleContext::water) {
+            if (input.context == parallel_mater::sim::SimulationRecipe::water) {
                 input.painted_fraction = raytracer.update_bowl_paint(
                     droplet.particle_positions(), droplet.statistics().particle_count,
                     droplet.particle_radius(), input.reset_bowl_paint);
                 input.reset_bowl_paint = false;
             }
-            if (input.context == parallel_mater::sim::ExampleContext::soft_body &&
+            if (input.context == parallel_mater::sim::SimulationRecipe::soft_body &&
                 soft_bodies != nullptr) {
                 const auto lattice = soft_bodies->lattice_view();
                 input.painted_fraction = raytracer.update_sphere_paint(
@@ -3435,7 +3419,7 @@ int run_interactive(const Options& options)
                     rigid_sphere, input.reset_bowl_paint);
                 input.reset_bowl_paint = false;
             }
-            if (input.context == parallel_mater::sim::ExampleContext::cloth_soft_body &&
+            if (input.context == parallel_mater::sim::SimulationRecipe::cloth_soft_body &&
                 soft_bodies != nullptr) {
                 const auto lattice = soft_bodies->lattice_view();
                 raytracer.update_goal_cloth_paint(lattice.positions,
@@ -3443,7 +3427,7 @@ int run_interactive(const Options& options)
                     input.reset_bowl_paint);
                 input.reset_bowl_paint = false;
             }
-            if (input.context == parallel_mater::sim::ExampleContext::soft_body_rope &&
+            if (input.context == parallel_mater::sim::SimulationRecipe::soft_body_rope &&
                 soft_bodies != nullptr) {
                 const auto lattice=soft_bodies->lattice_view();
                 raytracer.update_rope_bridge_paint(lattice.positions,
@@ -3470,13 +3454,13 @@ int run_interactive(const Options& options)
             follow_course(input, replay_frames[replay_index]);
         }
         update_camera(input, camera);
-        const bool render_particles = context_has_particles(input.context);
+        const bool render_particles = recipe_has_particles(input.context);
         const waterlab::SoftBodyRenderView raytraced_soft_bodies =
             input.fluid_display == waterlab::FluidDisplay::Wireframe
             ? waterlab::SoftBodyRenderView{}
             : soft_bodies ? soft_bodies->render_view() : waterlab::SoftBodyRenderView{};
         const bool render_course = input.course_mode &&
-            input.context == parallel_mater::sim::ExampleContext::water_cloth;
+            input.context == parallel_mater::sim::SimulationRecipe::water_cloth;
         waterlab::OrientedBox render_box = droplet.render_box();
         if (input.course_mode && !render_course) {
             // Non-rigid gallery recipes use the checkerboard room without
@@ -3499,7 +3483,7 @@ int run_interactive(const Options& options)
             render_box.sphere_orientation = rigid_sphere.orientation;
         }
         if (input.course_mode && input.context ==
-                parallel_mater::sim::ExampleContext::rope) {
+                parallel_mater::sim::SimulationRecipe::rope) {
             render_box.secondary_sphere_center=caged_rigid_sphere.center;
             render_box.secondary_sphere_radius=caged_rigid_sphere.radius;
         }
@@ -3512,7 +3496,7 @@ int run_interactive(const Options& options)
             render_box.sphere_orientation = rigid_sphere.orientation;
         }
         const bool render_water_skin = !input.course_mode ||
-            waterlab::gallery::context_has(
+            waterlab::gallery::recipe_has(
                 input.context, parallel_mater::sim::Component::water_skin);
         raytrace_ms = raytracer.render_hybrid(
             droplet.skin_mesh(), droplet.skin_normals(),
@@ -3568,14 +3552,14 @@ int run_interactive(const Options& options)
             droplet.statistics(), soft_bodies.get());
         draw_physics_panel(width, height, input.show_physics,
             input, droplet.options(), soft_bodies.get(),
-            input.context == parallel_mater::sim::ExampleContext::cloth ||
-            input.context == parallel_mater::sim::ExampleContext::soft_body ||
-            input.context == parallel_mater::sim::ExampleContext::water ||
-            input.context == parallel_mater::sim::ExampleContext::water_rope ||
-            input.context == parallel_mater::sim::ExampleContext::water_soft_body ||
-            input.context == parallel_mater::sim::ExampleContext::rope ||
-            input.context == parallel_mater::sim::ExampleContext::cloth_rope ||
-            input.context == parallel_mater::sim::ExampleContext::soft_body_rope
+            input.context == parallel_mater::sim::SimulationRecipe::cloth ||
+            input.context == parallel_mater::sim::SimulationRecipe::soft_body ||
+            input.context == parallel_mater::sim::SimulationRecipe::water ||
+            input.context == parallel_mater::sim::SimulationRecipe::water_rope ||
+            input.context == parallel_mater::sim::SimulationRecipe::water_soft_body ||
+            input.context == parallel_mater::sim::SimulationRecipe::rope ||
+            input.context == parallel_mater::sim::SimulationRecipe::cloth_rope ||
+            input.context == parallel_mater::sim::SimulationRecipe::soft_body_rope
                 ? &rigid_sphere : nullptr, &visuals);
         draw_quantity_panel(width, height, input.show_quantities,
             input, droplet.options(), soft_bodies.get());
@@ -3591,8 +3575,8 @@ int run_interactive(const Options& options)
                 static_cast<unsigned long long>(stats.frame_index),
                 stats.particles_outside, stats.skin_vertices_inside_rectangle);
         } else if (input.course_mode &&
-                   input.context == parallel_mater::sim::ExampleContext::water_cloth) {
-            const auto& recipe = waterlab::gallery::context_info(input.context);
+                   input.context == parallel_mater::sim::SimulationRecipe::water_cloth) {
+            const auto& recipe = waterlab::gallery::recipe_info(input.context);
             std::snprintf(title, sizeof(title),
                 "%.*s | %.0fx motion | N %u | %.2f ms%s%s",
                 static_cast<int>(recipe.title.size()), recipe.title.data(),
@@ -3603,17 +3587,17 @@ int run_interactive(const Options& options)
                     (capture_status == "CAPTURE SAVED" ? " | CAPTURE SAVED" :
                         " | CAPTURE FAILED"));
         } else if (input.course_mode) {
-            const auto& recipe = waterlab::gallery::context_info(input.context);
+            const auto& recipe = waterlab::gallery::recipe_info(input.context);
             const auto soft_stats = soft_bodies
                 ? soft_bodies->statistics() : waterlab::SoftBodyStatistics{};
             std::snprintf(title, sizeof(title),
                 "%.*s | goal %.0f%%%s | gravity %.1f | N %u | particles %u | "
                 "bonds %u broken | %.2f ms",
                 static_cast<int>(recipe.title.size()), recipe.title.data(),
-                100.0F * input.level_progress.normalized,
-                input.level_progress.won ? " COMPLETE" : "",
+                100.0F * input.objective_progress.normalized,
+                input.objective_progress.completed ? " COMPLETE" : "",
                 length(input.course_gravity), droplet.options().physics_iterations,
-                context_has_particles(input.context) ? stats.particle_count : 0U,
+                recipe_has_particles(input.context) ? stats.particle_count : 0U,
                 soft_stats.broken_edge_count, wall_ms);
         } else {
             std::snprintf(title, sizeof(title),

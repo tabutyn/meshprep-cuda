@@ -8,7 +8,7 @@ include(CMakePackageConfigHelpers)
 option(PARALLEL_MATER_BUILD_TESTS "Build GPU correctness tests" OFF)
 option(PARALLEL_MATER_BUILD_EXAMPLES "Build examples" OFF)
 option(PARALLEL_MATER_BUILD_BENCHMARKS "Build benchmarks" OFF)
-option(PARALLEL_MATER_BUILD_GALLERY "Build the optional eight-context gallery API" OFF)
+option(PARALLEL_MATER_BUILD_GALLERY "Build the optional recipe gallery API" OFF)
 option(PARALLEL_MATER_BUILD_LAB "Build the native CUDA/OpenGL simulation lab" OFF)
 option(PARALLEL_MATER_BUILD_CAPTURE_TOOLS "Build headless capture audit tools" OFF)
 option(PARALLEL_MATER_ENABLE_NVTX "Annotate public operations with NVTX ranges" ON)
@@ -30,22 +30,22 @@ if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 12.6)
 endif()
 
 if(PARALLEL_MATER_BUILD_GALLERY OR PARALLEL_MATER_BUILD_LAB)
-    # Recipe, validation, and campaign layer used only by the optional gallery
-    # and native application. It has no rendering or CUDA-runtime dependency.
-    add_library(meshprep-game src/game.cpp)
-    add_library(meshprep::meshprep-game ALIAS meshprep-game)
-    add_library(ParallelMater::game ALIAS meshprep-game)
+    # CUDA-free recipe names and configuration used by the optional gallery.
+    # Gameplay objectives and progression remain private to the native app.
+    add_library(meshprep-recipes src/recipes.cpp)
+    add_library(meshprep::meshprep-recipes ALIAS meshprep-recipes)
+    add_library(ParallelMater::recipes ALIAS meshprep-recipes)
     target_include_directories(
-        meshprep-game
+        meshprep-recipes
         PUBLIC
             $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
             $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-    target_compile_features(meshprep-game PUBLIC cxx_std_20)
-    target_compile_options(meshprep-game PRIVATE -Wall -Wextra -Wpedantic)
-    set_target_properties(meshprep-game PROPERTIES
+    target_compile_features(meshprep-recipes PUBLIC cxx_std_20)
+    target_compile_options(meshprep-recipes PRIVATE -Wall -Wextra -Wpedantic)
+    set_target_properties(meshprep-recipes PROPERTIES
         POSITION_INDEPENDENT_CODE ON
-        OUTPUT_NAME parallel-mater-game
-        EXPORT_NAME game)
+        OUTPUT_NAME parallel-mater-recipes
+        EXPORT_NAME recipes)
 endif()
 
 add_library(meshprep-cuda src/meshprep.cu)
@@ -115,7 +115,7 @@ if(PARALLEL_MATER_BUILD_GALLERY OR PARALLEL_MATER_BUILD_LAB)
     add_library(meshprep::meshprep-simulation ALIAS meshprep-simulation)
     add_library(ParallelMater::gallery ALIAS meshprep-simulation)
     target_link_libraries(
-        meshprep-simulation PUBLIC ParallelMater::physics ParallelMater::game)
+        meshprep-simulation PUBLIC ParallelMater::physics ParallelMater::recipes)
     target_include_directories(
         meshprep-simulation
         PUBLIC
@@ -210,6 +210,14 @@ if(PARALLEL_MATER_BUILD_TESTS)
         target_compile_options(meshprep-simulation-api-tests PRIVATE
             $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic>)
         add_test(NAME meshprep-simulation-api-tests COMMAND meshprep-simulation-api-tests)
+
+        add_executable(meshprep-gallery-campaign-tests
+            tests/campaign_tests.cpp apps/water_lab/campaign.cpp)
+        target_link_libraries(meshprep-gallery-campaign-tests PRIVATE meshprep-recipes)
+        target_compile_options(meshprep-gallery-campaign-tests PRIVATE
+            -Wall -Wextra -Wpedantic)
+        add_test(NAME meshprep-gallery-campaign-tests
+            COMMAND meshprep-gallery-campaign-tests)
 
         add_executable(meshprep-simulation-runtime-tests tests/simulation_runtime_tests.cu)
         target_link_libraries(
@@ -381,7 +389,8 @@ if(PARALLEL_MATER_BUILD_LAB)
                 POSITION_INDEPENDENT_CODE ON
                 CUDA_SEPARABLE_COMPILATION OFF)
 
-        add_executable(parallel-mater-lab apps/water_lab/main.cpp)
+        add_executable(parallel-mater-lab
+            apps/water_lab/main.cpp apps/water_lab/campaign.cpp)
         target_link_libraries(
             parallel-mater-lab PRIVATE parallel-mater-gallery-runtime
             glfw OpenGL::GL)
@@ -395,8 +404,8 @@ if(PARALLEL_MATER_BUILD_LAB)
 endif()
 
 set(meshprep_install_targets meshprep-cuda meshprep-physics)
-if(TARGET meshprep-game)
-    list(APPEND meshprep_install_targets meshprep-game)
+if(TARGET meshprep-recipes)
+    list(APPEND meshprep_install_targets meshprep-recipes)
 endif()
 if(TARGET meshprep-simulation)
     list(APPEND meshprep_install_targets meshprep-simulation)
@@ -412,10 +421,10 @@ install(FILES
     include/parallel_mater/physics.hpp
     include/parallel_mater/smoke.hpp
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/parallel_mater)
-if(TARGET meshprep-game)
-    install(FILES include/meshprep/game.hpp
+if(TARGET meshprep-recipes)
+    install(FILES include/meshprep/recipes.hpp
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/meshprep)
-    install(FILES include/parallel_mater/game.hpp
+    install(FILES include/parallel_mater/recipes.hpp
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/parallel_mater)
 endif()
 if(TARGET meshprep-simulation)

@@ -99,9 +99,9 @@ particular cloth, rope, or soft-body implementation. See
 ## Optional gallery API
 
 When configured with `-DPARALLEL_MATER_BUILD_GALLERY=ON`, the dependency-free
-`<parallel_mater/game.hpp>` header defines the native recipe
-catalog, fluent `SimulationConfig`, goals, progress evaluation, and automatic
-`Campaign` progression. `<parallel_mater/gallery.hpp>` adds borrowed CUDA render
+`<parallel_mater/recipes.hpp>` header defines the native recipe
+catalog and fluent `RecipeConfig`; objectives and progression belong exclusively
+to the example application. `<parallel_mater/gallery.hpp>` adds borrowed CUDA render
 views and `SimulationBuilder`, which turns a portable configuration into an
 owning headless CUDA simulation. The separately exported
 `ParallelMater::gallery` target owns and steps those recipes headlessly;
@@ -121,6 +121,9 @@ catalog color-codes the systems used by each recipe; the native `P`
 panel exposes active particle count and physical water-skin detail where
 applicable. These scene recipes remain experimental and are deliberately
 separate from the general physics contract.
+
+See [`docs/API_INVENTORY.md`](docs/API_INVENTORY.md) for a one-sentence inventory
+of every installed type and free function plus the current extraction priorities.
 
 ```bash
 ./build/parallel-mater-gallery-example
@@ -185,7 +188,7 @@ For an optional complete gallery preset, the convenience API is intentionally sm
 parallel_mater::sim::GallerySimulation simulation;
 parallel_mater::Status status =
     parallel_mater::sim::SimulationBuilder(
-        parallel_mater::sim::ExampleContext::water)
+        parallel_mater::sim::SimulationRecipe::water)
         .particles(20'000)
         .iterations(4)
         .build(simulation);

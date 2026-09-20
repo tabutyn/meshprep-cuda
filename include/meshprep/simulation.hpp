@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
-#include <meshprep/game.hpp>
+#include <meshprep/recipes.hpp>
 #include <meshprep/meshprep.hpp>
 
 #include <vector_types.h>
@@ -102,7 +102,7 @@ struct FixedStepOptions {
 // initialization. Softbody requires the converted cylinder .msb asset; the
 // water wheel, rigid course, and other contexts are generated procedurally.
 struct GallerySimulationOptions {
-    ExampleContext context{ExampleContext::water};
+    SimulationRecipe recipe{SimulationRecipe::water};
     FixedStepOptions fixed_step{};
     // Empty overrides select recipe defaults. An explicit particle count also
     // sizes the reserved capacity, up to the 100,000-particle stress ceiling.
@@ -146,10 +146,10 @@ struct GallerySimulationStatistics {
 };
 
 [[nodiscard]] constexpr bool requires_soft_body_asset(
-    ExampleContext context) noexcept
+    SimulationRecipe context) noexcept
 {
-    return context == ExampleContext::soft_body ||
-        context == ExampleContext::soft_body_smoke;
+    return context == SimulationRecipe::soft_body ||
+        context == SimulationRecipe::soft_body_smoke;
 }
 
 // Owning, synchronous fixed-step simulation without a window or renderer.
@@ -181,7 +181,7 @@ public:
         std::uint32_t active_count, cudaStream_t stream = nullptr) noexcept;
 
     [[nodiscard]] bool initialized() const noexcept;
-    [[nodiscard]] ExampleContext context() const noexcept;
+    [[nodiscard]] SimulationRecipe recipe() const noexcept;
     // The returned asset-path view refers to memory owned by this simulation.
     [[nodiscard]] GallerySimulationOptions options() const noexcept;
     [[nodiscard]] ResolvedPhysicsOptions resolved_physics() const noexcept;
@@ -194,13 +194,13 @@ private:
 };
 
 // Fluent convenience layer for applications. Portable values live in
-// SimulationConfig; CUDA-specific gravity, asset path, stream, and ownership
+// RecipeConfig; CUDA-specific gravity, asset path, stream, and ownership
 // enter only at build(). Existing GallerySimulationOptions remains available
 // for callers that prefer aggregate initialization.
 class SimulationBuilder {
 public:
-    explicit SimulationBuilder(ExampleContext context) noexcept
-        : config_(SimulationConfig::for_level(context)) {}
+    explicit SimulationBuilder(SimulationRecipe recipe) noexcept
+        : config_(RecipeConfig::for_recipe(recipe)) {}
 
     SimulationBuilder& timestep(float value) noexcept;
     SimulationBuilder& iterations(std::uint32_t value) noexcept;
@@ -215,12 +215,12 @@ public:
     SimulationBuilder& gravity(float3 value) noexcept;
     SimulationBuilder& soft_body_asset(std::string path);
 
-    [[nodiscard]] const SimulationConfig& config() const noexcept { return config_; }
+    [[nodiscard]] const RecipeConfig& config() const noexcept { return config_; }
     [[nodiscard]] Status build(
         GallerySimulation& output, cudaStream_t stream = nullptr) const noexcept;
 
 private:
-    SimulationConfig config_{};
+    RecipeConfig config_{};
     std::optional<float3> gravity_{};
     std::optional<std::uint32_t> bridge_columns_{};
     std::optional<std::uint32_t> bridge_rows_{};
