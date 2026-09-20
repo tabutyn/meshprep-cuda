@@ -26,8 +26,8 @@ library APIs.
 - [x] Audit public names, option ranges, ABI expectations, and `.msb` format compatibility.
 - [x] Refresh the performance and memory baseline after the private-core split.
 - [x] Review all repository assets and source headers for licensing/provenance.
-- [x] Use `v0.2.0-alpha.1` for the first public physics prerelease; retain
-  `v0.1.x` as the stable geometry-only line until the physics contract settles.
+- [ ] Select the next minor version only in the dedicated tagging change; do
+  not describe an untagged development checkout as a published prerelease.
 
 Publishing and tagging remain explicit maintainer actions.
 The CMake project version stays at the last tagged version until the dedicated

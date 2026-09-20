@@ -27,6 +27,7 @@ struct SmokeOptions {
     float turbulence_frequency{2.0F};
     float maximum_speed{8.0F};
     std::uint32_t seed{0x51A0C3U};
+    float4 initial_color{0.72F, 0.74F, 0.78F, 0.35F};
 };
 
 struct SmokeParticleView {
@@ -36,6 +37,7 @@ struct SmokeParticleView {
     const float *temperatures{};
     std::uint32_t count{};
     float radius{};
+    float4 *colors{};
 };
 
 struct SmokeTimings {
@@ -88,6 +90,7 @@ class Smoke {
                                         cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status finish_frame(Completion &completion,
                                       cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status abandon_frame(cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status advance_async(FrameOptions frame, Completion &completion,
                                        cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status advance(FrameOptions frame, cudaStream_t stream = nullptr) noexcept;
@@ -102,6 +105,7 @@ class Smoke {
     [[nodiscard]] bool initialized() const noexcept;
     [[nodiscard]] SmokeOptions options() const noexcept;
     [[nodiscard]] SmokeParticleView particles() const noexcept;
+    [[nodiscard]] PointStateView point_state() const noexcept;
     [[nodiscard]] SmokeTelemetry telemetry() const noexcept;
     [[nodiscard]] SmokeStatistics statistics() const noexcept;
 

@@ -201,6 +201,21 @@ Status RigidBody::finish_frame(Completion &completion, cudaStream_t stream) noex
     return status;
 }
 
+Status RigidBody::abandon_frame(cudaStream_t stream) noexcept {
+    if (!impl_) return invalid("rigid body is not initialized");
+    const cudaError_t error = cudaStreamSynchronize(stream);
+    impl_->frame_active = false;
+    impl_->substep_prepared = false;
+    impl_->next_substep = 0U;
+    impl_->force = {};
+    impl_->torque = {};
+    return error == cudaSuccess
+               ? Status{}
+               : Status{error == cudaErrorMemoryAllocation ? StatusCode::allocation_failure
+                                                           : StatusCode::cuda_failure,
+                        error, "could not drain abandoned rigid-body frame"};
+}
+
 Status RigidBody::advance_async(FrameOptions frame, Completion &completion,
                                 cudaStream_t stream) noexcept {
     return parallel_mater::physics::step_async(*this, frame, completion, stream);

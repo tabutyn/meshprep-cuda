@@ -33,7 +33,7 @@ void test_every_recipe() {
     for (const auto &recipe : parallel_mater::examples::simulation_recipes) {
         parallel_mater::examples::GallerySimulationOptions options;
         options.recipe = recipe.recipe;
-        options.solver_iterations_override = 2U;
+        options.substeps_override = 2U;
         options.soft_body_asset_path = PARALLEL_MATER_SIMULATION_TEST_ASSET;
         if (parallel_mater::examples::has_component(recipe.components, Component::fluid_particles))
             options.particle_count_override = 256U;

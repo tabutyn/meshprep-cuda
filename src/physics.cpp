@@ -34,6 +34,9 @@ constexpr Status allocation_failure(const char *message) noexcept {
 [[nodiscard]] bool finite(float3 value) noexcept {
     return finite(value.x) && finite(value.y) && finite(value.z);
 }
+[[nodiscard]] bool finite(float4 value) noexcept {
+    return finite(value.x) && finite(value.y) && finite(value.z) && finite(value.w);
+}
 
 [[nodiscard]] bool valid(const SoftBodyOptions &value) noexcept {
     if (value.instance_count == 0U || value.instance_count > SoftBodyOptions::maximum_instances ||
@@ -51,7 +54,7 @@ constexpr Status allocation_failure(const char *message) noexcept {
         value.maximum_speed < 0.5F || value.maximum_speed > 30.0F ||
         !finite(value.strength_multiplier) || value.strength_multiplier < 0.0625F ||
         value.strength_multiplier > 64.0F || value.hierarchy_leaf_size == 0U ||
-        value.hierarchy_leaf_size > 32U) {
+        value.hierarchy_leaf_size > 32U || !finite(value.initial_color)) {
         return false;
     }
     for (std::uint32_t i = 0U; i < value.instance_count; ++i) {
@@ -253,6 +256,18 @@ Status SoftBody::finish_frame(Completion &completion, cudaStream_t stream) noexc
     return status;
 }
 
+Status SoftBody::abandon_frame(cudaStream_t stream) noexcept {
+    if (!impl_) return invalid("soft body is not initialized");
+    const cudaError_t error = cudaStreamSynchronize(stream);
+    impl_->frame_active = false;
+    impl_->next_substep = 0U;
+    if (error != cudaSuccess)
+        return {error == cudaErrorMemoryAllocation ? StatusCode::allocation_failure
+                                                   : StatusCode::cuda_failure,
+                error, "could not drain abandoned soft-body frame"};
+    return {};
+}
+
 Status SoftBody::collect_telemetry_async(Completion &completion, cudaStream_t stream) noexcept {
     if (!impl_) return invalid("soft body is not initialized");
     if (impl_->frame_active) return invalid("cannot collect an active soft-body frame");
@@ -378,10 +393,12 @@ SoftBodyNodeView SoftBody::nodes() const noexcept {
     return impl_->solver.nodes();
 }
 
+PointStateView SoftBody::point_state() const noexcept { return coupling_points(); }
+
 PointCouplingView SoftBody::coupling_points() const noexcept {
     const SoftBodyNodeView view = nodes();
     return {view.positions,  view.velocities,  view.external_impulses, view.position_corrections,
-            view.node_count, view.node_radius, view.inverse_node_mass};
+            view.node_count, view.node_radius, view.inverse_node_mass, view.colors};
 }
 
 SoftBodyBondView SoftBody::bonds() const noexcept {
@@ -458,6 +475,9 @@ Status Cloth::finish_frame(Completion &completion, cudaStream_t stream) noexcept
     return impl_ ? impl_->body.finish_frame(completion, stream)
                  : invalid("cloth is not initialized");
 }
+Status Cloth::abandon_frame(cudaStream_t stream) noexcept {
+    return impl_ ? impl_->body.abandon_frame(stream) : invalid("cloth is not initialized");
+}
 Status Cloth::advance_async(FrameOptions frame, Completion &completion,
                             cudaStream_t stream) noexcept {
     return parallel_mater::physics::step_async(*this, frame, completion, stream);
@@ -480,6 +500,7 @@ ClothOptions Cloth::options() const noexcept { return impl_ ? impl_->options : C
 SoftBodyNodeView Cloth::nodes() const noexcept {
     return impl_ ? impl_->body.nodes() : SoftBodyNodeView{};
 }
+PointStateView Cloth::point_state() const noexcept { return coupling_points(); }
 PointCouplingView Cloth::coupling_points() const noexcept {
     return impl_ ? impl_->body.coupling_points() : PointCouplingView{};
 }
@@ -550,6 +571,9 @@ Status Rope::finish_frame(Completion &completion, cudaStream_t stream) noexcept 
     return impl_ ? impl_->body.finish_frame(completion, stream)
                  : invalid("rope is not initialized");
 }
+Status Rope::abandon_frame(cudaStream_t stream) noexcept {
+    return impl_ ? impl_->body.abandon_frame(stream) : invalid("rope is not initialized");
+}
 Status Rope::advance_async(FrameOptions frame, Completion &completion,
                            cudaStream_t stream) noexcept {
     return parallel_mater::physics::step_async(*this, frame, completion, stream);
@@ -572,6 +596,7 @@ RopeOptions Rope::options() const noexcept { return impl_ ? impl_->options : Rop
 SoftBodyNodeView Rope::nodes() const noexcept {
     return impl_ ? impl_->body.nodes() : SoftBodyNodeView{};
 }
+PointStateView Rope::point_state() const noexcept { return coupling_points(); }
 PointCouplingView Rope::coupling_points() const noexcept {
     return impl_ ? impl_->body.coupling_points() : PointCouplingView{};
 }

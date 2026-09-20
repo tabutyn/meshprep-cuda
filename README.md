@@ -9,7 +9,9 @@ geometry and simulation state on an NVIDIA GPU. The installed package contains:
 - independent owning `Fluid`, `Cloth`, `Rope`, `SoftBody`, `RigidBody`, and
   `Smoke` solvers;
 - a common frame/substep protocol with synchronous and asynchronous completion;
-- solver-neutral analytic colliders and deterministic constraint batches; and
+- solver-neutral analytic colliders and deterministic constraint batches;
+- deterministic contact painting for particles, deformable surfaces, and
+  application-parameterized rigid/cloth textures; and
 - device-resident borrowed views for application-defined coupling and rendering.
 
 Renderers, input, authored levels, objectives, presets, and progression are not
@@ -93,10 +95,13 @@ Applications that couple multiple solvers call `begin_frame`, then
   never installed or exported.
 - `parallel-mater-lab`: optional native visualization and interaction client.
 
-The complete one-sentence public inventory is in
+Start with [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md), then use the
+complete one-sentence public inventory in
 [`docs/API_INVENTORY.md`](docs/API_INVENTORY.md). Detailed contracts are in
 [`docs/API.md`](docs/API.md), and the package layering is described in
 [`docs/SIMULATION_API_ARCHITECTURE.md`](docs/SIMULATION_API_ARCHITECTURE.md).
+The current deletion/migration priorities are recorded in
+[`docs/CODE_REDUCTION_AUDIT.md`](docs/CODE_REDUCTION_AUDIT.md).
 
 ## Correctness and determinism
 
@@ -106,8 +111,8 @@ normal indexing, and deterministic constraint reduction order. Floating-point
 bit identity across GPU architectures or compiler versions is not promised.
 
 Release validation includes CPU references, seeded fixtures, same-GPU replay,
-CUDA runtime tests, installed-package consumers, and Compute Sanitizer. GPU CI
-is still a release prerequisite; local results are not represented as CI.
+CUDA runtime tests, installed-package consumers, Compute Sanitizer, and CUDA
+12.6/13.1 CI. Hardware-specific performance results remain explicitly local.
 
 ## Performance
 

@@ -6,6 +6,7 @@
 #include <parallel_mater/cloth.hpp>
 #include <parallel_mater/coupling.hpp>
 #include <parallel_mater/fluid.hpp>
+#include <parallel_mater/paint.hpp>
 #include <parallel_mater/rigid_body.hpp>
 #include <parallel_mater/rope.hpp>
 #include <parallel_mater/smoke.hpp>

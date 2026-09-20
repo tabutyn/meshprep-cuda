@@ -21,10 +21,15 @@ deferred CUDA failures. Frame submission performs no telemetry readback:
 `collect_statistics_async` or `collect_telemetry_async` explicitly requests a
 device-to-host snapshot, while synchronous collection helpers wait for that
 separate request.
-`Fluid`, `Cloth`, `Rope`, and `SoftBody` expose the same
-`PointCouplingView`; its impulse buffer is writable only during a prepared
-substep and its optional correction buffer is present only for projection
-solvers. `RigidBody` gathers finite-mass reactions through `apply_force` and
+`advance_coupled` performs the protocol for multiple owners, invokes an
+application callback once per prepared substep, and abandons active protocol
+state after a rejected stage by draining the supplied stream; CUDA work already
+enqueued is not rolled back.
+`Fluid`, `Cloth`, `Rope`, `SoftBody`, and `Smoke` expose the same
+`PointStateView` (`PointCouplingView` remains a compatibility alias). Its
+optional impulse/correction buffers are writable only during a prepared
+substep, and its persistent RGBA buffer is available to deterministic contact
+paint. `RigidBody` gathers finite-mass reactions through `apply_force` and
 `apply_torque` in the same phase.
 
 `Fluid` owns a deterministic sorted-cell particle system and exposes one
@@ -87,14 +92,30 @@ See `examples/soft_body.cu` for a minimal custom ground collider.
 
 `Collider` is the shared analytic description for spheres, boxes, planes, and
 capsules; `ColliderSet` owns a device array and exposes `ColliderView`.
-Individual solvers document which shapes they consume—Smoke currently consumes
-spheres—without introducing solver-specific collider structures.
+`apply_colliders_async`/`apply_colliders` apply every shape to any
+`PointStateView` in collider-array order, including projection, friction,
+restitution, and optional paint. Smoke's direct internal obstacle path remains
+sphere-specific.
 
 `ConstraintRecord` addresses one target point and carries an impulse, optional
-position correction, and caller-defined stable order. `ConstraintBatch` radix
-sorts records by `(point, order)` and gathers every point in that exact order,
-avoiding floating-point contact atomics. One batch can target the common point
-view of a fluid, cloth, rope, or soft body.
+position correction, optional RGBA paint, and caller-defined stable order.
+`ConstraintBatch` radix sorts records by `(point, order)` and gathers every
+point in that exact order, avoiding floating-point contact atomics. One batch
+can target the common point view of fluid, cloth, rope, soft body, or paint-only
+smoke.
+
+## Paint
+
+Point color is solver state rather than renderer state. `FluidParticle` accepts
+an initial color, deformables use `SoftBodyOptions::initial_color`, and smoke
+uses `SmokeOptions::initial_color`; reset restores those values. Deformable
+surface vertices interpolate their bound node colors.
+
+`PaintSurface` owns a persistent linear-RGBA texture for continuous surfaces
+such as cloth UVs or a rigid sphere/box atlas. `PaintStampView` borrows ordered
+device stamps and `apply_async` blends affected texels in stamp order. Mapping a
+3-D contact to UV coordinates remains application policy because arbitrary
+render meshes do not share one parameterization.
 
 The C++ API offers source compatibility within a tagged minor line; a stable C
 ABI is not promised. `.msb` assets have their own checked format version. This

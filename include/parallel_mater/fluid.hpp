@@ -15,6 +15,7 @@ namespace parallel_mater::physics {
 struct FluidParticle {
     float3 position{};
     float3 velocity{};
+    float4 color{0.04F, 0.35F, 1.0F, 1.0F};
 };
 
 struct FluidOptions {
@@ -34,6 +35,7 @@ struct FluidView {
     std::uint32_t particle_count{};
     float particle_radius{};
     float inverse_particle_mass{};
+    float4 *colors{};
 };
 
 struct FluidStatistics {
@@ -66,6 +68,7 @@ class Fluid {
                                         cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status finish_frame(Completion &completion,
                                       cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status abandon_frame(cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status advance_async(FrameOptions frame, Completion &completion,
                                        cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status advance(FrameOptions frame, cudaStream_t stream = nullptr) noexcept;
@@ -77,6 +80,7 @@ class Fluid {
     [[nodiscard]] bool initialized() const noexcept;
     [[nodiscard]] FluidOptions options() const noexcept;
     [[nodiscard]] FluidView particles() const noexcept;
+    [[nodiscard]] PointStateView point_state() const noexcept;
     [[nodiscard]] PointCouplingView coupling_points() const noexcept;
     // Last completed snapshot; frame submission itself performs no readback.
     [[nodiscard]] FluidStatistics statistics() const noexcept;

@@ -34,6 +34,9 @@ constexpr int cell_bias = 1 << 20;
 [[nodiscard]] bool finite(float3 value) noexcept {
     return finite(value.x) && finite(value.y) && finite(value.z);
 }
+[[nodiscard]] bool finite(float4 value) noexcept {
+    return finite(value.x) && finite(value.y) && finite(value.z) && finite(value.w);
+}
 
 [[nodiscard]] bool valid(FluidOptions options) noexcept {
     return finite(options.particle_radius) && options.particle_radius > 0.0F &&
@@ -180,6 +183,8 @@ struct Fluid::Impl {
         cudaFree(keys_a);
         cudaFree(external_impulses);
         cudaFree(forces);
+        cudaFree(initial_colors);
+        cudaFree(colors);
         cudaFree(initial_velocities);
         cudaFree(initial_positions);
         cudaFree(velocities);
@@ -194,6 +199,8 @@ struct Fluid::Impl {
     float3 *initial_velocities{};
     float3 *forces{};
     float3 *external_impulses{};
+    float4 *colors{};
+    float4 *initial_colors{};
     std::uint64_t *keys_a{};
     std::uint64_t *keys_b{};
     std::uint32_t *indices_a{};
@@ -226,7 +233,7 @@ Status Fluid::initialize(std::span<const FluidParticle> particles, FluidOptions 
     }
     if (!valid(options)) return invalid("invalid fluid options");
     for (const FluidParticle &particle : particles) {
-        if (!finite(particle.position) || !finite(particle.velocity)) {
+        if (!finite(particle.position) || !finite(particle.velocity) || !finite(particle.color)) {
             return invalid("fluid particle state must be finite");
         }
     }
@@ -245,6 +252,8 @@ Status Fluid::initialize(std::span<const FluidParticle> particles, FluidOptions 
         !(status = allocate(replacement->initial_velocities, count)) ||
         !(status = allocate(replacement->forces, count)) ||
         !(status = allocate(replacement->external_impulses, count)) ||
+        !(status = allocate(replacement->colors, count)) ||
+        !(status = allocate(replacement->initial_colors, count)) ||
         !(status = allocate(replacement->keys_a, count)) ||
         !(status = allocate(replacement->keys_b, count)) ||
         !(status = allocate(replacement->indices_a, count)) ||
@@ -258,13 +267,15 @@ Status Fluid::initialize(std::span<const FluidParticle> particles, FluidOptions 
 
     std::unique_ptr<float3[]> host_positions(new (std::nothrow) float3[count]);
     std::unique_ptr<float3[]> host_velocities(new (std::nothrow) float3[count]);
-    if (!host_positions || !host_velocities) {
+    std::unique_ptr<float4[]> host_colors(new (std::nothrow) float4[count]);
+    if (!host_positions || !host_velocities || !host_colors) {
         return {StatusCode::allocation_failure, cudaErrorMemoryAllocation,
                 "could not stage fluid particles"};
     }
     for (std::size_t i = 0U; i < count; ++i) {
         host_positions[i] = particles[i].position;
         host_velocities[i] = particles[i].velocity;
+        host_colors[i] = particles[i].color;
     }
     const std::size_t bytes = count * sizeof(float3);
     if (!(status = cuda_status(cudaMemcpyAsync(replacement->positions, host_positions.get(), bytes,
@@ -279,7 +290,15 @@ Status Fluid::initialize(std::span<const FluidParticle> particles, FluidOptions 
         !(status =
               cuda_status(cudaMemcpyAsync(replacement->initial_velocities, host_velocities.get(),
                                           bytes, cudaMemcpyHostToDevice, stream),
-                          "could not upload initial fluid velocities")))
+                          "could not upload initial fluid velocities")) ||
+        !(status = cuda_status(cudaMemcpyAsync(replacement->colors, host_colors.get(),
+                                               count * sizeof(float4), cudaMemcpyHostToDevice,
+                                               stream),
+                               "could not upload fluid colors")) ||
+        !(status = cuda_status(cudaMemcpyAsync(replacement->initial_colors, host_colors.get(),
+                                               count * sizeof(float4), cudaMemcpyHostToDevice,
+                                               stream),
+                               "could not upload initial fluid colors")))
         return status;
 
     if (!(status = cuda_status(cub::DeviceRadixSort::SortPairs(
@@ -374,6 +393,14 @@ Status Fluid::finish_frame(Completion &completion, cudaStream_t stream) noexcept
     return status;
 }
 
+Status Fluid::abandon_frame(cudaStream_t stream) noexcept {
+    if (!impl_) return invalid("fluid is not initialized");
+    const cudaError_t error = cudaStreamSynchronize(stream);
+    impl_->frame_active = false;
+    impl_->next_substep = 0U;
+    return cuda_status(error, "could not drain abandoned fluid frame");
+}
+
 Status Fluid::collect_statistics_async(Completion &completion, cudaStream_t stream) noexcept {
     if (!impl_) return invalid("fluid is not initialized");
     if (impl_->frame_active) return invalid("cannot collect an active fluid frame");
@@ -412,6 +439,11 @@ Status Fluid::reset(cudaStream_t stream) noexcept {
                                          cudaMemcpyDeviceToDevice, stream),
                          "could not reset fluid velocities");
     if (!status) return status;
+    status = cuda_status(cudaMemcpyAsync(impl_->colors, impl_->initial_colors,
+                                         static_cast<std::size_t>(impl_->count) * sizeof(float4),
+                                         cudaMemcpyDeviceToDevice, stream),
+                         "could not reset fluid colors");
+    if (!status) return status;
     status = cuda_status(cudaStreamSynchronize(stream), "could not complete fluid reset");
     if (status) {
         impl_->frame_index = 0U;
@@ -429,9 +461,11 @@ FluidView Fluid::particles() const noexcept {
                              impl_->external_impulses,
                              impl_->count,
                              impl_->options.particle_radius,
-                             1.0F / impl_->options.particle_mass}
+                             1.0F / impl_->options.particle_mass,
+                             impl_->colors}
                  : FluidView{};
 }
+PointStateView Fluid::point_state() const noexcept { return coupling_points(); }
 PointCouplingView Fluid::coupling_points() const noexcept {
     if (!impl_) return {};
     return {impl_->positions,
@@ -440,12 +474,14 @@ PointCouplingView Fluid::coupling_points() const noexcept {
             nullptr,
             impl_->count,
             impl_->options.particle_radius,
-            1.0F / impl_->options.particle_mass};
+            1.0F / impl_->options.particle_mass,
+            impl_->colors};
 }
 FluidStatistics Fluid::statistics() const noexcept {
     if (!impl_) return {};
     const std::size_t count = impl_->count;
-    const std::size_t arrays = 6U * count * sizeof(float3) + 2U * count * sizeof(std::uint64_t) +
+    const std::size_t arrays = 6U * count * sizeof(float3) + 2U * count * sizeof(float4) +
+                               2U * count * sizeof(std::uint64_t) +
                                2U * count * sizeof(std::uint32_t) + 2U * sizeof(std::uint32_t) +
                                impl_->cub_storage_bytes;
     return {impl_->count, impl_->host_diagnostics[0], impl_->host_diagnostics[1],

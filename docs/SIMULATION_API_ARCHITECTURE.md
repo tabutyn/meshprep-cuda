@@ -31,28 +31,40 @@ Every public solver is an independent movable owner. A coupled frame is:
 
 1. `begin_frame(frame, stream)` on every owner;
 2. `prepare_substep(context, stream)` on every owner;
-3. application coupling through borrowed `PointCouplingView` buffers,
+3. application coupling through borrowed `PointStateView` buffers,
    `ColliderView`, and/or `ConstraintBatch`;
 4. `finish_substep(context, stream)` on every owner; and
 5. `finish_frame(completion, stream)` followed by an application-selected
    completion boundary.
 
 `advance_async` and `advance` are convenience operations for uncoupled frames.
+`advance_coupled` is the synchronous convenience operation for two or more
+owners; it also abandons active protocol state after a rejected stage so a
+caller can report the error and reuse the owners.
 Telemetry has a separate request/resolve lifecycle, so asynchronous advancement
 does not perform diagnostic downloads.
 
 ## Generic coupling
 
 `ColliderSet` owns device copies of solver-neutral sphere, box, plane, and
-capsule descriptions. Individual solvers document which shapes they consume.
+capsule descriptions. `apply_colliders_async` applies all four shapes to any
+common point view, including friction, restitution, projection, and paint.
+Specialized solvers may additionally consume a collider view directly.
 
 `ConstraintBatch` carries one or more stable `(point, order)` contributions,
-sorts them deterministically, and gathers impulses and position corrections
-into any compatible point owner without floating-point contact atomics.
+sorts them deterministically, and gathers impulses, position corrections, and
+ordered RGBA paint into any compatible point owner without floating-point
+contact atomics.
 
-The headless gallery exercises all six owners, `ColliderSet`, and
-`ConstraintBatch`. It intentionally keeps its presets and recipe selection out
-of the install tree.
+Every particle/deformable owner exposes persistent point color. Deformables
+interpolate node paint onto their render surface. `PaintSurface` handles
+persistent UV-space paint for rigid meshes and cloth textures without putting
+renderer-specific sphere or box mappings in the physics package.
+
+The headless gallery and its runtime tests are the integration surface for the
+public owners and contacts. They intentionally keep presets and recipe
+selection out of the install tree; the library does not introduce separate toy
+reference applications.
 
 ## Current boundary
 

@@ -114,17 +114,20 @@ void test_fixed_step_contract() {
            "infinite fixed timestep must be rejected by a solver boundary");
 
     parallel_mater::examples::GallerySimulationOptions options;
-    expect(!options.gravity_override.has_value() && !options.solver_iterations_override.has_value(),
+    expect(!options.gravity_override.has_value() && !options.substeps_override.has_value(),
            "gallery defaults must select a recipe without implicit overrides");
     options.gravity_override = float3{1.0F, 2.0F, 3.0F};
-    options.solver_iterations_override = 3U;
-    expect(options.gravity_override->y == 2.0F && *options.solver_iterations_override == 3U,
+    options.substeps_override = 3U;
+    expect(options.gravity_override->y == 2.0F && *options.substeps_override == 3U,
            "gallery physics overrides must retain explicit values");
 }
 
 void test_recipe_config_contract() {
     auto config = parallel_mater::examples::RecipeConfig::for_recipe(SimulationRecipe::water_rope);
-    config.timestep(1.0F / 120.0F).iterations(8U).particles(12'000U).cloth_resolution(4U);
+    config.timestep(1.0F / 120.0F)
+        .substeps(8U)
+        .particles(12'000U)
+        .cloth_resolution(4U);
     expect(parallel_mater::examples::validate_recipe_config(config) ==
                parallel_mater::examples::RecipeConfigError::none,
            "fluent portable configuration must validate");

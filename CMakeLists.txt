@@ -80,6 +80,7 @@ add_library(
     parallel-mater-physics
     src/frame.cpp
     src/coupling.cu
+    src/paint.cu
     src/fluid.cu
     src/physics.cpp
     src/rigid_body.cpp
@@ -440,6 +441,7 @@ install(FILES
     include/parallel_mater/fluid.hpp
     include/parallel_mater/frame.hpp
     include/parallel_mater/geometry.hpp
+    include/parallel_mater/paint.hpp
     include/parallel_mater/physics.hpp
     include/parallel_mater/rigid_body.hpp
     include/parallel_mater/rope.hpp

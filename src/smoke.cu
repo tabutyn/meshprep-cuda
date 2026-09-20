@@ -36,6 +36,14 @@ __host__ __device__ bool finite3(float3 value) {
     return isfinite(value.x) && isfinite(value.y) && isfinite(value.z);
 }
 
+__device__ float4 blend(float4 destination, float4 source, float amount) {
+    amount = fminf(1.0F, fmaxf(0.0F, amount));
+    return make_float4(destination.x + (source.x - destination.x) * amount,
+                       destination.y + (source.y - destination.y) * amount,
+                       destination.z + (source.z - destination.z) * amount,
+                       destination.w + (source.w - destination.w) * amount);
+}
+
 __device__ std::uint32_t hash(std::uint32_t value) {
     value ^= value >> 16U;
     value *= 0x7feb352dU;
@@ -67,7 +75,7 @@ __device__ float3 turbulence(float3 p, float time, SmokeOptions options) {
 }
 
 __global__ void initialize_smoke(float3 *positions, float3 *velocities, float *ages,
-                                 float *temperatures, SmokeOptions options) {
+                                 float *temperatures, float4 *colors, SmokeOptions options) {
     const std::uint32_t particle = blockIdx.x * blockDim.x + threadIdx.x;
     if (particle >= options.particle_count) return;
     const float age = options.lifetime * static_cast<float>(particle) /
@@ -77,10 +85,12 @@ __global__ void initialize_smoke(float3 *positions, float3 *velocities, float *a
     velocities[particle] = options.initial_velocity;
     ages[particle] = age;
     temperatures[particle] = 1.0F - age / options.lifetime;
+    colors[particle] = options.initial_color;
 }
 
 __global__ void integrate_smoke(float3 *positions, float3 *velocities, float *ages,
-                                float *temperatures, SmokeOptions options, float3 acceleration,
+                                float *temperatures, float4 *colors, SmokeOptions options,
+                                float3 acceleration,
                                 ColliderView colliders, std::uint64_t frame,
                                 unsigned long long *respawns, std::uint32_t *counters) {
     const std::uint32_t particle = blockIdx.x * blockDim.x + threadIdx.x;
@@ -88,10 +98,12 @@ __global__ void integrate_smoke(float3 *positions, float3 *velocities, float *ag
     float age = ages[particle] + options.timestep;
     float3 position = positions[particle];
     float3 velocity = velocities[particle];
+    float4 color = colors[particle];
     if (age >= options.lifetime) {
         age = fmodf(age, options.lifetime);
         position = spawn_position(particle, frame, options);
         velocity = options.initial_velocity;
+        color = options.initial_color;
         atomicAdd(respawns, 1ULL);
     }
     const float time = static_cast<float>(frame) * options.timestep;
@@ -120,6 +132,8 @@ __global__ void integrate_smoke(float3 *positions, float3 *velocities, float *ag
             velocity = add(collider.linear_velocity,
                            add(multiply(normal, fmaxf(-collider.restitution * normal_speed, 0.0F)),
                                multiply(tangent, 1.0F - fminf(collider.friction, 1.0F))));
+            if (collider.paint_amount > 0.0F)
+                color = blend(color, collider.paint_color, collider.paint_amount);
         }
         // Vortex pair in the downstream wake makes obstacle-induced
         // turbulence visible instead of merely deleting smoke at the sphere.
@@ -150,6 +164,7 @@ __global__ void integrate_smoke(float3 *positions, float3 *velocities, float *ag
     velocities[particle] = velocity;
     ages[particle] = age;
     temperatures[particle] = fmaxf(0.0F, 1.0F - age / options.lifetime);
+    colors[particle] = color;
     atomicMax(counters + 1U, __float_as_uint(length(velocity)));
 }
 
@@ -189,6 +204,9 @@ __global__ void couple_smoke(SmokeOptions options, std::uint64_t frame, PointCou
 
 bool finite(float value) { return std::isfinite(value); }
 bool finite(float3 value) { return finite(value.x) && finite(value.y) && finite(value.z); }
+bool finite(float4 value) {
+    return finite(value.x) && finite(value.y) && finite(value.z) && finite(value.w);
+}
 
 bool valid(SmokeOptions value) {
     return value.capacity >= 256U && value.capacity <= 1'000'000U && value.particle_count >= 1U &&
@@ -202,7 +220,7 @@ bool valid(SmokeOptions value) {
            value.velocity_damping >= 0.0F && finite(value.turbulence_strength) &&
            value.turbulence_strength >= 0.0F && finite(value.turbulence_frequency) &&
            value.turbulence_frequency > 0.0F && finite(value.maximum_speed) &&
-           value.maximum_speed > 0.0F;
+           value.maximum_speed > 0.0F && finite(value.initial_color);
 }
 
 Status cuda_status(cudaError_t error, const char *message) {
@@ -221,6 +239,7 @@ struct Smoke::Impl {
     float3 *velocities{};
     float *ages{};
     float *temperatures{};
+    float4 *colors{};
     unsigned long long *respawns{};
     std::uint32_t *counters{};
     unsigned long long *host_respawns{};
@@ -253,6 +272,7 @@ struct Smoke::Impl {
         cudaFree(counters);
         cudaFree(respawns);
         cudaFree(temperatures);
+        cudaFree(colors);
         cudaFree(ages);
         cudaFree(velocities);
         cudaFree(positions);
@@ -283,6 +303,8 @@ Status Smoke::initialize(SmokeOptions options, cudaStream_t stream) noexcept {
         if (error != cudaSuccess) return cuda_status(error, "allocate smoke ages");
         error = cudaMalloc(&replacement->temperatures, scalar_bytes);
         if (error != cudaSuccess) return cuda_status(error, "allocate smoke temperatures");
+        error = cudaMalloc(&replacement->colors, options.capacity * sizeof(float4));
+        if (error != cudaSuccess) return cuda_status(error, "allocate smoke colors");
         error = cudaMalloc(&replacement->respawns, sizeof(unsigned long long));
         if (error != cudaSuccess) return cuda_status(error, "allocate smoke statistics");
         error = cudaMalloc(&replacement->counters, 2U * sizeof(std::uint32_t));
@@ -299,6 +321,7 @@ Status Smoke::initialize(SmokeOptions options, cudaStream_t stream) noexcept {
                                               cudaEventDisableTiming)) != cudaSuccess)
             return cuda_status(error, "create smoke timing events");
         replacement->statistics.allocated_bytes = 2U * vector_bytes + 2U * scalar_bytes +
+                                                  options.capacity * sizeof(float4) +
                                                   sizeof(unsigned long long) +
                                                   2U * sizeof(std::uint32_t);
         replacement->telemetry.statistics.allocated_bytes = replacement->statistics.allocated_bytes;
@@ -374,7 +397,7 @@ Status Smoke::finish_substep(SubstepContext substep, cudaStream_t stream) noexce
     if (error != cudaSuccess) return cuda_status(error, "record smoke integration start");
     integrate_smoke<<<(options.particle_count + block_size - 1U) / block_size, block_size, 0,
                       stream>>>(impl_->positions, impl_->velocities, impl_->ages,
-                                impl_->temperatures, options, substep.acceleration,
+                                impl_->temperatures, impl_->colors, options, substep.acceleration,
                                 impl_->colliders, impl_->tick_index + 1U, impl_->respawns,
                                 impl_->counters);
     error = cudaGetLastError();
@@ -397,6 +420,15 @@ Status Smoke::finish_frame(Completion &completion, cudaStream_t stream) noexcept
         impl_->frame_active = false;
     }
     return status;
+}
+
+Status Smoke::abandon_frame(cudaStream_t stream) noexcept {
+    if (!impl_)
+        return {StatusCode::invalid_argument, cudaSuccess, "smoke is not initialized"};
+    const cudaError_t error = cudaStreamSynchronize(stream);
+    impl_->frame_active = false;
+    impl_->next_substep = 0U;
+    return cuda_status(error, "could not drain abandoned smoke frame");
 }
 
 Status Smoke::advance_async(FrameOptions frame, Completion &completion,
@@ -486,7 +518,7 @@ Status Smoke::reset(cudaStream_t stream) noexcept {
     cudaMemsetAsync(impl_->counters, 0, 2U * sizeof(std::uint32_t), stream);
     initialize_smoke<<<(impl_->options.particle_count + block_size - 1U) / block_size, block_size,
                        0, stream>>>(impl_->positions, impl_->velocities, impl_->ages,
-                                    impl_->temperatures, impl_->options);
+                                    impl_->temperatures, impl_->colors, impl_->options);
     cudaError_t error = cudaGetLastError();
     if (error != cudaSuccess) return cuda_status(error, "launch smoke reset");
     error = cudaStreamSynchronize(stream);
@@ -514,7 +546,13 @@ SmokeParticleView Smoke::particles() const noexcept {
             impl_->ages,
             impl_->temperatures,
             impl_->options.particle_count,
-            impl_->options.particle_radius};
+            impl_->options.particle_radius,
+            impl_->colors};
+}
+PointStateView Smoke::point_state() const noexcept {
+    if (!impl_) return {};
+    return {impl_->positions, impl_->velocities, nullptr, nullptr,
+            impl_->options.particle_count, impl_->options.particle_radius, 0.0F, impl_->colors};
 }
 SmokeTelemetry Smoke::telemetry() const noexcept {
     return impl_ ? impl_->telemetry : SmokeTelemetry{};

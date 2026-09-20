@@ -53,6 +53,7 @@ class RigidBody {
                                         cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status finish_frame(Completion &completion,
                                       cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status abandon_frame(cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status advance_async(FrameOptions frame, Completion &completion,
                                        cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status advance(FrameOptions frame, cudaStream_t stream = nullptr) noexcept;

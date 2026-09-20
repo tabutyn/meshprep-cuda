@@ -6,5 +6,6 @@ Geometry evidence from v0.1.0:
 
 The throughput is the measured San Miguel median on the documented RTX 3050 Ti environment. Update or remove the number if the benchmark protocol changes.
 
-Do not add a physics performance claim until the current release gates and
-post-refactor baseline in `PHYSICS_RELEASE.md` are complete.
+Do not add a physics performance claim until a stable physics tag exists and a
+fresh baseline includes the common collider and paint paths; the current
+soft-body baseline predates this API pass.

@@ -23,7 +23,9 @@ sphere.position = {0.0F, 0.2F, 0.0F};
 sphere.dimensions = {0.35F, 0.0F, 0.0F};
 if (status) status = colliders.update(
     std::span<const parallel_mater::physics::Collider>(&sphere, 1), stream);
-if (status) status = smoke.step({}, colliders.view(), stream);
+if (status) status = smoke.set_colliders(colliders.view());
+if (status) status = smoke.advance(
+    {1.0F / 60.0F, 1U, {0.0F, 0.0F, 0.0F}}, stream);
 if (status) status = smoke.collect_telemetry(stream);
 
 auto tracers = smoke.particles(); // borrowed device pointers
@@ -44,6 +46,7 @@ parallel_mater::physics::PointCouplingView body{
     node_count,
     node_radius,
     inverse_node_mass,
+    colors,
 };
 status = smoke.couple(body, substep_dt, 5.0F, stream);
 ```
@@ -63,8 +66,9 @@ order.
 - `collect_telemetry_async` performs the optional readback under its own token;
   `collect_telemetry` is the explicit synchronous convenience form.
 - `external_impulses` is accumulated, not cleared or replaced.
-- The coupling timestep is the receiving solver's substep; smoke advection
-  keeps its own fixed `SmokeOptions::timestep`.
+- The coupling timestep is the receiving solver's substep. Common-protocol
+  advection uses `FrameOptions`; `SmokeOptions::timestep` is used only by the
+  legacy `step` helper.
 
 ## Example-gallery validation
 

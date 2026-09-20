@@ -10,7 +10,8 @@ Read these files in order:
 2. `examples/gallery/gallery.hpp` defines renderer-neutral borrowed views.
 3. `examples/gallery/gallery.cpp` creates and advances public `Fluid`, `Cloth`,
    `Rope`, `SoftBody`, `RigidBody`, and `Smoke` owners through the common frame
-   protocol. It also demonstrates `ColliderSet` and `ConstraintBatch`.
+   protocol. It also demonstrates common analytic contacts and persistent point
+   paint; focused physics tests cover custom deterministic constraint batches.
 4. `examples/simulation_contexts.cu` is the smallest executable consumer.
 5. `tests/simulation_runtime_tests.cu` initializes and advances every recipe.
 

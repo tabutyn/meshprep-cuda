@@ -29,6 +29,8 @@ struct Collider {
     float friction{0.15F};
     float restitution{};
     float contact_offset{};
+    float4 paint_color{1.0F, 1.0F, 1.0F, 1.0F};
+    float paint_amount{};
     std::uint32_t user_id{};
 };
 
@@ -69,6 +71,8 @@ struct ConstraintRecord {
     std::uint32_t order{};
     float3 impulse{};
     float3 position_correction{};
+    float4 paint_color{};
+    float paint_amount{};
 };
 
 struct ConstraintRecordView {
@@ -97,5 +101,15 @@ class ConstraintBatch {
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+// Applies analytic solid contacts to a common point view. One thread owns one
+// point and visits colliders in array order, avoiding contact atomics while
+// combining projection, velocity response, friction, and paint transfer.
+[[nodiscard]] Status apply_colliders_async(PointStateView points, ColliderView colliders,
+                                           float timestep,
+                                           cudaStream_t stream = nullptr) noexcept;
+[[nodiscard]] Status apply_colliders(PointStateView points, ColliderView colliders,
+                                     float timestep,
+                                     cudaStream_t stream = nullptr) noexcept;
 
 } // namespace parallel_mater::physics

@@ -7,6 +7,7 @@ add_executable(package-consumer main.cu
     header_cloth.cpp
     header_coupling.cpp
     header_fluid.cpp
+    header_paint.cpp
     header_rigid_body.cpp
     header_rope.cpp
     header_smoke.cpp

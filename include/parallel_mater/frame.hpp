@@ -6,8 +6,10 @@
 #include <cuda_runtime_api.h>
 #include <vector_types.h>
 
+#include <array>
 #include <concepts>
 #include <cstdint>
+#include <type_traits>
 #include <utility>
 
 namespace parallel_mater::physics {
@@ -32,7 +34,7 @@ struct SubstepContext {
 // Common borrowed point interface for deterministic contact kernels. Solvers
 // retain positions/velocities; couplers gather one impulse per point into the
 // writable buffer during the prepared substep.
-struct PointCouplingView {
+struct PointStateView {
     const float3 *positions{};
     const float3 *velocities{};
     float3 *external_impulses{};
@@ -42,7 +44,13 @@ struct PointCouplingView {
     std::uint32_t count{};
     float radius{};
     float inverse_mass{};
+    // Optional linear RGBA color owned by the solver. Contact and constraint
+    // kernels may update it during the prepared substep.
+    float4 *colors{};
 };
+
+// Source-compatible name retained from the force-only view.
+using PointCouplingView = PointStateView;
 
 [[nodiscard]] bool valid(FrameOptions options) noexcept;
 [[nodiscard]] SubstepContext substep_context(FrameOptions options, std::uint32_t index) noexcept;
@@ -83,6 +91,12 @@ concept FrameSolver = requires(Solver &solver, FrameOptions frame, SubstepContex
     { solver.finish_frame(completion, stream) } -> std::same_as<Status>;
 };
 
+template <typename Solver>
+concept RecoverableFrameSolver = FrameSolver<Solver> &&
+    requires(Solver &solver, cudaStream_t stream) {
+        { solver.abandon_frame(stream) } -> std::same_as<Status>;
+    };
+
 // Convenience driver for uncoupled frames.  Applications that couple two or
 // more solvers use the same calls explicitly and insert coupling work between
 // prepare_substep() and finish_substep().
@@ -94,11 +108,78 @@ template <FrameSolver Solver>
     for (std::uint32_t i = 0U; i < frame.substeps; ++i) {
         const SubstepContext substep = substep_context(frame, i);
         status = solver.prepare_substep(substep, stream);
-        if (!status) return status;
+        if (!status) {
+            if constexpr (requires { solver.abandon_frame(stream); })
+                static_cast<void>(solver.abandon_frame(stream));
+            return status;
+        }
         status = solver.finish_substep(substep, stream);
+        if (!status) {
+            if constexpr (requires { solver.abandon_frame(stream); })
+                static_cast<void>(solver.abandon_frame(stream));
+            return status;
+        }
+    }
+    status = solver.finish_frame(completion, stream);
+    if (!status) {
+        if constexpr (requires { solver.abandon_frame(stream); })
+            static_cast<void>(solver.abandon_frame(stream));
+    }
+    return status;
+}
+
+// Synchronous, error-safe composition driver for the existing example
+// contexts and small applications. The callback enqueues pair/contact work
+// after every solver has prepared a substep. A failed stage abandons all active
+// protocol state so the owners remain reusable; already enqueued CUDA work is
+// not rolled back.
+template <typename Coupler, RecoverableFrameSolver... Solvers>
+    requires std::is_nothrow_invocable_r_v<Status, Coupler &, SubstepContext, cudaStream_t>
+[[nodiscard]] Status advance_coupled(FrameOptions frame, Coupler &&couple,
+                                     cudaStream_t stream, Solvers &...solvers) noexcept {
+    if (!valid(frame))
+        return {StatusCode::invalid_argument, cudaSuccess, "invalid frame options"};
+    Status status{};
+    auto abandon = [&] { (static_cast<void>(solvers.abandon_frame(stream)), ...); };
+    auto begin_one = [&](auto &solver) {
+        if (status) status = solver.begin_frame(frame, stream);
+    };
+    (begin_one(solvers), ...);
+    if (!status) {
+        abandon();
+        return status;
+    }
+    for (std::uint32_t index = 0U; index < frame.substeps; ++index) {
+        const SubstepContext substep = substep_context(frame, index);
+        auto prepare_one = [&](auto &solver) {
+            if (status) status = solver.prepare_substep(substep, stream);
+        };
+        (prepare_one(solvers), ...);
+        if (status) status = couple(substep, stream);
+        auto finish_one = [&](auto &solver) {
+            if (status) status = solver.finish_substep(substep, stream);
+        };
+        (finish_one(solvers), ...);
+        if (!status) {
+            abandon();
+            return status;
+        }
+    }
+    std::array<Completion, sizeof...(Solvers)> completions;
+    std::size_t completion_index{};
+    auto complete_one = [&](auto &solver) {
+        if (status) status = solver.finish_frame(completions[completion_index++], stream);
+    };
+    (complete_one(solvers), ...);
+    if (!status) {
+        abandon();
+        return status;
+    }
+    for (Completion &completion : completions) {
+        status = completion.wait();
         if (!status) return status;
     }
-    return solver.finish_frame(completion, stream);
+    return {};
 }
 
 template <FrameSolver Solver>

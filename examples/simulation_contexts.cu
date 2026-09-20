@@ -61,7 +61,7 @@ int main() {
                 "first=(%.3f, %.3f, %.3f)\n",
                 stats.particle_count, stats.rigid_body_count,
                 static_cast<unsigned long long>(stats.frame_index), physics.fixed_step.timestep,
-                physics.solver_iterations, physics.gravity.x, physics.gravity.y, physics.gravity.z,
+                physics.substeps, physics.gravity.x, physics.gravity.y, physics.gravity.z,
                 first_particle.x, first_particle.y, first_particle.z);
     return 0;
 }

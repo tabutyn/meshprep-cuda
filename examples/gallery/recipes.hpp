@@ -101,9 +101,8 @@ find_simulation_recipe(std::string_view slug) noexcept {
 struct RecipeConfig {
     SimulationRecipe recipe{SimulationRecipe::water};
     float fixed_timestep{1.0F / 60.0F};
-    std::optional<std::uint32_t> solver_iterations{};
+    std::optional<std::uint32_t> substep_count{};
     std::optional<std::uint32_t> particle_count{};
-    std::optional<std::uint32_t> physical_skin_frequency{};
     std::optional<std::uint32_t> rope_node_count{};
     std::optional<std::uint32_t> cloth_detail{};
 
@@ -117,16 +116,12 @@ struct RecipeConfig {
         fixed_timestep = value;
         return *this;
     }
-    constexpr RecipeConfig &iterations(std::uint32_t value) noexcept {
-        solver_iterations = value;
+    constexpr RecipeConfig &substeps(std::uint32_t value) noexcept {
+        substep_count = value;
         return *this;
     }
     constexpr RecipeConfig &particles(std::uint32_t value) noexcept {
         particle_count = value;
-        return *this;
-    }
-    constexpr RecipeConfig &skin_frequency(std::uint32_t value) noexcept {
-        physical_skin_frequency = value;
         return *this;
     }
     constexpr RecipeConfig &rope_nodes(std::uint32_t value) noexcept {
@@ -143,9 +138,8 @@ enum class RecipeConfigError : std::uint8_t {
     none,
     invalid_recipe,
     invalid_timestep,
-    invalid_iterations,
+    invalid_substeps,
     invalid_particle_count,
-    invalid_skin_frequency,
     invalid_rope_nodes,
     invalid_cloth_detail,
 };

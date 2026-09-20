@@ -5,9 +5,9 @@ describes each remaining public type and free function in one sentence; the
 native gallery's objectives and progression are intentionally excluded because
 they are application code.
 
-As of this pass the installed headers contain 3 enums, 39 structures, 12
-classes, and 10 free functions/templates; the installed implementation contains
-44 private CUDA kernels. Gallery recipes and render aggregation are excluded.
+As of this pass the installed headers contain 3 enums, 43 structures, 13
+classes, and 13 free functions/templates; the installed implementation contains
+47 private CUDA kernels. Gallery recipes and render aggregation are excluded.
 
 ## Geometry
 
@@ -56,33 +56,48 @@ classes, and 10 free functions/templates; the installed implementation contains
 | --- | --- |
 | `FrameOptions` | Defines a fixed physical frame interval, equal substep count, and external acceleration. |
 | `SubstepContext` | Identifies one ordered substep and carries its derived timestep and acceleration. |
-| `PointCouplingView` | Borrows point state plus writable impulse and optional position-correction rows across fluid and deformable solvers. |
+| `PointStateView` | Borrows point state plus optional writable impulse, position-correction, and persistent RGBA rows across all particle/deformable solvers. |
+| `PointCouplingView` | Preserves the former source name as an alias of `PointStateView`. |
 | `Completion` | Owns a reusable CUDA event that can be polled or waited for after asynchronous submission. |
 | `FrameSolver` | Describes the shared begin/prepare/couple/finish structural protocol at compile time. |
+| `RecoverableFrameSolver` | Extends the frame protocol with an operation that abandons active submission state after an error. |
 | `valid(FrameOptions)` | Validates finite positive frame timing, acceleration, and a bounded substep count. |
 | `substep_context` | Derives one immutable substep context from a frame and index. |
 | `step_async` | Drives an uncoupled `FrameSolver` frame and records its completion token. |
 | `step` | Drives an uncoupled frame and waits for its completion token. |
+| `advance_coupled` | Drives multiple owners through one callback per prepared substep and restores reusable protocol state after a rejected stage. |
 
 ## Generic collision and constraint coupling
 
 | API | Description |
 | --- | --- |
 | `ColliderShape` | Selects a sphere, box, plane, or capsule representation shared by solver integrations. |
-| `Collider` | Stores one analytic shape, transform, velocity, material response, contact offset, and application ID. |
+| `Collider` | Stores one analytic shape, transform, velocity, material response, contact paint, and application ID. |
 | `ColliderView` | Borrows a device array of generic colliders. |
 | `ColliderSet` | Owns and updates a reusable device collider array. |
-| `ConstraintRecord` | Carries one point impulse and optional projection correction with a deterministic ordering key. |
+| `ConstraintRecord` | Carries one point impulse, optional projection correction, and optional paint with a deterministic ordering key. |
 | `ConstraintRecordView` | Borrows device constraint records emitted by application or contact kernels. |
 | `ConstraintBatch` | Stable-sorts records by point and order before deterministically gathering them without floating-point atomics. |
+| `apply_colliders_async` | Enqueues deterministic per-point contact, friction, restitution, projection, and paint against analytic colliders. |
+| `apply_colliders` | Applies the same generic contacts and waits for stream completion. |
+
+## Persistent paint
+
+| API | Description |
+| --- | --- |
+| `PaintSurfaceOptions` | Configures the dimensions, clear color, and horizontal wrapping of a persistent RGBA texture. |
+| `PaintSurfaceView` | Borrows the row-major device texels owned by a paint surface. |
+| `PaintStamp` | Defines one ordered UV-space color stamp with normalized radius and opacity. |
+| `PaintStampView` | Borrows device-resident paint stamps for one application pass. |
+| `PaintSurface` | Owns and deterministically blends a persistent GPU texture suitable for cloth UVs or rigid-body atlases. |
 
 ## Independent particle and body solvers
 
 | API | Description |
 | --- | --- |
-| `FluidParticle` | Supplies one initial particle position and velocity from application memory. |
+| `FluidParticle` | Supplies one initial particle position, velocity, and RGBA color from application memory. |
 | `FluidOptions` | Configures particle size, fixed-radius interaction, mass, pressure, viscosity, damping, and speed. |
-| `FluidView` | Borrows device particle state and writable external impulses during coupling. |
+| `FluidView` | Borrows device particle state, color, and writable external impulses during coupling. |
 | `FluidStatistics` | Reports count, neighbor/finiteness diagnostics, frame index, and retained storage. |
 | `Fluid` | Owns a deterministic sorted-cell CUDA particle fluid independent of boundaries and rendering. |
 | `ClothOptions` | Configures a generated rectangular spring sheet and its shared deformable solver material. |
@@ -111,11 +126,11 @@ from frame submission.
 | `node_pinned` | Marks a soft-body node as kinematic rather than dynamically integrated. |
 | `Bond` | Identifies two connected nodes and their rest length. |
 | `SoftBodyAssetView` | Borrows an in-memory `.msb` payload that initialization validates and copies. |
-| `SoftBodyOptions` | Configures topology instances, timestep, mass, spring solving, fracture, velocity damping, hierarchy, and instance placement. |
+| `SoftBodyOptions` | Configures topology instances, timestep, mass, spring solving, fracture, initial color, hierarchy, and instance placement. |
 | `SoftBodyMaterial` | Groups runtime-adjustable stiffness, velocity damping, and speed limits. |
-| `SoftBodyNodeView` | Borrows device node state and writable impulse/correction buffers for application-defined coupling kernels. |
+| `SoftBodyNodeView` | Borrows device node state, persistent color, and writable impulse/correction buffers for application-defined coupling kernels. |
 | `SoftBodyBondView` | Borrows device positions, flags, shared bonds, and per-instance bond activity. |
-| `SoftBodySurfaceView` | Borrows the deformed surface mesh, normals, UVs, active triangles, and its hierarchy. |
+| `SoftBodySurfaceView` | Borrows the deformed surface mesh, interpolated vertex colors, normals, UVs, active triangles, and hierarchy. |
 | `SoftBodyTimings` | Reports solver, surface-deformation, and hierarchy GPU times. |
 | `SoftBodyStatistics` | Reports instance, node, bond, fracture, finite-failure, and frame totals. |
 | `SoftBodyTelemetry` | Bundles the last explicitly collected timing and statistics snapshot. |
@@ -137,6 +152,7 @@ from frame submission.
 | `prepare_substep` | Predicts one substep and exposes cleared external impulse and position-correction buffers. |
 | `finish_substep` | Consumes application coupling, solves constraints and fracture, and commits one substep. |
 | `finish_frame` | Enqueues final surface work and records frame completion without downloading telemetry. |
+| `abandon_frame` | Drains the supplied stream and clears active frame protocol state after a rejected stage without pretending to roll back enqueued CUDA work. |
 | `collect_telemetry_async` / `collect_telemetry` | Request a separate timing/counter snapshot asynchronously or synchronously. |
 | `resolve_telemetry` / `telemetry` | Resolve a completed asynchronous request or read the last completed snapshot. |
 | `reset` | Restores initial positions, velocities, and unbroken bond activity. |
@@ -156,8 +172,8 @@ from frame submission.
 
 | API | Description |
 | --- | --- |
-| `SmokeOptions` | Configures deterministic tracer capacity, emission, lifetime, buoyancy, damping, turbulence, speed, and seed. |
-| `SmokeParticleView` | Borrows device positions, velocities, ages, and temperatures for active smoke particles. |
+| `SmokeOptions` | Configures deterministic tracer capacity, emission, lifetime, buoyancy, damping, turbulence, color, speed, and seed. |
+| `SmokeParticleView` | Borrows device positions, velocities, ages, temperatures, and colors for active smoke particles. |
 | `SmokeTimings` | Reports smoke integration and body-coupling GPU times. |
 | `SmokeStatistics` | Reports frame, respawn, finite-failure, maximum-speed, and allocation totals. |
 | `SmokeTelemetry` | Bundles the last explicitly collected smoke timings and counters. |
@@ -183,6 +199,7 @@ from frame submission.
 | `initialized` | Reports whether valid smoke state has been created. |
 | `options` | Returns the resolved smoke configuration. |
 | `particles` | Returns the current borrowed device particle view. |
+| `point_state` | Returns smoke through the common paint-capable point interface with force buffers absent. |
 | `statistics` | Returns smoke runtime and allocation counters. |
 
 ## Example-code boundary

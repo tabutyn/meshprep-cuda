@@ -304,8 +304,9 @@ __global__ void commit_nodes(float3 *positions, float3 *velocities, const float3
 }
 
 __global__ void deform_surface(const float3 *nodes, const float3 *rest_nodes,
-                               const float3 *authored, const SurfaceBinding *bindings,
-                               float3 *positions, std::uint32_t count) {
+                               const float4 *node_colors, const float3 *authored,
+                               const SurfaceBinding *bindings, float3 *positions,
+                               float4 *vertex_colors, std::uint32_t count) {
     const std::uint32_t vertex = blockIdx.x * blockDim.x + threadIdx.x;
     if (vertex >= count) return;
     const SurfaceBinding binding = bindings[vertex];
@@ -313,10 +314,17 @@ __global__ void deform_surface(const float3 *nodes, const float3 *rest_nodes,
     const float weights[4]{binding.weights.x, binding.weights.y, binding.weights.z,
                            binding.weights.w};
     float3 displacement{};
-    for (unsigned slot = 0U; slot < 4U; ++slot)
+    float4 color{};
+    for (unsigned slot = 0U; slot < 4U; ++slot) {
         displacement = add(displacement, multiply(subtract(nodes[ids[slot]], rest_nodes[ids[slot]]),
                                                   weights[slot]));
+        color.x += node_colors[ids[slot]].x * weights[slot];
+        color.y += node_colors[ids[slot]].y * weights[slot];
+        color.z += node_colors[ids[slot]].z * weights[slot];
+        color.w += node_colors[ids[slot]].w * weights[slot];
+    }
     positions[vertex] = add(authored[vertex], displacement);
+    vertex_colors[vertex] = color;
 }
 
 __global__ void compute_surface_normals(const float3 *positions, const uint3 *triangles,
@@ -544,12 +552,14 @@ struct FixedTopology::Impl {
             options.instance_count;
 
         std::vector<float3> host_rest;
+        std::vector<float4> host_colors;
         std::vector<std::uint32_t> host_flags;
         std::vector<float3> host_surface;
         std::vector<float2> host_uvs;
         std::vector<SurfaceBinding> host_bindings;
         std::vector<uint3> host_triangles;
         host_rest.reserve(node_count);
+        host_colors.reserve(node_count);
         host_flags.reserve(node_count);
         host_surface.reserve(surface_vertex_count);
         host_uvs.reserve(surface_vertex_count);
@@ -561,6 +571,7 @@ struct FixedTopology::Impl {
             const std::uint32_t surface_base = instance * surface_vertices_per_instance;
             for (std::uint32_t node = 0U; node < nodes_per_instance; ++node) {
                 host_rest.push_back(add(asset.rest_nodes[node], origin));
+                host_colors.push_back(options.initial_color);
                 host_flags.push_back(asset.node_flags[node]);
             }
             for (std::uint32_t vertex = 0U; vertex < surface_vertices_per_instance; ++vertex) {
@@ -602,6 +613,8 @@ struct FixedTopology::Impl {
         rest.upload(host_rest);
         positions.upload(host_rest);
         initial_positions.upload(host_rest);
+        colors.upload(host_colors);
+        initial_colors.upload(host_colors);
         velocities.allocate(node_count);
         check(cudaMemset(velocities.get(), 0, velocities.bytes()),
               "clear fixed-topology velocities");
@@ -619,6 +632,7 @@ struct FixedTopology::Impl {
         check(cudaMemset(damage.get(), 0, damage.bytes()), "clear bond damage");
         authored_surface.upload(host_surface);
         surface_positions.allocate(surface_vertex_count);
+        surface_colors.allocate(surface_vertex_count);
         surface_normals.allocate(surface_vertex_count);
         surface_uvs.upload(host_uvs);
         surface_bindings.upload(host_bindings);
@@ -641,8 +655,9 @@ struct FixedTopology::Impl {
 
     void launch_surface(cudaStream_t stream) {
         deform_surface<<<(surface_vertex_count + block_size - 1U) / block_size, block_size, 0,
-                         stream>>>(positions.get(), rest.get(), authored_surface.get(),
-                                   surface_bindings.get(), surface_positions.get(),
+                         stream>>>(positions.get(), rest.get(), colors.get(),
+                                   authored_surface.get(), surface_bindings.get(),
+                                   surface_positions.get(), surface_colors.get(),
                                    surface_vertex_count);
         compute_surface_normals<<<(surface_vertex_count + block_size - 1U) / block_size, block_size,
                                   0, stream>>>(surface_positions.get(), surface_triangles.get(),
@@ -666,12 +681,14 @@ struct FixedTopology::Impl {
     std::uint32_t surface_triangle_count{};
     std::uint32_t surface_node_count{};
     DeviceArray<float3> rest, positions, initial_positions, velocities, predicted, corrections;
+    DeviceArray<float4> colors, initial_colors;
     DeviceArray<float3> external_impulses, external_corrections;
     DeviceArray<std::uint32_t> flags, neighbor_offsets;
     DeviceArray<Bond> topology_bonds;
     DeviceArray<FixedTopologyNeighbor> neighbors;
     DeviceArray<std::uint8_t> active_bonds, damage, surface_triangle_active;
     DeviceArray<float3> authored_surface, surface_positions, surface_normals;
+    DeviceArray<float4> surface_colors;
     DeviceArray<float2> surface_uvs;
     DeviceArray<SurfaceBinding> surface_bindings;
     DeviceArray<uint3> surface_triangles;
@@ -809,6 +826,9 @@ void FixedTopology::reset(cudaStream_t stream) {
           "reset bond damage");
     check(cudaMemsetAsync(impl_->counters.get(), 0, impl_->counters.bytes(), stream),
           "reset counters");
+    check(cudaMemcpyAsync(impl_->colors.get(), impl_->initial_colors.get(), impl_->colors.bytes(),
+                          cudaMemcpyDeviceToDevice, stream),
+          "reset node colors");
     impl_->launch_surface(stream);
     check(refit_hierarchy_unchecked_async(
               {impl_->triangle_bounds.get(), impl_->surface_triangle_count}, impl_->hierarchy,
@@ -844,7 +864,7 @@ SoftBodyNodeView FixedTopology::nodes() const noexcept {
         impl_->positions.get(),   impl_->velocities.get(),        impl_->rest.get(),
         impl_->flags.get(),       impl_->external_impulses.get(), impl_->external_corrections.get(),
         impl_->node_count,        impl_->nodes_per_instance,      impl_->options.instance_count,
-        impl_->asset.node_radius, 1.0F / impl_->options.node_mass};
+        impl_->asset.node_radius, 1.0F / impl_->options.node_mass, impl_->colors.get()};
 }
 
 SoftBodyBondView FixedTopology::bonds() const noexcept {
@@ -866,7 +886,8 @@ SoftBodySurfaceView FixedTopology::surface() const noexcept {
             impl_->hierarchy.nodes(),
             impl_->hierarchy.primitive_indices(),
             hierarchy_statistics.node_count,
-            hierarchy_statistics.max_depth};
+            hierarchy_statistics.max_depth,
+            impl_->surface_colors.get()};
 }
 
 SoftBodyStatistics FixedTopology::statistics() const noexcept {
@@ -878,11 +899,13 @@ SoftBodyStatistics FixedTopology::statistics() const noexcept {
 std::size_t FixedTopology::allocated_bytes() const noexcept {
     return impl_->rest.bytes() + impl_->positions.bytes() + impl_->initial_positions.bytes() +
            impl_->velocities.bytes() + impl_->predicted.bytes() + impl_->corrections.bytes() +
+           impl_->colors.bytes() + impl_->initial_colors.bytes() +
            impl_->external_impulses.bytes() + impl_->external_corrections.bytes() +
            impl_->flags.bytes() + impl_->topology_bonds.bytes() + impl_->neighbor_offsets.bytes() +
            impl_->neighbors.bytes() + impl_->active_bonds.bytes() + impl_->damage.bytes() +
            impl_->authored_surface.bytes() + impl_->surface_positions.bytes() +
-           impl_->surface_normals.bytes() + impl_->surface_uvs.bytes() +
+           impl_->surface_normals.bytes() + impl_->surface_colors.bytes() +
+           impl_->surface_uvs.bytes() +
            impl_->surface_bindings.bytes() + impl_->surface_triangles.bytes() +
            impl_->surface_triangle_active.bytes() + impl_->corner_normal_indices.bytes() +
            impl_->surface_offsets.bytes() + impl_->incident_triangles.bytes() +

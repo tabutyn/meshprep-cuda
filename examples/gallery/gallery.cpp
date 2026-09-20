@@ -58,26 +58,15 @@ namespace {
 
 [[nodiscard]] bool valid_options(const GallerySimulationOptions &options) noexcept {
     return valid(options.fixed_step) && recipe_info(options.recipe) != nullptr &&
-           (!options.solver_iterations_override || (*options.solver_iterations_override >= 1U &&
-                                                    *options.solver_iterations_override <= 32U)) &&
+           (!options.substeps_override ||
+            (*options.substeps_override >= 1U && *options.substeps_override <= 32U)) &&
            (!options.gravity_override || finite(*options.gravity_override)) &&
            (!options.particle_count_override || (*options.particle_count_override >= 8U &&
                                                  *options.particle_count_override <= 100'000U)) &&
-           (!options.physical_skin_frequency_override ||
-            (*options.physical_skin_frequency_override >= 2U &&
-             *options.physical_skin_frequency_override <= 45U)) &&
            (!options.rope_node_count_override || (*options.rope_node_count_override >= 8U &&
                                                   *options.rope_node_count_override <= 512U)) &&
            (!options.cloth_detail_override ||
-            (*options.cloth_detail_override >= 1U && *options.cloth_detail_override <= 8U)) &&
-           (!options.bridge_columns_override ||
-            (*options.bridge_columns_override >= 2U && *options.bridge_columns_override <= 16U)) &&
-           (!options.bridge_rows_override ||
-            (*options.bridge_rows_override >= 2U && *options.bridge_rows_override <= 64U)) &&
-           (!options.cylinder_columns_override || (*options.cylinder_columns_override >= 1U &&
-                                                   *options.cylinder_columns_override <= 16U)) &&
-           (!options.cylinder_rows_override ||
-            (*options.cylinder_rows_override >= 1U && *options.cylinder_rows_override <= 16U));
+            (*options.cloth_detail_override >= 1U && *options.cloth_detail_override <= 8U));
 }
 
 [[nodiscard]] float3 default_gravity(SimulationRecipe recipe) noexcept {
@@ -195,10 +184,9 @@ struct GallerySimulation::Impl {
         if (asset_path.empty()) asset_path = PARALLEL_MATER_GALLERY_ASSET_PATH;
         options.soft_body_asset_path = asset_path;
         resolved = {{options.fixed_step.timestep},
-                    options.solver_iterations_override.value_or(4U),
-                    options.gravity_override.value_or(default_gravity(options.recipe)),
-                    false};
-        frame = {resolved.fixed_step.timestep, resolved.solver_iterations, resolved.gravity};
+                    options.substeps_override.value_or(4U),
+                    options.gravity_override.value_or(default_gravity(options.recipe))};
+        frame = {resolved.fixed_step.timestep, resolved.substeps, resolved.gravity};
 
         Status status;
         if (has_component(info->components, Component::fluid_particles)) {
@@ -215,7 +203,7 @@ struct GallerySimulation::Impl {
             selected.rows = 10U * detail;
             selected.spacing = 0.08F / static_cast<float>(detail);
             selected.top_center = {0.0F, 1.2F, 0.0F};
-            selected.solver.substeps = resolved.solver_iterations;
+            selected.solver.substeps = resolved.substeps;
             selected.solver.timestep = resolved.fixed_step.timestep;
             status = cloth->initialize(selected, stream);
             if (!status) return status;
@@ -227,7 +215,7 @@ struct GallerySimulation::Impl {
             selected.spacing = 0.055F;
             selected.origin = {-1.4F, 1.4F, 0.0F};
             selected.direction = {1.0F, -0.25F, 0.0F};
-            selected.solver.substeps = resolved.solver_iterations;
+            selected.solver.substeps = resolved.substeps;
             selected.solver.timestep = resolved.fixed_step.timestep;
             status = rope->initialize(selected, stream);
             if (!status) return status;
@@ -237,7 +225,7 @@ struct GallerySimulation::Impl {
                 return invalid("gallery soft-body recipe requires an asset path");
             soft_body = std::make_unique<physics::SoftBody>();
             physics::SoftBodyOptions selected;
-            selected.substeps = resolved.solver_iterations;
+            selected.substeps = resolved.substeps;
             selected.timestep = resolved.fixed_step.timestep;
             selected.instance_origins[0] = {0.0F, 0.8F, 0.0F};
             status = soft_body->initialize(asset_path, selected, stream);
@@ -264,11 +252,6 @@ struct GallerySimulation::Impl {
             if (!status) return status;
         }
         status = colliders.reserve(1U);
-        if (!status) return status;
-        status = constraints.reserve(1U, stream);
-        if (!status) return status;
-        status = constraint_records.upload(
-            std::span<const physics::ConstraintRecord>(&host_constraint, 1U), stream);
         if (!status) return status;
         const cudaError_t synchronized = cudaStreamSynchronize(stream);
         if (synchronized != cudaSuccess)
@@ -311,16 +294,6 @@ struct GallerySimulation::Impl {
         return status ? completion.wait() : status;
     }
 
-    [[nodiscard]] Status apply_coupling(physics::PointCouplingView target, std::uint32_t order,
-                                        cudaStream_t stream) noexcept {
-        if (target.count == 0U) return {};
-        host_constraint = {target.count / 2U, order, {0.0F, 0.002F, 0.0F}, {}};
-        Status status = constraint_records.upload(
-            std::span<const physics::ConstraintRecord>(&host_constraint, 1U), stream);
-        if (!status) return status;
-        return constraints.apply_async({constraint_records.get(), 1U}, target, stream);
-    }
-
     [[nodiscard]] Status step(cudaStream_t stream) noexcept {
         Status status;
         physics::ColliderView collider_view;
@@ -333,6 +306,8 @@ struct GallerySimulation::Impl {
             collider.linear_velocity = state.linear_velocity;
             collider.angular_velocity = state.angular_velocity;
             collider.dimensions = {rigid->options().radius, 0.0F, 0.0F};
+            collider.paint_color = {0.02F, 0.30F, 1.0F, 1.0F};
+            collider.paint_amount = 0.15F;
             status =
                 colliders.update_async(std::span<const physics::Collider>(&collider, 1U), stream);
             if (!status) return status;
@@ -355,16 +330,24 @@ struct GallerySimulation::Impl {
                 !(status = prepare(soft_body.get(), substep, stream)) ||
                 !(status = prepare(rigid.get(), substep, stream)))
                 return status;
-            std::uint32_t order{};
-            if (fluid && !(status = apply_coupling(fluid->coupling_points(), order++, stream)))
-                return status;
-            if (cloth && !(status = apply_coupling(cloth->coupling_points(), order++, stream)))
-                return status;
-            if (rope && !(status = apply_coupling(rope->coupling_points(), order++, stream)))
-                return status;
-            if (soft_body &&
-                !(status = apply_coupling(soft_body->coupling_points(), order++, stream)))
-                return status;
+            if (collider_view.count != 0U) {
+                if (fluid &&
+                    !(status = physics::apply_colliders_async(
+                          fluid->point_state(), collider_view, substep.timestep, stream)))
+                    return status;
+                if (cloth &&
+                    !(status = physics::apply_colliders_async(
+                          cloth->point_state(), collider_view, substep.timestep, stream)))
+                    return status;
+                if (rope &&
+                    !(status = physics::apply_colliders_async(
+                          rope->point_state(), collider_view, substep.timestep, stream)))
+                    return status;
+                if (soft_body &&
+                    !(status = physics::apply_colliders_async(
+                          soft_body->point_state(), collider_view, substep.timestep, stream)))
+                    return status;
+            }
             if (smoke) {
                 if (fluid && !(status = smoke->couple(fluid->coupling_points(), substep.timestep,
                                                       3.0F, stream)))
@@ -420,28 +403,30 @@ struct GallerySimulation::Impl {
     void append_surface(physics::SoftBodySurfaceView view) noexcept {
         if (view.mesh.vertex_count == 0U) return;
         surfaces[surface_count++] = {view.mesh, view.vertex_normals, view.texcoords,
-                                     view.triangle_active};
+                                     view.triangle_active, view.vertex_colors};
     }
     void append_lattice(physics::SoftBodyNodeView nodes, physics::SoftBodyBondView bonds) noexcept {
         if (nodes.node_count == 0U) return;
         lattices[lattice_count++] = {
             nodes.positions,          nodes.flags,          bonds.bonds,
             bonds.bond_active,        nodes.node_count,     nodes.nodes_per_instance,
-            bonds.bonds_per_instance, nodes.instance_count, nodes.node_radius};
+            bonds.bonds_per_instance, nodes.instance_count, nodes.node_radius, nodes.colors};
     }
     void refresh_views() noexcept {
         particle_count = surface_count = rigid_count = lattice_count = 0U;
         if (fluid) {
             const auto view = fluid->particles();
             particles[particle_count++] = {view.positions, view.velocities, view.particle_count,
-                                           view.particle_radius, ParticleMaterial::fluid};
+                                           view.particle_radius, ParticleMaterial::fluid,
+                                           view.colors};
         }
         if (smoke) {
             const auto view = smoke->particles();
             particles[particle_count++] = {view.positions, view.velocities, view.count, 0.018F,
                                            options.recipe == SimulationRecipe::fluid_smoke
                                                ? ParticleMaterial::steam
-                                               : ParticleMaterial::smoke};
+                                               : ParticleMaterial::smoke,
+                                           view.colors};
         }
         if (cloth) {
             append_surface(cloth->surface());
@@ -503,8 +488,7 @@ struct GallerySimulation::Impl {
             statistics.last_gpu_time_ms += smoke->telemetry().timings.gpu_total_ms();
         }
         statistics.allocated_bytes += rigid_vertices.size() * sizeof(float3) +
-                                      rigid_triangles.size() * sizeof(uint3) +
-                                      constraints.allocated_bytes();
+                                      rigid_triangles.size() * sizeof(uint3);
     }
 
     GallerySimulationOptions options{};
@@ -519,9 +503,6 @@ struct GallerySimulation::Impl {
     std::unique_ptr<physics::RigidBody> rigid;
     std::unique_ptr<physics::Smoke> smoke;
     physics::ColliderSet colliders;
-    physics::ConstraintBatch constraints;
-    physics::ConstraintRecord host_constraint{};
-    DeviceBuffer<physics::ConstraintRecord> constraint_records;
     DeviceBuffer<float3> rigid_vertices;
     DeviceBuffer<uint3> rigid_triangles;
     std::array<ParticleRenderView, 2U> particles{};
@@ -605,16 +586,12 @@ SimulationBuilder &SimulationBuilder::timestep(float value) noexcept {
     config_.fixed_timestep = value;
     return *this;
 }
-SimulationBuilder &SimulationBuilder::iterations(std::uint32_t value) noexcept {
-    config_.solver_iterations = value;
+SimulationBuilder &SimulationBuilder::substeps(std::uint32_t value) noexcept {
+    config_.substep_count = value;
     return *this;
 }
 SimulationBuilder &SimulationBuilder::particles(std::uint32_t value) noexcept {
     config_.particle_count = value;
-    return *this;
-}
-SimulationBuilder &SimulationBuilder::skin_frequency(std::uint32_t value) noexcept {
-    config_.physical_skin_frequency = value;
     return *this;
 }
 SimulationBuilder &SimulationBuilder::rope_nodes(std::uint32_t value) noexcept {
@@ -623,18 +600,6 @@ SimulationBuilder &SimulationBuilder::rope_nodes(std::uint32_t value) noexcept {
 }
 SimulationBuilder &SimulationBuilder::cloth_detail(std::uint32_t value) noexcept {
     config_.cloth_detail = value;
-    return *this;
-}
-SimulationBuilder &SimulationBuilder::bridge_grid(std::uint32_t columns,
-                                                  std::uint32_t rows) noexcept {
-    bridge_columns_ = columns;
-    bridge_rows_ = rows;
-    return *this;
-}
-SimulationBuilder &SimulationBuilder::cylinder_grid(std::uint32_t columns,
-                                                    std::uint32_t rows) noexcept {
-    cylinder_columns_ = columns;
-    cylinder_rows_ = rows;
     return *this;
 }
 SimulationBuilder &SimulationBuilder::gravity(float3 value) noexcept {
@@ -652,16 +617,11 @@ Status SimulationBuilder::build(GallerySimulation &output, cudaStream_t stream) 
     GallerySimulationOptions options;
     options.recipe = config_.recipe;
     options.fixed_step = {config_.fixed_timestep};
-    options.solver_iterations_override = config_.solver_iterations;
+    options.substeps_override = config_.substep_count;
     options.gravity_override = gravity_;
     options.particle_count_override = config_.particle_count;
-    options.physical_skin_frequency_override = config_.physical_skin_frequency;
     options.rope_node_count_override = config_.rope_node_count;
     options.cloth_detail_override = config_.cloth_detail;
-    options.bridge_columns_override = bridge_columns_;
-    options.bridge_rows_override = bridge_rows_;
-    options.cylinder_columns_override = cylinder_columns_;
-    options.cylinder_rows_override = cylinder_rows_;
     options.soft_body_asset_path = asset_path_;
     return output.initialize(options, stream);
 }

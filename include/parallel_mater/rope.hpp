@@ -36,6 +36,7 @@ class Rope {
                                         cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status finish_frame(Completion &completion,
                                       cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status abandon_frame(cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status advance_async(FrameOptions frame, Completion &completion,
                                        cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status advance(FrameOptions frame, cudaStream_t stream = nullptr) noexcept;
@@ -47,6 +48,7 @@ class Rope {
     [[nodiscard]] bool initialized() const noexcept;
     [[nodiscard]] RopeOptions options() const noexcept;
     [[nodiscard]] SoftBodyNodeView nodes() const noexcept;
+    [[nodiscard]] PointStateView point_state() const noexcept;
     [[nodiscard]] PointCouplingView coupling_points() const noexcept;
     [[nodiscard]] SoftBodyBondView bonds() const noexcept;
     [[nodiscard]] SoftBodySurfaceView surface() const noexcept;

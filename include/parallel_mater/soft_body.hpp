@@ -42,6 +42,7 @@ struct SoftBodyOptions {
     float maximum_speed{12.0F};
     float strength_multiplier{1.0F};
     std::uint32_t hierarchy_leaf_size{8U};
+    float4 initial_color{0.42F, 0.22F, 0.72F, 1.0F};
     std::array<float3, maximum_instances> instance_origins{};
 };
 
@@ -63,6 +64,7 @@ struct SoftBodyNodeView {
     std::uint32_t instance_count{};
     float node_radius{};
     float inverse_node_mass{};
+    float4 *colors{};
 };
 
 struct SoftBodyBondView {
@@ -87,6 +89,7 @@ struct SoftBodySurfaceView {
     const std::uint32_t *primitive_indices{};
     std::uint32_t hierarchy_node_count{};
     std::uint32_t hierarchy_max_depth{};
+    const float4 *vertex_colors{};
 };
 
 struct SoftBodyTimings {
@@ -139,6 +142,7 @@ class SoftBody {
                                         cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status finish_frame(Completion &completion,
                                       cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status abandon_frame(cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status advance_async(FrameOptions frame, Completion &completion,
                                        cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status advance(FrameOptions frame, cudaStream_t stream = nullptr) noexcept;
@@ -171,6 +175,7 @@ class SoftBody {
     [[nodiscard]] SoftBodyMaterial material() const noexcept;
     [[nodiscard]] float node_mass() const noexcept;
     [[nodiscard]] SoftBodyNodeView nodes() const noexcept;
+    [[nodiscard]] PointStateView point_state() const noexcept;
     [[nodiscard]] PointCouplingView coupling_points() const noexcept;
     [[nodiscard]] SoftBodyBondView bonds() const noexcept;
     [[nodiscard]] SoftBodySurfaceView surface() const noexcept;

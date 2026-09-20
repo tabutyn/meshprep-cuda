@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include <parallel_mater/cloth.hpp>
+#include <parallel_mater/coupling.hpp>
 #include <parallel_mater/fluid.hpp>
 #include <parallel_mater/rigid_body.hpp>
 #include <parallel_mater/rope.hpp>
@@ -32,11 +33,30 @@ int main() {
     if (status) status = rope.initialize();
     if (status) status = sphere.initialize();
 
+    ColliderSet colliders;
+    Collider sphere_collider;
+    sphere_collider.shape = ColliderShape::sphere;
+    sphere_collider.position = sphere.state().position;
+    sphere_collider.dimensions = {sphere.options().radius, 0.0F, 0.0F};
+    sphere_collider.paint_color = {0.05F, 0.35F, 1.0F, 1.0F};
+    sphere_collider.paint_amount = 0.2F;
+    if (status)
+        status = colliders.update(std::span<const Collider>(&sphere_collider, 1U));
+
     const FrameOptions frame{1.0F / 60.0F, 4U, make_float3(0.0F, -9.81F, 0.0F)};
-    if (status) status = fluid.advance(frame);
-    if (status) status = cloth.advance(frame);
+    if (status)
+        status = advance_coupled(
+            frame,
+            [&](SubstepContext substep, cudaStream_t stream) noexcept {
+                Status result = apply_colliders_async(fluid.point_state(), colliders.view(),
+                                                      substep.timestep, stream);
+                if (result)
+                    result = apply_colliders_async(cloth.point_state(), colliders.view(),
+                                                   substep.timestep, stream);
+                return result;
+            },
+            nullptr, fluid, cloth, sphere);
     if (status) status = rope.advance(frame);
-    if (status) status = sphere.advance(frame);
 
     if (!status) {
         std::fprintf(stderr, "%s: %s\n", status_code_name(status.code), status.message);
