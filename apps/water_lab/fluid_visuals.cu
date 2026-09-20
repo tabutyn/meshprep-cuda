@@ -528,10 +528,16 @@ float FluidVisuals::update(const float3* positions, const float3* velocities,
         !std::isfinite(gravity.y) || !std::isfinite(gravity.z)) {
         throw std::invalid_argument("invalid fluid visual inputs or hierarchy depth above 18");
     }
-    if (!cells.empty() && (cells.indexed_positions != positions || !cells.keys || !cells.indices ||
-            cells.particle_count != count_ || !std::isfinite(cells.cell_size) ||
-            cells.cell_size != support_radius)) {
-        throw std::invalid_argument("fluid visual particle cell view mismatch");
+    if (!cells.empty()) {
+        if (cells.indexed_positions != positions || !cells.keys || !cells.indices ||
+            cells.particle_count == 0U || cells.particle_count > capacity_ ||
+            !std::isfinite(cells.cell_size) || cells.cell_size != support_radius) {
+            throw std::invalid_argument("fluid visual particle cell view mismatch");
+        }
+        // The borrowed broad-phase view is authoritative for this update.
+        // Keeping a second manually synchronized active count made a valid
+        // runtime particle resize crash the next rendering pass.
+        count_ = cells.particle_count;
     }
     const double gravity_length = std::hypot(static_cast<double>(gravity.x),
         static_cast<double>(gravity.y), static_cast<double>(gravity.z));

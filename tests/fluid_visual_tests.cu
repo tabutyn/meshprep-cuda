@@ -179,8 +179,11 @@ void test_cell_queries(Fixture& fixture)
     waterlab::FluidVisuals bvh_visuals(particle_count,32U);
     waterlab::FluidVisuals cell_visuals(particle_count,32U);
     const auto bvh_output=update(bvh_visuals,fixture,fixture.energetic,1.0F/60.0F);
+    cell_visuals.set_active_count(256U);
     const auto cell_output=update(
         cell_visuals,fixture,fixture.energetic,1.0F/60.0F,1U,fixture.cells());
+    require(cell_visuals.view().particle_count==particle_count,
+        "particle cell view did not synchronize resized fluid visuals");
     for (std::size_t i=0U; i<bvh_output.size(); ++i) {
         require(std::abs(bvh_output[i].x-cell_output[i].x)<2.0e-5F &&
             std::abs(bvh_output[i].y-cell_output[i].y)<2.0e-5F &&
