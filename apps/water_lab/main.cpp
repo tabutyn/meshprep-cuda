@@ -41,8 +41,8 @@
 
 namespace {
 
-#ifndef MESHPREP_SOFT_BODY_ASSET_PATH
-#define MESHPREP_SOFT_BODY_ASSET_PATH "assets/softbody/checker_cylinder.msb"
+#ifndef PARALLEL_MATER_SOFT_BODY_ASSET_PATH
+#define PARALLEL_MATER_SOFT_BODY_ASSET_PATH "assets/softbody/checker_cylinder.msb"
 #endif
 
 enum class Scene {
@@ -653,7 +653,7 @@ std::filesystem::path capture_directory(std::uint64_t frame_index)
     std::ostringstream name;
     name << "capture-" << std::put_time(&local, "%Y%m%d-%H%M%S")
          << "-frame-" << frame_index;
-    return std::filesystem::path("/tmp/meshprep-hybrid-captures") / name.str();
+    return std::filesystem::path("/tmp/parallel-mater-hybrid-captures") / name.str();
 }
 
 std::filesystem::path save_capture(const CaptureRing& capture)
@@ -679,7 +679,7 @@ std::filesystem::path save_capture(const CaptureRing& capture)
 
     std::ofstream manifest(directory / "manifest.txt");
     if (!manifest) throw std::runtime_error("cannot create capture manifest");
-    manifest << "format=meshprep-hybrid-capture-v" << header.version << '\n'
+    manifest << "format=parallel-mater-hybrid-capture-v" << header.version << '\n'
              << "visual_state=particle-normals-independent-foam-and-soft-bodies\n"
              << "soft_body_state=" << (final_frame.has_soft_body ? "present" : "absent") << '\n'
              << "foam_capacity=" << waterlab::FluidVisuals::foam_capacity << '\n'
@@ -693,8 +693,8 @@ std::filesystem::path save_capture(const CaptureRing& capture)
              << "replay_command=./build/parallel-mater-lab --replay "
              << directory.string() << '\n';
     manifest.close();
-    std::filesystem::create_directories("/tmp/meshprep-hybrid-captures");
-    std::ofstream latest("/tmp/meshprep-hybrid-captures/LAST_CAPTURE.txt");
+    std::filesystem::create_directories("/tmp/parallel-mater-hybrid-captures");
+    std::ofstream latest("/tmp/parallel-mater-hybrid-captures/LAST_CAPTURE.txt");
     latest << directory.string() << '\n';
     return directory;
 }
@@ -2533,7 +2533,7 @@ int run_profile(const Options& options)
     std::unique_ptr<waterlab::SoftBodyCourse> soft_bodies;
     if (options.scene == Scene::Course)
         soft_bodies = waterlab::gallery::make_recipe_deformable(
-            options.context, physics_options, MESHPREP_SOFT_BODY_ASSET_PATH);
+            options.context, physics_options, PARALLEL_MATER_SOFT_BODY_ASSET_PATH);
     waterlab::RigidSphereState rigid_sphere =
         waterlab::gallery::initial_rigid_sphere(options.context);
     waterlab::RigidSphereState caged_rigid_sphere =
@@ -2866,7 +2866,7 @@ int run_interactive(const Options& options)
     std::unique_ptr<waterlab::SoftBodyCourse> soft_bodies;
     if (input.course_mode) {
         soft_bodies = waterlab::gallery::make_recipe_deformable(
-            input.context, physics_options, MESHPREP_SOFT_BODY_ASSET_PATH,
+            input.context, physics_options, PARALLEL_MATER_SOFT_BODY_ASSET_PATH,
             input.rope_node_count, input.cloth_detail,
             input.bridge_columns,input.bridge_rows,
             input.cylinder_columns,input.cylinder_rows);
@@ -2950,7 +2950,7 @@ int run_interactive(const Options& options)
             visuals.set_active_count(droplet.options().particle_count);
             visuals.set_foam_settings(context_foam_settings(input.context));
             soft_bodies = waterlab::gallery::make_recipe_deformable(
-                input.context, physics_options, MESHPREP_SOFT_BODY_ASSET_PATH,
+                input.context, physics_options, PARALLEL_MATER_SOFT_BODY_ASSET_PATH,
                 input.rope_node_count, input.cloth_detail,
                 input.bridge_columns,input.bridge_rows,
                 input.cylinder_columns,input.cylinder_rows);
@@ -3077,7 +3077,7 @@ int run_interactive(const Options& options)
                     droplet_storage.emplace(updated);
                     begin_context_particle_spawn(input,droplet);
                     soft_bodies = waterlab::gallery::make_recipe_deformable(
-                        input.context, updated, MESHPREP_SOFT_BODY_ASSET_PATH,
+                        input.context, updated, PARALLEL_MATER_SOFT_BODY_ASSET_PATH,
                         input.rope_node_count, input.cloth_detail,
                         input.bridge_columns,input.bridge_rows,
                         input.cylinder_columns,input.cylinder_rows);
@@ -3124,7 +3124,7 @@ int run_interactive(const Options& options)
                         2,64));
                 input.physics_adjustment=0;
                 soft_bodies=waterlab::gallery::make_recipe_deformable(
-                    input.context,droplet.options(),MESHPREP_SOFT_BODY_ASSET_PATH,
+                    input.context,droplet.options(),PARALLEL_MATER_SOFT_BODY_ASSET_PATH,
                     input.rope_node_count,input.cloth_detail,
                     input.bridge_columns,input.bridge_rows,
                     input.cylinder_columns,input.cylinder_rows);

@@ -522,18 +522,18 @@ int main(int argc, char** argv) {
             else if (std::strcmp(argv[i], "--iterations") == 0 && i+1 < argc)
                 iterations = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 10));
             else throw std::invalid_argument(
-                "usage: meshprep-course-tests [--host-only] [--frames N] [--iterations N]");
+                "usage: parallel-mater-course-tests [--host-only] [--frames N] [--iterations N]");
         }
         test_analytic_course_boundaries(); test_best_fit_rotation(); test_course_preset(); test_motion_controls(); test_projection(); test_ground_cloth_pit_projection();
-        if (host_only) { std::puts("PASS meshprep-course-tests host"); return 0; }
+        if (host_only) { std::puts("PASS parallel-mater-course-tests host"); return 0; }
         int devices = 0;
         if (cudaGetDeviceCount(&devices)!=cudaSuccess || devices==0)
-            { std::puts("SKIP meshprep-course-tests GPU: no CUDA device"); return 77; }
+            { std::puts("SKIP parallel-mater-course-tests GPU: no CUDA device"); return 77; }
         test_runtime_motion_controls();
         require(frames >= 300U, "GPU course test requires at least 300 frames");
         run_gpu(frames, iterations);
-        std::puts("PASS meshprep-course-tests"); return 0;
+        std::puts("PASS parallel-mater-course-tests"); return 0;
     } catch (const std::exception& error) {
-        std::fprintf(stderr,"FAIL meshprep-course-tests: %s\n",error.what()); return 1;
+        std::fprintf(stderr,"FAIL parallel-mater-course-tests: %s\n",error.what()); return 1;
     }
 }

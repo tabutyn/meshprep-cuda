@@ -1,1408 +1,667 @@
 // SPDX-License-Identifier: MIT
 #include "gallery.hpp"
-#include <parallel_mater/smoke.hpp>
 
-#include "hybrid_lab.hpp"
-#include "obstacle_course.hpp"
-#include "simulation_gallery.hpp"
-#include "soft_body.hpp"
-#include "status_exception.hpp"
-#include "water_lab.hpp"
+#include <parallel_mater/cloth.hpp>
+#include <parallel_mater/coupling.hpp>
+#include <parallel_mater/fluid.hpp>
+#include <parallel_mater/rigid_body.hpp>
+#include <parallel_mater/rope.hpp>
+#include <parallel_mater/smoke.hpp>
+#include <parallel_mater/soft_body.hpp>
 
 #include <cuda_runtime_api.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <new>
+#include <numeric>
 #include <span>
-#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
+#ifndef PARALLEL_MATER_GALLERY_ASSET_PATH
+#define PARALLEL_MATER_GALLERY_ASSET_PATH ""
+#endif
+
 namespace parallel_mater::examples {
 namespace {
 
-constexpr Status success() noexcept
-{
-    return {};
-}
-
-constexpr Status invalid(const char* message) noexcept
-{
+[[nodiscard]] constexpr Status invalid(const char *message) noexcept {
     return {StatusCode::invalid_argument, cudaSuccess, message};
 }
-
-constexpr Status internal(const char* message) noexcept
-{
-    return {StatusCode::internal_error, cudaSuccess, message};
-}
-
-constexpr Status allocation_failure(const char* message) noexcept
-{
+[[nodiscard]] constexpr Status allocation_failure(const char *message) noexcept {
     return {StatusCode::allocation_failure, cudaErrorMemoryAllocation, message};
 }
-
-void check_cuda(cudaError_t status, const char* operation)
-{
-    waterlab::detail::throw_if_failed(status, operation);
+[[nodiscard]] constexpr Status cuda_failure(cudaError_t error, const char *message) noexcept {
+    return error == cudaSuccess
+               ? Status{}
+               : Status{error == cudaErrorMemoryAllocation ? StatusCode::allocation_failure
+                                                           : StatusCode::cuda_failure,
+                        error, message};
 }
 
-[[nodiscard]] Status translated(
-    const waterlab::detail::StatusException& error,
-    const char* message) noexcept
-{
-    Status status = error.status();
-    status.message = message;
-    return status;
+[[nodiscard]] bool finite(float3 value) noexcept {
+    return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
 }
 
-[[nodiscard]] bool finite(float3 value) noexcept
-{
-    return std::isfinite(value.x) && std::isfinite(value.y) &&
-        std::isfinite(value.z);
-}
-
-[[nodiscard]] bool valid(const GallerySimulationOptions& options) noexcept
-{
-    return parallel_mater::examples::valid(options.fixed_step) &&
-        (!options.solver_iterations_override.has_value() ||
-            (*options.solver_iterations_override >= 1U &&
-             *options.solver_iterations_override <=
-                waterlab::HybridDroplet::maximum_physics_iterations)) &&
-        (!options.gravity_override.has_value() ||
-            finite(*options.gravity_override)) &&
-        (!options.particle_count_override.has_value() ||
-            (*options.particle_count_override >= 256U &&
-             *options.particle_count_override <= 100'000U)) &&
-        (!options.physical_skin_frequency_override.has_value() ||
-            (*options.physical_skin_frequency_override >= 2U &&
-             *options.physical_skin_frequency_override <= 45U)) &&
-        (!options.rope_node_count_override.has_value() ||
-            (*options.rope_node_count_override >= 8U &&
-             *options.rope_node_count_override <= 512U)) &&
-        (!options.cloth_detail_override.has_value() ||
-            (*options.cloth_detail_override >= 1U &&
-             *options.cloth_detail_override <= 8U)) &&
-        (!options.bridge_columns_override.has_value() ||
-            (*options.bridge_columns_override >= 2U &&
-             *options.bridge_columns_override <= 16U)) &&
-        (!options.bridge_rows_override.has_value() ||
-            (*options.bridge_rows_override >= 2U &&
-             *options.bridge_rows_override <= 64U)) &&
-        (!options.cylinder_columns_override.has_value() ||
-            (*options.cylinder_columns_override >= 1U &&
-             *options.cylinder_columns_override <= 16U)) &&
-        (!options.cylinder_rows_override.has_value() ||
-            (*options.cylinder_rows_override >= 1U &&
-             *options.cylinder_rows_override <= 16U)) &&
-        options.cylinder_columns_override.value_or(5U)*
-            options.cylinder_rows_override.value_or(4U)<=
-                waterlab::SoftBodyOptions::maximum_instances;
-}
-
-[[nodiscard]] const SimulationRecipeInfo* recipe_info(SimulationRecipe recipe) noexcept
-{
-    for (const auto& candidate : simulation_recipes) {
+[[nodiscard]] const SimulationRecipeInfo *recipe_info(SimulationRecipe recipe) noexcept {
+    for (const auto &candidate : simulation_recipes)
         if (candidate.recipe == recipe) return &candidate;
-    }
     return nullptr;
 }
 
-physics::SmokeOptions smoke_options(SimulationRecipe context,float timestep)
-{
+[[nodiscard]] bool valid_options(const GallerySimulationOptions &options) noexcept {
+    return valid(options.fixed_step) && recipe_info(options.recipe) != nullptr &&
+           (!options.solver_iterations_override || (*options.solver_iterations_override >= 1U &&
+                                                    *options.solver_iterations_override <= 32U)) &&
+           (!options.gravity_override || finite(*options.gravity_override)) &&
+           (!options.particle_count_override || (*options.particle_count_override >= 8U &&
+                                                 *options.particle_count_override <= 100'000U)) &&
+           (!options.physical_skin_frequency_override ||
+            (*options.physical_skin_frequency_override >= 2U &&
+             *options.physical_skin_frequency_override <= 45U)) &&
+           (!options.rope_node_count_override || (*options.rope_node_count_override >= 8U &&
+                                                  *options.rope_node_count_override <= 512U)) &&
+           (!options.cloth_detail_override ||
+            (*options.cloth_detail_override >= 1U && *options.cloth_detail_override <= 8U)) &&
+           (!options.bridge_columns_override ||
+            (*options.bridge_columns_override >= 2U && *options.bridge_columns_override <= 16U)) &&
+           (!options.bridge_rows_override ||
+            (*options.bridge_rows_override >= 2U && *options.bridge_rows_override <= 64U)) &&
+           (!options.cylinder_columns_override || (*options.cylinder_columns_override >= 1U &&
+                                                   *options.cylinder_columns_override <= 16U)) &&
+           (!options.cylinder_rows_override ||
+            (*options.cylinder_rows_override >= 1U && *options.cylinder_rows_override <= 16U));
+}
+
+[[nodiscard]] float3 default_gravity(SimulationRecipe recipe) noexcept {
+    switch (recipe) {
+    case SimulationRecipe::smoke:
+    case SimulationRecipe::fluid_smoke:
+    case SimulationRecipe::cloth_smoke:
+    case SimulationRecipe::soft_body_smoke:
+    case SimulationRecipe::rope_smoke:
+        return {0.0F, -2.0F, 0.0F};
+    default:
+        return {0.0F, -9.81F, 0.0F};
+    }
+}
+
+[[nodiscard]] std::uint32_t default_particles(SimulationRecipe recipe) noexcept {
+    switch (recipe) {
+    case SimulationRecipe::water:
+        return 20'000U;
+    case SimulationRecipe::water_rope:
+        return 40'000U;
+    case SimulationRecipe::fluid_smoke:
+        return 8'000U;
+    case SimulationRecipe::water_cloth:
+    case SimulationRecipe::water_soft_body:
+        return 10'000U;
+    default:
+        return 0U;
+    }
+}
+
+[[nodiscard]] std::vector<physics::FluidParticle> make_fluid(std::uint32_t count, float radius) {
+    std::vector<physics::FluidParticle> result;
+    result.reserve(count);
+    const std::uint32_t side =
+        static_cast<std::uint32_t>(std::ceil(std::cbrt(static_cast<double>(count))));
+    const float spacing = 2.15F * radius;
+    const float half = 0.5F * spacing * static_cast<float>(side - 1U);
+    for (std::uint32_t index = 0U; index < count; ++index) {
+        const std::uint32_t x = index % side;
+        const std::uint32_t y = (index / side) % side;
+        const std::uint32_t z = index / (side * side);
+        result.push_back(
+            {{spacing * static_cast<float>(x) - half, 0.8F + spacing * static_cast<float>(y),
+              spacing * static_cast<float>(z) - half},
+             {}});
+    }
+    return result;
+}
+
+[[nodiscard]] physics::SmokeOptions smoke_options(SimulationRecipe recipe,
+                                                  float timestep) noexcept {
     physics::SmokeOptions options;
-    options.timestep=timestep;
-    options.particle_count=6'000U;
-    options.capacity=12'000U;
-    options.emitter_center={-2.15F,-0.30F,-1.20F};
-    options.emitter_half_extents={0.05F,0.48F,0.52F};
-    options.initial_velocity={2.8F,0.12F,0.0F};
-    if (context==SimulationRecipe::fluid_smoke) {
-        options.particle_count=7'500U;
-        options.emitter_center={0.0F,-0.78F,-1.20F};
-        options.emitter_half_extents={1.15F,0.04F,0.78F};
-        options.initial_velocity={0.0F,0.42F,0.0F};
-        options.buoyancy=1.85F;
-        options.turbulence_strength=0.72F;
-    } else if (context==SimulationRecipe::cloth_smoke) {
-        options.emitter_center={0.0F,0.10F,1.10F};
-        options.emitter_half_extents={0.95F,0.95F,0.04F};
-        options.initial_velocity={0.0F,0.05F,-2.9F};
-        options.buoyancy=0.18F;
+    options.timestep = timestep;
+    options.particle_count = 6'000U;
+    options.capacity = 12'000U;
+    options.emitter_center = {-2.0F, 0.2F, 0.0F};
+    options.emitter_half_extents = {0.04F, 0.45F, 0.45F};
+    options.initial_velocity = {2.8F, 0.1F, 0.0F};
+    if (recipe == SimulationRecipe::fluid_smoke) {
+        options.particle_count = 7'500U;
+        options.emitter_center = {0.0F, -0.7F, 0.0F};
+        options.emitter_half_extents = {0.8F, 0.04F, 0.8F};
+        options.initial_velocity = {0.0F, 0.5F, 0.0F};
+        options.buoyancy = 1.8F;
     }
     return options;
 }
 
-template <typename T>
-class DeviceBuffer {
-public:
+template <typename T> class DeviceBuffer {
+  public:
     DeviceBuffer() noexcept = default;
     ~DeviceBuffer() { cudaFree(data_); }
-    DeviceBuffer(const DeviceBuffer&) = delete;
-    DeviceBuffer& operator=(const DeviceBuffer&) = delete;
-
-    void upload(const T* source, std::size_t count, cudaStream_t stream)
-    {
-        if (count == 0U) return;
-        check_cuda(cudaMalloc(reinterpret_cast<void**>(&data_), count * sizeof(T)),
-            "allocate simulation rigid mesh");
-        check_cuda(cudaMemcpyAsync(data_, source, count * sizeof(T),
-            cudaMemcpyHostToDevice, stream), "upload simulation rigid mesh");
-        count_ = count;
+    DeviceBuffer(const DeviceBuffer &) = delete;
+    DeviceBuffer &operator=(const DeviceBuffer &) = delete;
+    [[nodiscard]] Status upload(std::span<const T> values, cudaStream_t stream) {
+        if (values.empty()) return {};
+        if (values.size() > capacity_) {
+            cudaFree(data_);
+            data_ = nullptr;
+            count_ = capacity_ = 0U;
+            cudaError_t error = cudaMalloc(reinterpret_cast<void **>(&data_), values.size_bytes());
+            if (error != cudaSuccess) return cuda_failure(error, "allocate gallery buffer");
+            capacity_ = values.size();
+        }
+        cudaError_t error = cudaMemcpyAsync(data_, values.data(), values.size_bytes(),
+                                            cudaMemcpyHostToDevice, stream);
+        if (error != cudaSuccess) return cuda_failure(error, "upload gallery buffer");
+        count_ = values.size();
+        return {};
     }
-
-    [[nodiscard]] T* get() const noexcept { return data_; }
+    [[nodiscard]] T *get() const noexcept { return data_; }
     [[nodiscard]] std::size_t size() const noexcept { return count_; }
 
-private:
-    T* data_{};
+  private:
+    T *data_{};
     std::size_t count_{};
+    std::size_t capacity_{};
 };
+
+constexpr std::array<float3, 6> sphere_vertices{
+    {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}}};
+constexpr std::array<uint3, 8> sphere_triangles{
+    {{2, 0, 4}, {2, 4, 1}, {2, 1, 5}, {2, 5, 0}, {3, 4, 0}, {3, 1, 4}, {3, 5, 1}, {3, 0, 5}}};
 
 } // namespace
 
 struct GallerySimulation::Impl {
-    [[nodiscard]] std::uint32_t rope_node_count() const noexcept
-    {
-        return options_.rope_node_count_override.value_or(
-            waterlab::gallery::default_rope_nodes);
-    }
+    [[nodiscard]] Status initialize(GallerySimulationOptions requested,
+                                    cudaStream_t stream) noexcept {
+        if (!valid_options(requested)) return invalid("invalid gallery options");
+        options = requested;
+        info = recipe_info(options.recipe);
+        asset_path = options.soft_body_asset_path;
+        if (asset_path.empty()) asset_path = PARALLEL_MATER_GALLERY_ASSET_PATH;
+        options.soft_body_asset_path = asset_path;
+        resolved = {{options.fixed_step.timestep},
+                    options.solver_iterations_override.value_or(4U),
+                    options.gravity_override.value_or(default_gravity(options.recipe)),
+                    false};
+        frame = {resolved.fixed_step.timestep, resolved.solver_iterations, resolved.gravity};
 
-    [[nodiscard]] std::uint32_t cloth_detail() const noexcept
-    {
-        return options_.cloth_detail_override.value_or(
-            waterlab::gallery::default_cloth_detail(options_.recipe));
-    }
-
-    explicit Impl(GallerySimulationOptions requested, cudaStream_t stream)
-        : options_(requested), asset_path_(requested.soft_body_asset_path)
-    {
-        options_.soft_body_asset_path = asset_path_;
-        info_ = recipe_info(options_.recipe);
-        if (info_ == nullptr) throw std::invalid_argument("unknown gallery context");
-        if (!valid(options_)) {
-            throw std::invalid_argument("invalid gallery fixed-step options");
+        Status status;
+        if (has_component(info->components, Component::fluid_particles)) {
+            status = initialize_fluid(
+                options.particle_count_override.value_or(default_particles(options.recipe)),
+                stream);
+            if (!status) return status;
         }
-        if (requires_soft_body_asset(options_.recipe) && asset_path_.empty()) {
-            throw std::invalid_argument("gallery context requires a soft-body asset");
+        if (has_component(info->components, Component::cloth)) {
+            cloth = std::make_unique<physics::Cloth>();
+            physics::ClothOptions selected;
+            const std::uint32_t detail = options.cloth_detail_override.value_or(1U);
+            selected.columns = 12U * detail;
+            selected.rows = 10U * detail;
+            selected.spacing = 0.08F / static_cast<float>(detail);
+            selected.top_center = {0.0F, 1.2F, 0.0F};
+            selected.solver.substeps = resolved.solver_iterations;
+            selected.solver.timestep = resolved.fixed_step.timestep;
+            status = cloth->initialize(selected, stream);
+            if (!status) return status;
         }
-
-        const bool particles = has_component(
-            info_->components, Component::fluid_particles) ||
-            has_component(info_->components, Component::hand_particles);
-        const bool water_skin = has_component(info_->components, Component::water_skin);
-        const bool deformable = (has_component(info_->components, Component::cloth) &&
-                options_.recipe!=SimulationRecipe::water_cloth) ||
-            has_component(info_->components, Component::soft_body) ||
-            has_component(info_->components, Component::rope);
-        const bool rigid = has_component(info_->components, Component::rigid_bodies);
-
-        const waterlab::gallery::RecipePhysicsOverrides overrides{
-            options_.fixed_step.timestep,
-            options_.solver_iterations_override,
-            options_.gravity_override,
-            options_.particle_count_override,
-            options_.physical_skin_frequency_override};
-        const waterlab::HybridOptions physics =
-            waterlab::gallery::make_recipe_physics(options_.recipe, overrides);
-        resolved_physics_ = {
-            {physics.fixed_dt}, physics.physics_iterations, physics.gravity,
-            physics.obstacle_course};
-
-        if (particles || water_skin) {
-            hybrid_ = std::make_unique<waterlab::HybridDroplet>(physics);
-            if (options_.recipe==SimulationRecipe::water_soft_body &&
-                physics.particle_count>256U) {
-                staged_particle_target_=physics.particle_count;
-                hybrid_->resize_particles(256U,stream);
-            }
+        if (has_component(info->components, Component::rope)) {
+            rope = std::make_unique<physics::Rope>();
+            physics::RopeOptions selected;
+            selected.node_count = options.rope_node_count_override.value_or(64U);
+            selected.spacing = 0.055F;
+            selected.origin = {-1.4F, 1.4F, 0.0F};
+            selected.direction = {1.0F, -0.25F, 0.0F};
+            selected.solver.substeps = resolved.solver_iterations;
+            selected.solver.timestep = resolved.fixed_step.timestep;
+            status = rope->initialize(selected, stream);
+            if (!status) return status;
         }
-        if (deformable) {
-            deformable_ = waterlab::gallery::make_recipe_deformable(
-                options_.recipe, physics, asset_path_, rope_node_count(),
-                cloth_detail(),
-                options_.bridge_columns_override.value_or(
-                    waterlab::rope_bridge_columns),
-                options_.bridge_rows_override.value_or(
-                    waterlab::rope_bridge_rows),
-                options_.cylinder_columns_override.value_or(5U),
-                options_.cylinder_rows_override.value_or(4U));
-            if (!deformable_) {
-                throw std::runtime_error("gallery recipe omitted a declared deformable");
-            }
+        if (has_component(info->components, Component::soft_body)) {
+            if (asset_path.empty())
+                return invalid("gallery soft-body recipe requires an asset path");
+            soft_body = std::make_unique<physics::SoftBody>();
+            physics::SoftBodyOptions selected;
+            selected.substeps = resolved.solver_iterations;
+            selected.timestep = resolved.fixed_step.timestep;
+            selected.instance_origins[0] = {0.0F, 0.8F, 0.0F};
+            status = soft_body->initialize(asset_path, selected, stream);
+            if (!status) return status;
         }
-        if (has_component(info_->components,Component::smoke)) {
-            smoke_=std::make_unique<physics::Smoke>();
-            waterlab::detail::throw_if_failed(smoke_->initialize(
-                smoke_options(options_.recipe,physics.fixed_dt),stream),
-                "initialize gallery smoke");
+        if (has_component(info->components, Component::rigid_bodies)) {
+            rigid = std::make_unique<physics::RigidBody>();
+            physics::RigidBodyState state;
+            state.position = {-0.8F, 1.4F, 0.0F};
+            state.linear_velocity = {0.35F, 0.0F, 0.0F};
+            physics::RigidBodyOptions selected;
+            selected.radius = 0.35F;
+            status = rigid->initialize(state, selected);
+            if (!status) return status;
+            status = rigid_vertices.upload(sphere_vertices, stream);
+            if (!status) return status;
+            status = rigid_triangles.upload(sphere_triangles, stream);
+            if (!status) return status;
         }
-        if (rigid) initialize_rigid_arena(stream);
-        check_cuda(cudaStreamSynchronize(stream), "complete gallery initialization");
+        if (has_component(info->components, Component::smoke)) {
+            smoke = std::make_unique<physics::Smoke>();
+            status = smoke->initialize(smoke_options(options.recipe, resolved.fixed_step.timestep),
+                                       stream);
+            if (!status) return status;
+        }
+        status = colliders.reserve(1U);
+        if (!status) return status;
+        status = constraints.reserve(1U, stream);
+        if (!status) return status;
+        status = constraint_records.upload(
+            std::span<const physics::ConstraintRecord>(&host_constraint, 1U), stream);
+        if (!status) return status;
+        const cudaError_t synchronized = cudaStreamSynchronize(stream);
+        if (synchronized != cudaSuccess)
+            return cuda_failure(synchronized, "complete gallery initialization");
         refresh_views();
-        refresh_statistics(0.0F);
+        refresh_statistics();
+        return {};
     }
 
-    void initialize_rigid_arena(cudaStream_t stream)
-    {
-        rigid_sphere_view_index_=std::numeric_limits<std::uint32_t>::max();
-        caged_rigid_sphere_view_index_=std::numeric_limits<std::uint32_t>::max();
-        rigid_wheel_first_fin_=std::numeric_limits<std::uint32_t>::max();
-        rigid_wheel_first_rung_=std::numeric_limits<std::uint32_t>::max();
-        if (options_.recipe == SimulationRecipe::water) {
-            constexpr std::uint32_t segments = 40U;
-            constexpr std::uint32_t rings = 16U;
-            std::vector<float3> vertices;
-            std::vector<uint3> triangles;
-            vertices.reserve((rings + 1U) * segments);
-            for (std::uint32_t ring = 0U; ring <= rings; ++ring) {
-                const float polar = 0.5F * 3.14159265358979323846F +
-                    0.5F * 3.14159265358979323846F *
-                        static_cast<float>(ring) / static_cast<float>(rings);
-                for (std::uint32_t segment = 0U; segment < segments; ++segment) {
-                    const float azimuth = 2.0F * 3.14159265358979323846F *
-                        static_cast<float>(segment) / static_cast<float>(segments);
-                    vertices.push_back({sinf(polar) * cosf(azimuth), cosf(polar),
-                        sinf(polar) * sinf(azimuth)});
-                }
-            }
-            for (std::uint32_t ring = 0U; ring < rings; ++ring) {
-                for (std::uint32_t segment = 0U; segment < segments; ++segment) {
-                    const std::uint32_t a = ring * segments + segment;
-                    const std::uint32_t b = ring * segments + (segment + 1U) % segments;
-                    const std::uint32_t c = (ring + 1U) * segments + segment;
-                    const std::uint32_t d = (ring + 1U) * segments +
-                        (segment + 1U) % segments;
-                    triangles.push_back({a, b, c});
-                    triangles.push_back({b, d, c});
-                }
-            }
-            const std::uint32_t bowl_vertex_count =
-                static_cast<std::uint32_t>(vertices.size());
-            const std::uint32_t bowl_triangle_count =
-                static_cast<std::uint32_t>(triangles.size());
-            const auto sphere = waterlab::make_geodesic_sphere(6U, 1.0F);
-            const std::uint32_t sphere_vertex_first = bowl_vertex_count;
-            const std::uint32_t sphere_triangle_first = bowl_triangle_count;
-            vertices.insert(vertices.end(), sphere.positions.begin(), sphere.positions.end());
-            for (const uint3 triangle : sphere.triangles) {
-                triangles.push_back(triangle);
-            }
-            constexpr std::uint32_t peg_segments = 24U;
-            const std::uint32_t peg_vertex_first =
-                static_cast<std::uint32_t>(vertices.size());
-            const std::uint32_t peg_triangle_first =
-                static_cast<std::uint32_t>(triangles.size());
-            for (std::uint32_t segment = 0U; segment < peg_segments; ++segment) {
-                const float angle = 2.0F * 3.14159265358979323846F *
-                    static_cast<float>(segment) / static_cast<float>(peg_segments);
-                vertices.push_back({std::cos(angle), -1.0F, std::sin(angle)});
-                vertices.push_back({std::cos(angle),  1.0F, std::sin(angle)});
-            }
-            vertices.push_back({0.0F, -1.0F, 0.0F});
-            vertices.push_back({0.0F,  1.0F, 0.0F});
-            const std::uint32_t peg_bottom_center = 2U * peg_segments;
-            const std::uint32_t peg_top_center = peg_bottom_center + 1U;
-            for (std::uint32_t segment = 0U; segment < peg_segments; ++segment) {
-                const std::uint32_t next = (segment + 1U) % peg_segments;
-                const std::uint32_t bottom = 2U * segment;
-                const std::uint32_t top = bottom + 1U;
-                const std::uint32_t next_bottom = 2U * next;
-                const std::uint32_t next_top = next_bottom + 1U;
-                triangles.push_back({bottom, next_bottom, top});
-                triangles.push_back({top, next_bottom, next_top});
-                triangles.push_back({peg_bottom_center, bottom, next_bottom});
-                triangles.push_back({peg_top_center, next_top, top});
-            }
-            rigid_vertices_.upload(vertices.data(), vertices.size(), stream);
-            rigid_triangles_.upload(triangles.data(), triangles.size(), stream);
-            rigid_views_[0] = {{rigid_vertices_.get(), bowl_vertex_count,
-                    rigid_triangles_.get(), bowl_triangle_count},
-                waterlab::bowl_center, {0.0F, 0.0F, 0.0F, 1.0F},
-                {waterlab::bowl_inner_radius + waterlab::bowl_wall_thickness,
-                 waterlab::bowl_inner_radius + waterlab::bowl_wall_thickness,
-                 waterlab::bowl_inner_radius + waterlab::bowl_wall_thickness}};
-            rigid_sphere_ = waterlab::gallery::initial_rigid_sphere(options_.recipe);
-            rigid_views_[1] = {{rigid_vertices_.get() + sphere_vertex_first,
-                    sphere.positions.size(),
-                    rigid_triangles_.get() + sphere_triangle_first,
-                    sphere.triangles.size()},
-                rigid_sphere_.center, {0.0F, 0.0F, 0.0F, 1.0F},
-                {rigid_sphere_.radius, rigid_sphere_.radius, rigid_sphere_.radius}};
-            rigid_sphere_view_index_ = 1U;
-            const DeviceMeshView peg_mesh{
-                rigid_vertices_.get() + peg_vertex_first,
-                2U * peg_segments + 2U,
-                rigid_triangles_.get() + peg_triangle_first,
-                4U * peg_segments};
-            for (std::uint32_t peg = 0U; peg < waterlab::bowl_peg_count; ++peg) {
-                rigid_views_[2U + peg] = {peg_mesh,
-                    waterlab::bowl_peg(peg), {0.0F, 0.0F, 0.0F, 1.0F},
-                    {waterlab::bowl_peg_radius, 0.5F * waterlab::bowl_peg_height,
-                     waterlab::bowl_peg_radius}};
-            }
-            rigid_count_ = 2U + waterlab::bowl_peg_count;
-            return;
-        }
-        if (options_.recipe == SimulationRecipe::rope ||
-            options_.recipe == SimulationRecipe::cloth_rope ||
-            options_.recipe == SimulationRecipe::soft_body_rope ||
-            options_.recipe == SimulationRecipe::rope_smoke) {
-            constexpr std::array<float3, 8U> cube_vertices{{
-                {-1.0F, -1.0F, -1.0F}, {1.0F, -1.0F, -1.0F},
-                {1.0F, 1.0F, -1.0F}, {-1.0F, 1.0F, -1.0F},
-                {-1.0F, -1.0F, 1.0F}, {1.0F, -1.0F, 1.0F},
-                {1.0F, 1.0F, 1.0F}, {-1.0F, 1.0F, 1.0F},
-            }};
-            constexpr std::array<uint3, 12U> cube_triangles{{
-                {0U,2U,1U}, {0U,3U,2U}, {4U,5U,6U}, {4U,6U,7U},
-                {0U,1U,5U}, {0U,5U,4U}, {3U,7U,6U}, {3U,6U,2U},
-                {0U,4U,7U}, {0U,7U,3U}, {1U,2U,6U}, {1U,6U,5U},
-            }};
-            const auto sphere = waterlab::make_geodesic_sphere(6U, 1.0F);
-            std::vector<float3> vertices(sphere.positions.begin(), sphere.positions.end());
-            std::vector<uint3> triangles(sphere.triangles.begin(), sphere.triangles.end());
-            const std::uint32_t cube_vertex_first =
-                static_cast<std::uint32_t>(vertices.size());
-            const std::uint32_t cube_triangle_first =
-                static_cast<std::uint32_t>(triangles.size());
-            vertices.insert(vertices.end(), cube_vertices.begin(), cube_vertices.end());
-            triangles.insert(triangles.end(), cube_triangles.begin(), cube_triangles.end());
-            rigid_vertices_.upload(vertices.data(), vertices.size(), stream);
-            rigid_triangles_.upload(triangles.data(), triangles.size(), stream);
-            rigid_sphere_ = waterlab::gallery::initial_rigid_sphere(
-                options_.recipe, rope_node_count());
-            caged_rigid_sphere_ = waterlab::gallery::initial_caged_rigid_sphere(
-                rope_node_count());
-            rigid_views_[0] = {{rigid_vertices_.get(), sphere.positions.size(),
-                    rigid_triangles_.get(), sphere.triangles.size()},
-                rigid_sphere_.center, {0,0,0,1},
-                {rigid_sphere_.radius, rigid_sphere_.radius, rigid_sphere_.radius}};
-            rigid_sphere_view_index_ = 0U;
-            const DeviceMeshView cube{rigid_vertices_.get() + cube_vertex_first,
-                cube_vertices.size(), rigid_triangles_.get() + cube_triangle_first,
-                cube_triangles.size()};
-            if (options_.recipe == SimulationRecipe::rope) {
-                rigid_views_[1] = {{rigid_vertices_.get(), sphere.positions.size(),
-                        rigid_triangles_.get(), sphere.triangles.size()},
-                    caged_rigid_sphere_.center, {0,0,0,1},
-                    {caged_rigid_sphere_.radius,caged_rigid_sphere_.radius,
-                     caged_rigid_sphere_.radius}};
-                caged_rigid_sphere_view_index_=1U;
-                rigid_views_[2] = {cube,
-                    {0.0F, waterlab::course_floor_y - 0.05F, -1.2F}, {0,0,0,1},
-                    {3.1F, 0.05F, 2.7F}};
-                rigid_views_[3] = {cube, waterlab::rope_post_center, {0,0,0,1},
-                    {waterlab::rope_post_radius, 0.5F * waterlab::rope_post_height,
-                     waterlab::rope_post_radius}};
-            } else {
-                for (std::uint32_t side = 0U; side < 2U; ++side) {
-                    const float sign = side == 0U ? -1.0F : 1.0F;
-                    const float inner = sign * waterlab::rope_bridge_land_inner_z;
-                    const float outer = sign * waterlab::rope_bridge_land_outer_z;
-                    rigid_views_[1U+side] = {cube,
-                        {0.0F,waterlab::rope_bridge_land_y-0.06F,
-                         0.5F*(inner+outer)}, {0,0,0,1},
-                        {waterlab::rope_bridge_land_half_width,0.06F,
-                         0.5F*std::fabs(outer-inner)}};
-                }
-            }
-            rigid_count_ = options_.recipe==SimulationRecipe::rope ? 4U : 3U;
-            return;
-        }
-        if (options_.recipe == SimulationRecipe::cloth ||
-            options_.recipe == SimulationRecipe::soft_body ||
-            options_.recipe == SimulationRecipe::water_rope ||
-            options_.recipe == SimulationRecipe::cloth_soft_body ||
-            options_.recipe == SimulationRecipe::smoke ||
-            options_.recipe == SimulationRecipe::fluid_smoke ||
-            options_.recipe == SimulationRecipe::cloth_smoke ||
-            options_.recipe == SimulationRecipe::soft_body_smoke) {
-            constexpr std::array<float3, 8U> cube_vertices{{
-                {-1.0F, -1.0F, -1.0F}, {1.0F, -1.0F, -1.0F},
-                {1.0F, 1.0F, -1.0F}, {-1.0F, 1.0F, -1.0F},
-                {-1.0F, -1.0F, 1.0F}, {1.0F, -1.0F, 1.0F},
-                {1.0F, 1.0F, 1.0F}, {-1.0F, 1.0F, 1.0F},
-            }};
-            constexpr std::array<uint3, 12U> cube_triangles{{
-                {0U, 2U, 1U}, {0U, 3U, 2U}, {4U, 5U, 6U}, {4U, 6U, 7U},
-                {0U, 1U, 5U}, {0U, 5U, 4U}, {3U, 7U, 6U}, {3U, 6U, 2U},
-                {0U, 4U, 7U}, {0U, 7U, 3U}, {1U, 2U, 6U}, {1U, 6U, 5U},
-            }};
-            const auto sphere = waterlab::make_geodesic_sphere(6U, 1.0F);
-            std::vector<float3> vertices(sphere.positions.begin(), sphere.positions.end());
-            std::vector<uint3> triangles(sphere.triangles.begin(), sphere.triangles.end());
-            const std::uint32_t cube_vertex_first =
-                static_cast<std::uint32_t>(vertices.size());
-            const std::uint32_t cube_triangle_first =
-                static_cast<std::uint32_t>(triangles.size());
-            vertices.insert(vertices.end(), cube_vertices.begin(), cube_vertices.end());
-            for (const uint3 triangle : cube_triangles) {
-                triangles.push_back(triangle);
-            }
-            rigid_vertices_.upload(vertices.data(), vertices.size(), stream);
-            rigid_triangles_.upload(triangles.data(), triangles.size(), stream);
-            rigid_sphere_ = waterlab::gallery::initial_rigid_sphere(
-                options_.recipe, rope_node_count());
-            rigid_views_[0] = {{rigid_vertices_.get(), sphere.positions.size(),
-                    rigid_triangles_.get(), sphere.triangles.size()},
-                rigid_sphere_.center, {0.0F, 0.0F, 0.0F, 1.0F},
-                {rigid_sphere_.radius, rigid_sphere_.radius, rigid_sphere_.radius}};
-            rigid_sphere_view_index_ = 0U;
-            const DeviceMeshView cube{rigid_vertices_.get() + cube_vertex_first,
-                cube_vertices.size(), rigid_triangles_.get() + cube_triangle_first,
-                cube_triangles.size()};
-            const float3 c = options_.recipe==SimulationRecipe::water_rope
-                ? waterlab::fishing_tank_center
-                : (options_.recipe == SimulationRecipe::soft_body
-                    ? waterlab::low_gallery_box_center : waterlab::gallery_box_center);
-            const float3 h = options_.recipe==SimulationRecipe::water_rope
-                ? waterlab::fishing_tank_half_extents
-                : (options_.recipe == SimulationRecipe::soft_body
-                    ? waterlab::low_gallery_box_half_extents
-                    : waterlab::gallery_box_half_extents);
-            constexpr float thickness = 0.045F;
-            rigid_views_[1] = {cube, {c.x, c.y - h.y - thickness, c.z}, {0,0,0,1},
-                {h.x, thickness, h.z}};
-            rigid_views_[2] = {cube, {c.x, c.y + h.y + thickness, c.z}, {0,0,0,1},
-                {h.x, thickness, h.z}};
-            rigid_views_[3] = {cube, {c.x - h.x - thickness, c.y, c.z}, {0,0,0,1},
-                {thickness, h.y, h.z}};
-            rigid_views_[4] = {cube, {c.x + h.x + thickness, c.y, c.z}, {0,0,0,1},
-                {thickness, h.y, h.z}};
-            rigid_views_[5] = {cube, {c.x, c.y, c.z - h.z - thickness}, {0,0,0,1},
-                {h.x, h.y, thickness}};
-            rigid_views_[6] = {cube, {c.x, c.y, c.z + h.z + thickness}, {0,0,0,1},
-                {h.x, h.y, thickness}};
-            rigid_count_ = 7U;
-            if (options_.recipe == SimulationRecipe::water_rope) {
-                rigid_views_[0].mesh=cube;
-                rigid_views_[0].scale={1.30F*rigid_sphere_.radius,
-                    0.75F*rigid_sphere_.radius,0.72F*rigid_sphere_.radius};
-            }
-            if (options_.recipe == SimulationRecipe::cloth_soft_body) {
-                for (std::uint32_t wall = 0U; wall < 6U; ++wall)
-                    rigid_views_[wall] = rigid_views_[wall + 1U];
-                rigid_sphere_view_index_ = std::numeric_limits<std::uint32_t>::max();
-                rigid_count_ = 6U;
-            }
-            if (options_.recipe == SimulationRecipe::smoke ||
-                options_.recipe == SimulationRecipe::fluid_smoke ||
-                options_.recipe == SimulationRecipe::cloth_smoke ||
-                options_.recipe == SimulationRecipe::soft_body_smoke)
-                rigid_count_=2U;
-            return;
-        }
-        if (options_.recipe == SimulationRecipe::water_soft_body) {
-            constexpr std::uint32_t segments = 64U;
-            constexpr float shell_half_thickness = 0.045F;
-            const float outer = waterlab::water_wheel_shell_radius + shell_half_thickness;
-            const float inner = waterlab::water_wheel_shell_radius - shell_half_thickness;
-            std::vector<float3> vertices;
-            std::vector<uint3> triangles;
-            vertices.reserve(4U * segments + 8U);
-            triangles.reserve(8U * segments + 12U);
-            for (std::uint32_t segment = 0U; segment < segments; ++segment) {
-                const float angle = 2.0F * 3.14159265358979323846F *
-                    static_cast<float>(segment) / static_cast<float>(segments);
-                const float cosine = std::cos(angle);
-                const float sine = std::sin(angle);
-                vertices.push_back({outer * cosine, outer * sine,
-                    -waterlab::water_wheel_half_depth});
-                vertices.push_back({outer * cosine, outer * sine,
-                    waterlab::water_wheel_half_depth});
-                vertices.push_back({inner * cosine, inner * sine,
-                    -waterlab::water_wheel_half_depth});
-                vertices.push_back({inner * cosine, inner * sine,
-                    waterlab::water_wheel_half_depth});
-            }
-            for (std::uint32_t segment = 0U; segment < segments; ++segment) {
-                const std::uint32_t next = (segment + 1U) % segments;
-                const float middle_angle = 2.0F * 3.14159265358979323846F *
-                    (static_cast<float>(segment) + 0.5F) /
-                    static_cast<float>(segments);
-                if (waterlab::water_wheel_shell_opening({
-                    waterlab::water_wheel_shell_radius * std::cos(middle_angle),
-                    waterlab::water_wheel_shell_radius * std::sin(middle_angle), 0.0F}))
-                    continue;
-                const std::uint32_t a = 4U * segment;
-                const std::uint32_t b = 4U * next;
-                triangles.insert(triangles.end(), {
-                    {a, b, a + 1U}, {a + 1U, b, b + 1U},
-                    {a + 2U, a + 3U, b + 2U}, {a + 3U, b + 3U, b + 2U},
-                    {a, a + 2U, b}, {a + 2U, b + 2U, b},
-                    {a + 1U, b + 1U, a + 3U}, {a + 3U, b + 1U, b + 3U}});
-            }
-            const std::uint32_t shell_vertex_count =
-                static_cast<std::uint32_t>(vertices.size());
-            const std::uint32_t shell_triangle_count =
-                static_cast<std::uint32_t>(triangles.size());
-            const std::uint32_t core_vertex_first = shell_vertex_count;
-            const std::uint32_t core_triangle_first = shell_triangle_count;
-            for (std::uint32_t segment = 0U; segment < segments; ++segment) {
-                const float angle = 2.0F * 3.14159265358979323846F *
-                    static_cast<float>(segment) / static_cast<float>(segments);
-                const float x = waterlab::water_wheel_hub_radius * std::cos(angle);
-                const float y = waterlab::water_wheel_hub_radius * std::sin(angle);
-                vertices.push_back({x, y, -waterlab::water_wheel_half_depth});
-                vertices.push_back({x, y, waterlab::water_wheel_half_depth});
-            }
-            vertices.push_back({0.0F, 0.0F, -waterlab::water_wheel_half_depth});
-            vertices.push_back({0.0F, 0.0F, waterlab::water_wheel_half_depth});
-            const std::uint32_t bottom_center = 2U * segments;
-            const std::uint32_t top_center = bottom_center + 1U;
-            for (std::uint32_t segment = 0U; segment < segments; ++segment) {
-                const std::uint32_t next = (segment + 1U) % segments;
-                const std::uint32_t bottom = 2U * segment;
-                const std::uint32_t top = bottom + 1U;
-                const std::uint32_t next_bottom = 2U * next;
-                const std::uint32_t next_top = next_bottom + 1U;
-                triangles.push_back({bottom, next_bottom, top});
-                triangles.push_back({top, next_bottom, next_top});
-                triangles.push_back({bottom_center, bottom, next_bottom});
-                triangles.push_back({top_center, next_top, top});
-            }
-            const std::uint32_t core_vertex_count =
-                static_cast<std::uint32_t>(vertices.size()) - core_vertex_first;
-            const std::uint32_t core_triangle_count =
-                static_cast<std::uint32_t>(triangles.size()) - core_triangle_first;
-            const std::uint32_t cube_vertex_first =
-                static_cast<std::uint32_t>(vertices.size());
-            const std::uint32_t cube_triangle_first =
-                static_cast<std::uint32_t>(triangles.size());
-            constexpr std::array<float3, 8U> cube_vertices{{
-                {-1,-1,-1}, {1,-1,-1}, {1,1,-1}, {-1,1,-1},
-                {-1,-1,1}, {1,-1,1}, {1,1,1}, {-1,1,1}}};
-            constexpr std::array<uint3, 12U> cube_triangles{{
-                {0,2,1}, {0,3,2}, {4,5,6}, {4,6,7}, {0,1,5}, {0,5,4},
-                {3,7,6}, {3,6,2}, {0,4,7}, {0,7,3}, {1,2,6}, {1,6,5}}};
-            vertices.insert(vertices.end(), cube_vertices.begin(), cube_vertices.end());
-            for (const uint3 triangle : cube_triangles) triangles.push_back(triangle);
-            rigid_vertices_.upload(vertices.data(), vertices.size(), stream);
-            rigid_triangles_.upload(triangles.data(), triangles.size(), stream);
-            rigid_views_[0] = {{rigid_vertices_.get(), shell_vertex_count,
-                    rigid_triangles_.get(), shell_triangle_count},
-                waterlab::water_wheel_center, {0,0,0,1}, {1.0F, 1.0F, 1.0F}};
-            rigid_views_[1] = {{rigid_vertices_.get() + core_vertex_first,
-                    core_vertex_count,
-                    rigid_triangles_.get() + core_triangle_first,
-                    core_triangle_count},
-                waterlab::water_wheel_center, {0,0,0,1}, {1.0F, 1.0F, 1.0F}};
-            const DeviceMeshView cube{rigid_vertices_.get() + cube_vertex_first,
-                cube_vertices.size(), rigid_triangles_.get() + cube_triangle_first,
-                cube_triangles.size()};
-            rigid_wheel_first_fin_ = 2U;
-            for (std::uint32_t fin = 0U; fin < waterlab::water_wheel_fin_count; ++fin) {
-                const float angle = 2.0F * 3.14159265358979323846F *
-                    static_cast<float>(fin) /
-                    static_cast<float>(waterlab::water_wheel_fin_count);
-                const float middle = 0.5F * (waterlab::water_wheel_radius +
-                    waterlab::water_wheel_fin_outer_radius);
-                rigid_views_[2U + fin] = {cube,
-                    {waterlab::water_wheel_center.x + middle * std::cos(angle),
-                     waterlab::water_wheel_center.y + middle * std::sin(angle),
-                     waterlab::water_wheel_center.z},
-                    {0.0F, 0.0F, std::sin(0.5F * angle), std::cos(0.5F * angle)},
-                    {0.5F * (waterlab::water_wheel_fin_outer_radius -
-                        waterlab::water_wheel_radius),
-                     waterlab::water_wheel_fin_thickness,
-                     waterlab::water_wheel_half_depth}};
-            }
-            constexpr float ramp_half_thickness = 0.045F;
-            constexpr float ramp_half_width = waterlab::water_wheel_ground_half_depth;
-            const float ramp_angle = std::atan(waterlab::water_wheel_ramp_gradient);
-            const float4 ramp_orientation{0.0F, 0.0F,
-                std::sin(0.5F * ramp_angle), std::cos(0.5F * ramp_angle)};
-            const std::uint32_t inlet_view = 2U + waterlab::water_wheel_fin_count;
-            const float inlet_middle = 0.5F *
-                (waterlab::water_wheel_inlet_start_x + waterlab::water_wheel_entry_x);
-            rigid_views_[inlet_view] = {cube,
-                {inlet_middle, waterlab::water_wheel_inlet_height(inlet_middle) -
-                    ramp_half_thickness, waterlab::water_wheel_center.z},
-                ramp_orientation,
-                {0.5F * (waterlab::water_wheel_entry_x -
-                    waterlab::water_wheel_inlet_start_x),
-                 ramp_half_thickness, ramp_half_width}};
-            const std::uint32_t collector_view = inlet_view + 1U;
-            const float collector_middle = 0.5F *
-                (waterlab::water_wheel_collector_start_x +
-                 waterlab::water_wheel_collector_end_x);
-            rigid_views_[collector_view] = {cube,
-                {collector_middle,
-                 waterlab::water_wheel_collector_height(collector_middle) -
-                    ramp_half_thickness,
-                 waterlab::water_wheel_center.z},
-                ramp_orientation,
-                {0.5F * (waterlab::water_wheel_collector_end_x -
-                    waterlab::water_wheel_collector_start_x),
-                 ramp_half_thickness, ramp_half_width}};
-            const DeviceMeshView cylinder{rigid_vertices_.get() + core_vertex_first,
-                core_vertex_count, rigid_triangles_.get() + core_triangle_first,
-                core_triangle_count};
-            const std::uint32_t axle_view = collector_view + 1U;
-            rigid_views_[axle_view] = {cylinder, waterlab::water_wheel_center,
-                {0,0,0,1},
-                {0.11F / waterlab::water_wheel_hub_radius,
-                 0.11F / waterlab::water_wheel_hub_radius,
-                 waterlab::water_wheel_axle_half_length /
-                    waterlab::water_wheel_half_depth}};
-            for (std::uint32_t side = 0U; side < 2U; ++side) {
-                const float sign = side == 0U ? -1.0F : 1.0F;
-                rigid_views_[axle_view + 1U + side] = {cylinder,
-                    {waterlab::water_wheel_center.x, waterlab::water_wheel_center.y,
-                     waterlab::water_wheel_center.z + sign *
-                        waterlab::water_wheel_outer_disk_offset},
-                    {0,0,0,1},
-                    {waterlab::water_wheel_outer_disk_radius /
-                         waterlab::water_wheel_hub_radius,
-                     waterlab::water_wheel_outer_disk_radius /
-                         waterlab::water_wheel_hub_radius,
-                     waterlab::water_wheel_outer_disk_half_thickness /
-                        waterlab::water_wheel_half_depth}};
-            }
-            const std::uint32_t first_platform = axle_view + 3U;
-            for (std::uint32_t side = 0U; side < 2U; ++side) {
-                const float sign = side == 0U ? -1.0F : 1.0F;
-                const float inner = waterlab::water_wheel_center.x + sign *
-                    waterlab::water_wheel_top_platform_gap_half_width;
-                const float outer = waterlab::water_wheel_center.x + sign *
-                    waterlab::water_wheel_top_platform_outer_x;
-                rigid_views_[first_platform + side] = {cube,
-                    {0.5F * (inner + outer),
-                     waterlab::water_wheel_top_platform_y - 0.035F,
-                     waterlab::water_wheel_stage_z},
-                    {0,0,0,1},
-                    {0.5F * std::fabs(outer - inner), 0.035F,
-                     waterlab::water_wheel_top_platform_half_depth}};
-            }
-            const std::uint32_t first_bumper=first_platform+2U;
-            for (std::uint32_t side=0U;side<2U;++side) {
-                const float sign=side==0U ? -1.0F : 1.0F;
-                rigid_views_[first_bumper+side]={cube,
-                    {waterlab::water_wheel_center.x,
-                     waterlab::water_wheel_top_platform_y+
-                        waterlab::water_wheel_top_bumper_height,
-                     waterlab::water_wheel_stage_z+sign*(
-                        waterlab::water_wheel_top_platform_half_depth+
-                        waterlab::water_wheel_top_bumper_thickness)},
-                    {0,0,0,1},
-                    {waterlab::water_wheel_top_platform_outer_x,
-                     waterlab::water_wheel_top_bumper_height,
-                     waterlab::water_wheel_top_bumper_thickness}};
-            }
-            rigid_views_[first_bumper+2U]={cube,
-                {waterlab::water_wheel_center.x+
-                    waterlab::water_wheel_top_platform_outer_x+
-                    waterlab::water_wheel_top_bumper_thickness,
-                 waterlab::water_wheel_top_platform_y+
-                    waterlab::water_wheel_top_bumper_height,
-                 waterlab::water_wheel_stage_z},
-                {0,0,0,1},
-                {waterlab::water_wheel_top_bumper_thickness,
-                 waterlab::water_wheel_top_bumper_height,
-                 waterlab::water_wheel_top_platform_half_depth+
-                    2.0F*waterlab::water_wheel_top_bumper_thickness}};
-            rigid_wheel_first_rung_=first_bumper+3U;
-            for (std::uint32_t rung=0U;
-                 rung<waterlab::water_wheel_outer_rung_count;++rung) {
-                const float angle=6.28318530717958647692F*
-                    static_cast<float>(rung)/
-                    static_cast<float>(waterlab::water_wheel_outer_rung_count);
-                const float radial_center=waterlab::water_wheel_outer_disk_radius+
-                    0.5F*waterlab::water_wheel_outer_rung_radial_half_length;
-                rigid_views_[rigid_wheel_first_rung_+rung]={cube,
-                    {waterlab::water_wheel_center.x+radial_center*std::cos(angle),
-                     waterlab::water_wheel_center.y+radial_center*std::sin(angle),
-                     waterlab::water_wheel_stage_z},
-                    {0,0,std::sin(0.5F*angle),std::cos(0.5F*angle)},
-                    {waterlab::water_wheel_outer_rung_radial_half_length,
-                     waterlab::water_wheel_outer_rung_tangent_half_width,
-                     waterlab::water_wheel_outer_rung_axial_half_depth}};
-            }
-            rigid_count_ = 12U + waterlab::water_wheel_fin_count+
-                waterlab::water_wheel_outer_rung_count;
-            return;
-        }
-        // The course exposes the same board, rails, and capped posts as the
-        // native analytic renderer/collider. Boxes share one unit cube; posts
-        // share one unit cylinder.
-        constexpr std::array<float3, 8U> vertices{{
-            {-1.0F, -1.0F, -1.0F}, {1.0F, -1.0F, -1.0F},
-            {1.0F, 1.0F, -1.0F}, {-1.0F, 1.0F, -1.0F},
-            {-1.0F, -1.0F, 1.0F}, {1.0F, -1.0F, 1.0F},
-            {1.0F, 1.0F, 1.0F}, {-1.0F, 1.0F, 1.0F},
-        }};
-        constexpr std::array<uint3, 12U> triangles{{
-            {0U, 2U, 1U}, {0U, 3U, 2U}, {4U, 5U, 6U}, {4U, 6U, 7U},
-            {0U, 1U, 5U}, {0U, 5U, 4U}, {3U, 7U, 6U}, {3U, 6U, 2U},
-            {0U, 4U, 7U}, {0U, 7U, 3U}, {1U, 2U, 6U}, {1U, 6U, 5U},
-        }};
-        std::vector<float3> course_vertices(vertices.begin(), vertices.end());
-        std::vector<uint3> course_triangles(triangles.begin(), triangles.end());
-        constexpr std::uint32_t cylinder_segments = 24U;
-        const std::uint32_t cylinder_vertex_first =
-            static_cast<std::uint32_t>(course_vertices.size());
-        const std::uint32_t cylinder_triangle_first =
-            static_cast<std::uint32_t>(course_triangles.size());
-        for (std::uint32_t segment = 0U; segment < cylinder_segments; ++segment) {
-            const float angle = 2.0F * 3.14159265358979323846F *
-                static_cast<float>(segment) / static_cast<float>(cylinder_segments);
-            const float x = std::cos(angle);
-            const float z = std::sin(angle);
-            course_vertices.push_back({x, -1.0F, z});
-            course_vertices.push_back({x, 1.0F, z});
-        }
-        course_vertices.push_back({0.0F, -1.0F, 0.0F});
-        course_vertices.push_back({0.0F, 1.0F, 0.0F});
-        const std::uint32_t bottom_center = 2U * cylinder_segments;
-        const std::uint32_t top_center = bottom_center + 1U;
-        for (std::uint32_t segment = 0U; segment < cylinder_segments; ++segment) {
-            const std::uint32_t next = (segment + 1U) % cylinder_segments;
-            const std::uint32_t bottom = 2U * segment;
-            const std::uint32_t top = bottom + 1U;
-            const std::uint32_t next_bottom = 2U * next;
-            const std::uint32_t next_top = next_bottom + 1U;
-            course_triangles.push_back({bottom, top, next_bottom});
-            course_triangles.push_back({top, next_top, next_bottom});
-            course_triangles.push_back({bottom_center, bottom, next_bottom});
-            course_triangles.push_back({top_center, next_top, top});
-        }
-        rigid_vertices_.upload(
-            course_vertices.data(), course_vertices.size(), stream);
-        rigid_triangles_.upload(
-            course_triangles.data(), course_triangles.size(), stream);
-
-        const DeviceMeshView cube{rigid_vertices_.get(), vertices.size(),
-            rigid_triangles_.get(), triangles.size()};
-        const float middle_z =
-            0.5F * (waterlab::course_near_z + waterlab::course_far_z);
-        const float half_length =
-            0.5F * (waterlab::course_near_z - waterlab::course_far_z);
-        const float rail_y =
-            waterlab::course_floor_y + 0.5F * waterlab::course_rail_height;
-        const float side_x =
-            waterlab::course_half_width + 0.5F * waterlab::course_rail_thickness;
-        const float end_half_width =
-            waterlab::course_half_width + waterlab::course_rail_thickness;
-        rigid_views_[0] = {cube,
-            {0.0F, waterlab::course_floor_y -
-                0.5F * waterlab::course_floor_thickness, middle_z},
-            {0.0F, 0.0F, 0.0F, 1.0F},
-            {waterlab::course_half_width + waterlab::course_rail_thickness,
-                0.5F * waterlab::course_floor_thickness,
-                half_length + waterlab::course_rail_thickness}};
-        rigid_views_[1] = {cube, {-side_x, rail_y, middle_z},
-            {0.0F, 0.0F, 0.0F, 1.0F},
-            {0.5F * waterlab::course_rail_thickness,
-                0.5F * waterlab::course_rail_height,
-                half_length + waterlab::course_rail_thickness}};
-        rigid_views_[2] = rigid_views_[1];
-        rigid_views_[2].translation.x = side_x;
-        rigid_views_[3] = {cube,
-            {0.0F, rail_y,
-                waterlab::course_near_z + 0.5F * waterlab::course_rail_thickness},
-            {0.0F, 0.0F, 0.0F, 1.0F},
-            {end_half_width, 0.5F * waterlab::course_rail_height,
-                0.5F * waterlab::course_rail_thickness}};
-        rigid_views_[4] = rigid_views_[3];
-        rigid_views_[4].translation.z =
-            waterlab::course_far_z - 0.5F * waterlab::course_rail_thickness;
-        const DeviceMeshView cylinder{
-            rigid_vertices_.get() + cylinder_vertex_first,
-            2U * cylinder_segments + 2U,
-            rigid_triangles_.get() + cylinder_triangle_first,
-            4U * cylinder_segments};
-        for (std::uint32_t peg = 0U; peg < waterlab::course_peg_count; ++peg) {
-            const float3 base = waterlab::course_peg(peg);
-            rigid_views_[5U + peg] = {cylinder,
-                {base.x, waterlab::course_floor_y +
-                    0.5F * waterlab::course_peg_height, base.z},
-                {0.0F, 0.0F, 0.0F, 1.0F},
-                {waterlab::course_peg_radius,
-                    0.5F * waterlab::course_peg_height,
-                    waterlab::course_peg_radius}};
-        }
-        rigid_count_ = 5U + waterlab::course_peg_count;
+    [[nodiscard]] Status initialize_fluid(std::uint32_t count, cudaStream_t stream) noexcept {
+        physics::FluidOptions selected;
+        selected.repulsion = 20.0F;
+        selected.particle_mass = 0.08F;
+        auto particles = make_fluid(count, selected.particle_radius);
+        auto replacement = std::make_unique<physics::Fluid>();
+        Status status = replacement->initialize(particles, selected, stream);
+        if (status) fluid = std::move(replacement);
+        return status;
     }
 
-    void refresh_views() noexcept
-    {
-        if (rigid_sphere_view_index_ != std::numeric_limits<std::uint32_t>::max()) {
-            rigid_views_[rigid_sphere_view_index_].translation = rigid_sphere_.center;
-            rigid_views_[rigid_sphere_view_index_].orientation = rigid_sphere_.orientation;
-        }
-        if (caged_rigid_sphere_view_index_ !=
-            std::numeric_limits<std::uint32_t>::max()) {
-            rigid_views_[caged_rigid_sphere_view_index_].translation =
-                caged_rigid_sphere_.center;
-            rigid_views_[caged_rigid_sphere_view_index_].orientation =
-                caged_rigid_sphere_.orientation;
-        }
-        if (rigid_wheel_first_fin_ != std::numeric_limits<std::uint32_t>::max()) {
-            constexpr float two_pi = 6.28318530717958647692F;
-            const float middle = 0.5F * (waterlab::water_wheel_radius +
-                waterlab::water_wheel_fin_outer_radius);
-            for (std::uint32_t fin = 0U; fin < waterlab::water_wheel_fin_count; ++fin) {
-                const float angle = water_wheel_.angle + two_pi * static_cast<float>(fin) /
-                    static_cast<float>(waterlab::water_wheel_fin_count);
-                auto& view = rigid_views_[rigid_wheel_first_fin_ + fin];
-                view.translation = {
-                    waterlab::water_wheel_center.x + middle * std::cos(angle),
-                    waterlab::water_wheel_center.y + middle * std::sin(angle),
-                    waterlab::water_wheel_center.z};
-                view.orientation = {0.0F, 0.0F,
-                    std::sin(0.5F * angle), std::cos(0.5F * angle)};
-            }
-            const std::uint32_t first_outer_rim =
-                rigid_wheel_first_fin_ + waterlab::water_wheel_fin_count + 3U;
-            for (std::uint32_t side = 0U; side < 2U; ++side) {
-                rigid_views_[first_outer_rim + side].orientation = {0.0F, 0.0F,
-                    std::sin(0.5F * water_wheel_.rim_angle),
-                    std::cos(0.5F * water_wheel_.rim_angle)};
-            }
-            if (rigid_wheel_first_rung_!=
-                std::numeric_limits<std::uint32_t>::max()) {
-                const float radial_center=waterlab::water_wheel_outer_disk_radius+
-                    0.5F*waterlab::water_wheel_outer_rung_radial_half_length;
-                for (std::uint32_t rung=0U;
-                     rung<waterlab::water_wheel_outer_rung_count;++rung) {
-                    const float angle=water_wheel_.rim_angle+6.28318530717958647692F*
-                        static_cast<float>(rung)/
-                        static_cast<float>(waterlab::water_wheel_outer_rung_count);
-                    auto& view=rigid_views_[rigid_wheel_first_rung_+rung];
-                    view.translation={
-                        waterlab::water_wheel_center.x+radial_center*std::cos(angle),
-                        waterlab::water_wheel_center.y+radial_center*std::sin(angle),
-                        waterlab::water_wheel_stage_z};
-                    view.orientation={0,0,std::sin(0.5F*angle),std::cos(0.5F*angle)};
-                }
-            }
-        }
-        particle_count_ = 0U;
-        surface_count_ = 0U;
-        lattice_count_ = 0U;
-        if (hybrid_ && (has_component(info_->components, Component::fluid_particles) ||
-                           has_component(info_->components, Component::hand_particles))) {
-            particle_views_[particle_count_++] = {hybrid_->particle_positions(),
-                hybrid_->particle_velocities(), hybrid_->statistics().particle_count,
-                hybrid_->particle_radius()};
-        }
-        if (smoke_) {
-            const physics::SmokeParticleView view=smoke_->particles();
-            particle_views_[particle_count_++]={view.positions,view.velocities,
-                view.count,view.radius,options_.recipe==SimulationRecipe::fluid_smoke
-                    ? ParticleMaterial::steam : ParticleMaterial::smoke};
-        }
-        if (hybrid_ && has_component(info_->components, Component::water_skin)) {
-            surface_views_[surface_count_++] = {hybrid_->skin_mesh(),
-                hybrid_->skin_normals().vertex_normals(), nullptr, nullptr};
-        }
-        if (deformable_ && (has_component(info_->components, Component::cloth) ||
-                               has_component(info_->components, Component::soft_body) ||
-                               has_component(info_->components, Component::rope))) {
-            const waterlab::SoftBodyRenderView view = deformable_->render_view();
-            // Rope exposes its physical graph through LatticeRenderView. The
-            // historical cage-bound "glass skin" is deliberately not part of
-            // the public render surface now that the glass object is a rigid
-            // body in rigid_bodies[1].
-            if (options_.recipe!=SimulationRecipe::rope) {
-                surface_views_[surface_count_++] = {
-                    {view.positions, view.vertex_count, view.triangles,
-                     view.triangle_count},view.vertex_normals,view.texcoords,
-                    view.triangle_active};
-            }
-            const waterlab::SoftBodyLatticeView lattice = deformable_->lattice_view();
-            lattice_views_[lattice_count_++] = {lattice.positions, lattice.flags,
-                lattice.edges, lattice.active_edges, lattice.voxel_count,
-                lattice.voxels_per_instance, lattice.edges_per_instance,
-                lattice.instance_count, lattice.voxel_radius};
-        }
+    template <typename Solver>
+    [[nodiscard]] Status begin(Solver *solver, cudaStream_t stream) noexcept {
+        return solver ? solver->begin_frame(frame, stream) : Status{};
+    }
+    template <typename Solver>
+    [[nodiscard]] Status prepare(Solver *solver, physics::SubstepContext substep,
+                                 cudaStream_t stream) noexcept {
+        return solver ? solver->prepare_substep(substep, stream) : Status{};
+    }
+    template <typename Solver>
+    [[nodiscard]] Status finish(Solver *solver, physics::SubstepContext substep,
+                                cudaStream_t stream) noexcept {
+        return solver ? solver->finish_substep(substep, stream) : Status{};
+    }
+    template <typename Solver>
+    [[nodiscard]] Status complete(Solver *solver, cudaStream_t stream) noexcept {
+        if (!solver) return {};
+        physics::Completion completion;
+        Status status = solver->finish_frame(completion, stream);
+        return status ? completion.wait() : status;
     }
 
-    void refresh_statistics(float gpu_time_ms) noexcept
-    {
-        statistics_ = {};
-        statistics_.surface_count = surface_count_;
-        statistics_.rigid_body_count = rigid_count_;
-        statistics_.last_gpu_time_ms = gpu_time_ms;
-        statistics_.allocated_bytes = rigid_vertices_.size() * sizeof(float3) +
-            rigid_triangles_.size() * sizeof(uint3);
-        if (hybrid_) {
-            const auto hybrid = hybrid_->statistics();
-            statistics_.frame_index = hybrid.frame_index;
-            statistics_.particle_count = particle_count_ == 0U
-                ? 0U : hybrid.particle_count;
-            statistics_.finite_failure_count += hybrid.finite_failures;
-            statistics_.allocated_bytes += hybrid_->allocated_bytes();
-        }
-        if (deformable_) {
-            const auto deformable = deformable_->statistics();
-            if (!hybrid_) statistics_.frame_index = deformable.frame_index;
-            statistics_.finite_failure_count += deformable.finite_failure_count;
-            statistics_.broken_connection_count = deformable.broken_edge_count;
-            statistics_.allocated_bytes += deformable_->allocated_bytes();
-        }
-        if (smoke_) {
-            const auto smoke=smoke_->statistics();
-            statistics_.frame_index=std::max(statistics_.frame_index,smoke.frame_index);
-            statistics_.particle_count+=smoke_->particles().count;
-            statistics_.finite_failure_count+=smoke.finite_failure_count;
-            statistics_.allocated_bytes+=smoke.allocated_bytes;
-        }
+    [[nodiscard]] Status apply_coupling(physics::PointCouplingView target, std::uint32_t order,
+                                        cudaStream_t stream) noexcept {
+        if (target.count == 0U) return {};
+        host_constraint = {target.count / 2U, order, {0.0F, 0.002F, 0.0F}, {}};
+        Status status = constraint_records.upload(
+            std::span<const physics::ConstraintRecord>(&host_constraint, 1U), stream);
+        if (!status) return status;
+        return constraints.apply_async({constraint_records.get(), 1U}, target, stream);
     }
 
-    void advance(cudaStream_t stream)
-    {
-        float gpu_time = 0.0F;
-        physics::SmokeTimings smoke_timing{};
-        if (smoke_) {
-            const bool collide=options_.recipe==SimulationRecipe::smoke ||
-                options_.recipe==SimulationRecipe::soft_body_smoke ||
-                options_.recipe==SimulationRecipe::rope_smoke;
-            physics::ColliderView colliders;
-            if (collide) {
-                smoke_collider_.position=rigid_sphere_.center;
-                smoke_collider_.linear_velocity=rigid_sphere_.velocity;
-                smoke_collider_.dimensions=make_float3(
-                    rigid_sphere_.radius,0.0F,0.0F);
-                smoke_collider_.friction=0.2F;
-                waterlab::detail::throw_if_failed(smoke_colliders_.update_async(
-                    std::span<const physics::Collider>(&smoke_collider_,1U),stream),
-                    "upload gallery smoke collider");
-                colliders=smoke_colliders_.view();
-            }
-            waterlab::detail::throw_if_failed(
-                smoke_->step({},colliders,stream),"advance gallery smoke");
+    [[nodiscard]] Status step(cudaStream_t stream) noexcept {
+        Status status;
+        physics::ColliderView collider_view;
+        if (rigid) {
+            const auto state = rigid->state();
+            physics::Collider collider;
+            collider.shape = physics::ColliderShape::sphere;
+            collider.position = state.position;
+            collider.orientation = state.orientation;
+            collider.linear_velocity = state.linear_velocity;
+            collider.angular_velocity = state.angular_velocity;
+            collider.dimensions = {rigid->options().radius, 0.0F, 0.0F};
+            status =
+                colliders.update_async(std::span<const physics::Collider>(&collider, 1U), stream);
+            if (!status) return status;
+            collider_view = colliders.view();
         }
-        if (hybrid_) {
-            if (staged_particle_target_>hybrid_->options().particle_count) {
-                staged_spawn_frame_=std::min(300U,staged_spawn_frame_+1U);
-                const std::uint32_t range=staged_particle_target_-256U;
-                hybrid_->resize_particles(std::min(staged_particle_target_,
-                    256U+(range*staged_spawn_frame_+299U)/300U),stream);
-            }
-            const bool dynamic_sphere =
-                options_.recipe == SimulationRecipe::water ||
-                options_.recipe == SimulationRecipe::water_rope ||
-                options_.recipe == SimulationRecipe::water_soft_body;
-            const auto timing = hybrid_->step(
-                {}, 0.0F, stream, deformable_.get(), false,
-                dynamic_sphere ? &rigid_sphere_ : nullptr,
-                options_.recipe == SimulationRecipe::water_soft_body
-                    ? &water_wheel_ : nullptr,
-                options_.recipe == SimulationRecipe::water_soft_body
-                    ? &resolved_physics_.gravity : nullptr);
-            gpu_time += timing.gpu_total_ms();
-            if (options_.recipe==SimulationRecipe::fluid_smoke &&
-                hybrid_->statistics().particle_count>256U &&
-                (hybrid_->statistics().frame_index&1U)==0U)
-                hybrid_->resize_particles(std::max(256U,
-                    hybrid_->statistics().particle_count-16U),stream);
-        } else if (deformable_) {
-            const bool rolling_rigid = options_.recipe == SimulationRecipe::cloth ||
-                options_.recipe == SimulationRecipe::soft_body ||
-                options_.recipe == SimulationRecipe::rope ||
-                options_.recipe == SimulationRecipe::cloth_rope ||
-                options_.recipe == SimulationRecipe::soft_body_rope;
-            waterlab::SoftBodyTimings timing{};
-            if (smoke_) {
-                if (options_.recipe==SimulationRecipe::cloth_smoke) {
-                    deformable_->set_pinned_rotation_z(
-                        make_float3(0.0F,0.15F,-1.20F),smoke_rotor_angle_,stream);
-                }
-                deformable_->begin_frame(stream);
-                const std::uint32_t substeps=resolved_physics_.solver_iterations;
-                const float dt=resolved_physics_.fixed_step.timestep/
-                    static_cast<float>(substeps);
-                const bool rolling=options_.recipe==SimulationRecipe::soft_body_smoke ||
-                    options_.recipe==SimulationRecipe::rope_smoke;
-                const float3 body_gravity=options_.recipe==SimulationRecipe::soft_body_smoke
-                    ? resolved_physics_.gravity : make_float3(0,0,0);
-                for (std::uint32_t substep=0U;substep<substeps;++substep) {
-                    if (rolling) {
-                        rigid_sphere_.velocity.x+=resolved_physics_.gravity.x*dt;
-                        rigid_sphere_.velocity.y+=resolved_physics_.gravity.y*dt;
-                        rigid_sphere_.velocity.z+=resolved_physics_.gravity.z*dt;
-                        rigid_sphere_.center.x+=rigid_sphere_.velocity.x*dt;
-                        rigid_sphere_.center.y+=rigid_sphere_.velocity.y*dt;
-                        rigid_sphere_.center.z+=rigid_sphere_.velocity.z*dt;
-                        waterlab::project_gallery_contact(rigid_sphere_.center,
-                            rigid_sphere_.velocity,rigid_sphere_.radius,
-                            waterlab::gallery::make_recipe_physics(
-                                options_.recipe).arena);
-                    }
-                    deformable_->prepare_substep(dt,body_gravity,stream);
-                    if (rolling)
-                        deformable_->contact_rigid_sphere_substep(
-                            rigid_sphere_,dt,stream);
-                    const auto nodes=deformable_->voxel_view();
-                    waterlab::detail::throw_if_failed(smoke_->couple({
-                        nodes.positions,nodes.velocities,nodes.external_impulses,
-                        nodes.position_corrections,nodes.voxel_count,
-                        nodes.voxel_radius,nodes.inverse_voxel_mass},
-                        dt,5.0F,stream),
-                        "couple gallery smoke");
-                    deformable_->finish_substep(dt,body_gravity,stream);
-                }
-                timing=deformable_->finish_frame(stream);
-                if (options_.recipe==SimulationRecipe::cloth_smoke) {
-                    const float torque=deformable_->wheel_rim_reaction_torque(
-                        make_float3(0.0F,0.15F,-1.20F),stream);
-                    const float dt=resolved_physics_.fixed_step.timestep;
-                    const float acceleration=std::clamp(
-                        0.00025F*torque,-8.0F,8.0F);
-                    smoke_rotor_angular_velocity_=std::clamp(
-                        (smoke_rotor_angular_velocity_+acceleration*dt)/
-                            (1.0F+0.8F*dt),-3.0F,3.0F);
-                    smoke_rotor_angle_+=smoke_rotor_angular_velocity_*dt;
-                }
-            } else if (options_.recipe == SimulationRecipe::rope) {
-                const auto lattice = deformable_->lattice_view();
-                timing = deformable_->step_with_tethered_rigid_spheres(
-                    rigid_sphere_, lattice.voxels_per_instance - 1U,
-                    rigid_sphere_.radius + lattice.voxel_radius,
-                    caged_rigid_sphere_,
-                    resolved_physics_.gravity, stream);
-            } else if (options_.recipe == SimulationRecipe::cloth_rope ||
-                       options_.recipe == SimulationRecipe::soft_body_rope) {
-                timing = deformable_->step_with_rigid_sphere(rigid_sphere_,
-                    make_float3(0.0F,0.0F,0.0F),resolved_physics_.gravity,stream);
-            } else if (rolling_rigid) {
-                timing = deformable_->step_with_rigid_sphere(
-                    rigid_sphere_, resolved_physics_.gravity, stream);
-            } else {
-                timing = deformable_->step(resolved_physics_.gravity, stream);
-            }
-            gpu_time += timing.gpu_total_ms();
-        } else if (smoke_ && options_.recipe==SimulationRecipe::smoke) {
-            const float dt=resolved_physics_.fixed_step.timestep;
-            rigid_sphere_.velocity.x+=resolved_physics_.gravity.x*dt;
-            rigid_sphere_.velocity.y+=resolved_physics_.gravity.y*dt;
-            rigid_sphere_.velocity.z+=resolved_physics_.gravity.z*dt;
-            rigid_sphere_.center.x+=rigid_sphere_.velocity.x*dt;
-            rigid_sphere_.center.y+=rigid_sphere_.velocity.y*dt;
-            rigid_sphere_.center.z+=rigid_sphere_.velocity.z*dt;
-            waterlab::project_gallery_contact(rigid_sphere_.center,
-                rigid_sphere_.velocity,rigid_sphere_.radius,
-                waterlab::GalleryArena::ground);
-            waterlab::advance_rigid_sphere_rotation(rigid_sphere_,
-                waterlab::GalleryArena::ground,5.0F,dt);
+        if (smoke) {
+            status = smoke->step({}, collider_view, stream);
+            if (!status) return status;
         }
-        if (smoke_) {
-            waterlab::detail::throw_if_failed(
-                smoke_->collect_telemetry(stream),"collect gallery smoke telemetry");
-            smoke_timing=smoke_->telemetry().timings;
-            gpu_time+=smoke_timing.gpu_total_ms();
+        if (!(status = begin(fluid.get(), stream)) || !(status = begin(cloth.get(), stream)) ||
+            !(status = begin(rope.get(), stream)) || !(status = begin(soft_body.get(), stream)) ||
+            !(status = begin(rigid.get(), stream)))
+            return status;
+
+        for (std::uint32_t index = 0U; index < frame.substeps; ++index) {
+            const auto substep = physics::substep_context(frame, index);
+            if (!(status = prepare(fluid.get(), substep, stream)) ||
+                !(status = prepare(cloth.get(), substep, stream)) ||
+                !(status = prepare(rope.get(), substep, stream)) ||
+                !(status = prepare(soft_body.get(), substep, stream)) ||
+                !(status = prepare(rigid.get(), substep, stream)))
+                return status;
+            std::uint32_t order{};
+            if (fluid && !(status = apply_coupling(fluid->coupling_points(), order++, stream)))
+                return status;
+            if (cloth && !(status = apply_coupling(cloth->coupling_points(), order++, stream)))
+                return status;
+            if (rope && !(status = apply_coupling(rope->coupling_points(), order++, stream)))
+                return status;
+            if (soft_body &&
+                !(status = apply_coupling(soft_body->coupling_points(), order++, stream)))
+                return status;
+            if (smoke) {
+                if (fluid && !(status = smoke->couple(fluid->coupling_points(), substep.timestep,
+                                                      3.0F, stream)))
+                    return status;
+                if (cloth && !(status = smoke->couple(cloth->coupling_points(), substep.timestep,
+                                                      3.0F, stream)))
+                    return status;
+                if (rope && !(status = smoke->couple(rope->coupling_points(), substep.timestep,
+                                                     3.0F, stream)))
+                    return status;
+                if (soft_body && !(status = smoke->couple(soft_body->coupling_points(),
+                                                          substep.timestep, 3.0F, stream)))
+                    return status;
+            }
+            if (!(status = finish(fluid.get(), substep, stream)) ||
+                !(status = finish(cloth.get(), substep, stream)) ||
+                !(status = finish(rope.get(), substep, stream)) ||
+                !(status = finish(soft_body.get(), substep, stream)) ||
+                !(status = finish(rigid.get(), substep, stream)))
+                return status;
         }
+        if (!(status = complete(fluid.get(), stream)) ||
+            !(status = complete(cloth.get(), stream)) || !(status = complete(rope.get(), stream)) ||
+            !(status = complete(soft_body.get(), stream)) ||
+            !(status = complete(rigid.get(), stream)))
+            return status;
+        if (fluid && !(status = fluid->collect_statistics(stream))) return status;
+        if (cloth && !(status = cloth->collect_statistics(stream))) return status;
+        if (rope && !(status = rope->collect_statistics(stream))) return status;
+        if (soft_body && !(status = soft_body->collect_telemetry(stream))) return status;
+        if (smoke && !(status = smoke->collect_telemetry(stream))) return status;
         refresh_views();
-        refresh_statistics(gpu_time);
+        refresh_statistics();
+        return statistics.finite_failure_count == 0U
+                   ? Status{}
+                   : Status{StatusCode::internal_error, cudaSuccess,
+                            "gallery simulation produced non-finite state"};
     }
 
-    void reset(cudaStream_t stream)
-    {
-        if (hybrid_) {
-            hybrid_->reset(stream);
-            if (staged_particle_target_>256U) {
-                hybrid_->resize_particles(256U,stream);
-                staged_spawn_frame_=0U;
-            }
-        }
-        if (deformable_) {
-            if (options_.recipe == SimulationRecipe::water_soft_body) {
-                deformable_->set_pinned_rotation_z(
-                    waterlab::water_wheel_center, 0.0F, stream);
-            }
-            deformable_->reset(stream);
-            waterlab::gallery::initialize_recipe_motion(
-                options_.recipe, *deformable_);
-        }
-        if (smoke_) waterlab::detail::throw_if_failed(
-            smoke_->reset(stream),"reset gallery smoke");
-        smoke_rotor_angle_=0.0F;
-        smoke_rotor_angular_velocity_=0.0F;
-        if (options_.recipe == SimulationRecipe::cloth ||
-            options_.recipe == SimulationRecipe::soft_body ||
-            options_.recipe == SimulationRecipe::water ||
-            options_.recipe == SimulationRecipe::water_rope ||
-            options_.recipe == SimulationRecipe::rope ||
-            options_.recipe == SimulationRecipe::cloth_rope ||
-            options_.recipe == SimulationRecipe::soft_body_rope ||
-            options_.recipe == SimulationRecipe::smoke ||
-            options_.recipe == SimulationRecipe::fluid_smoke ||
-            options_.recipe == SimulationRecipe::cloth_smoke ||
-            options_.recipe == SimulationRecipe::soft_body_smoke ||
-            options_.recipe == SimulationRecipe::rope_smoke) {
-            rigid_sphere_ = waterlab::gallery::initial_rigid_sphere(
-                options_.recipe, rope_node_count());
-            if (options_.recipe==SimulationRecipe::rope)
-                caged_rigid_sphere_=waterlab::gallery::initial_caged_rigid_sphere(
-                    rope_node_count());
-        }
-        if (options_.recipe == SimulationRecipe::water_soft_body)
-            water_wheel_ = {};
+    [[nodiscard]] Status reset(cudaStream_t stream) noexcept {
+        Status status;
+        if (fluid && !(status = fluid->reset(stream))) return status;
+        if (cloth && !(status = cloth->reset(stream))) return status;
+        if (rope && !(status = rope->reset(stream))) return status;
+        if (soft_body && !(status = soft_body->reset(stream))) return status;
+        if (smoke && !(status = smoke->reset(stream))) return status;
+        if (rigid && !(status = rigid->reset())) return status;
         refresh_views();
-        refresh_statistics(0.0F);
+        refresh_statistics();
+        return {};
     }
 
-    GallerySimulationOptions options_{};
-    ResolvedPhysicsOptions resolved_physics_{};
-    std::string asset_path_;
-    const SimulationRecipeInfo* info_{};
-    std::unique_ptr<waterlab::HybridDroplet> hybrid_;
-    std::unique_ptr<waterlab::SoftBodyCourse> deformable_;
-    std::unique_ptr<physics::Smoke> smoke_;
-    physics::Collider smoke_collider_{};
-    physics::ColliderSet smoke_colliders_{};
-    waterlab::RigidSphereState rigid_sphere_{};
-    waterlab::RigidSphereState caged_rigid_sphere_{};
-    waterlab::WaterWheelState water_wheel_{};
-    std::uint32_t staged_particle_target_{};
-    std::uint32_t staged_spawn_frame_{};
-    float smoke_rotor_angle_{};
-    float smoke_rotor_angular_velocity_{};
-    DeviceBuffer<float3> rigid_vertices_;
-    DeviceBuffer<uint3> rigid_triangles_;
-    std::array<ParticleRenderView, 2U> particle_views_{};
-    std::array<SurfaceRenderView, 2U> surface_views_{};
-    std::array<RigidBodyRenderView, 12U + waterlab::water_wheel_fin_count +
-        waterlab::water_wheel_outer_rung_count> rigid_views_{};
-    std::array<LatticeRenderView, 1U> lattice_views_{};
-    std::uint32_t particle_count_{};
-    std::uint32_t surface_count_{};
-    std::uint32_t rigid_count_{};
-    std::uint32_t rigid_sphere_view_index_{
-        std::numeric_limits<std::uint32_t>::max()};
-    std::uint32_t caged_rigid_sphere_view_index_{
-        std::numeric_limits<std::uint32_t>::max()};
-    std::uint32_t rigid_wheel_first_fin_{
-        std::numeric_limits<std::uint32_t>::max()};
-    std::uint32_t rigid_wheel_first_rung_{
-        std::numeric_limits<std::uint32_t>::max()};
-    std::uint32_t lattice_count_{};
-    GallerySimulationStatistics statistics_{};
+    void append_surface(physics::SoftBodySurfaceView view) noexcept {
+        if (view.mesh.vertex_count == 0U) return;
+        surfaces[surface_count++] = {view.mesh, view.vertex_normals, view.texcoords,
+                                     view.triangle_active};
+    }
+    void append_lattice(physics::SoftBodyNodeView nodes, physics::SoftBodyBondView bonds) noexcept {
+        if (nodes.node_count == 0U) return;
+        lattices[lattice_count++] = {
+            nodes.positions,          nodes.flags,          bonds.bonds,
+            bonds.bond_active,        nodes.node_count,     nodes.nodes_per_instance,
+            bonds.bonds_per_instance, nodes.instance_count, nodes.node_radius};
+    }
+    void refresh_views() noexcept {
+        particle_count = surface_count = rigid_count = lattice_count = 0U;
+        if (fluid) {
+            const auto view = fluid->particles();
+            particles[particle_count++] = {view.positions, view.velocities, view.particle_count,
+                                           view.particle_radius, ParticleMaterial::fluid};
+        }
+        if (smoke) {
+            const auto view = smoke->particles();
+            particles[particle_count++] = {view.positions, view.velocities, view.count, 0.018F,
+                                           options.recipe == SimulationRecipe::fluid_smoke
+                                               ? ParticleMaterial::steam
+                                               : ParticleMaterial::smoke};
+        }
+        if (cloth) {
+            append_surface(cloth->surface());
+            append_lattice(cloth->nodes(), cloth->bonds());
+        }
+        if (rope) {
+            append_surface(rope->surface());
+            append_lattice(rope->nodes(), rope->bonds());
+        }
+        if (soft_body) {
+            append_surface(soft_body->surface());
+            append_lattice(soft_body->nodes(), soft_body->bonds());
+        }
+        if (rigid) {
+            const auto state = rigid->state();
+            const float radius = rigid->options().radius;
+            rigid_views[rigid_count++] = {{rigid_vertices.get(), sphere_vertices.size(),
+                                           rigid_triangles.get(), sphere_triangles.size()},
+                                          state.position,
+                                          state.orientation,
+                                          {radius, radius, radius}};
+        }
+    }
+    void refresh_statistics() noexcept {
+        statistics = {};
+        statistics.particle_count =
+            particle_count == 0U
+                ? 0U
+                : static_cast<std::uint32_t>(std::accumulate(
+                      particles.begin(), particles.begin() + particle_count, std::size_t{},
+                      [](std::size_t sum, const ParticleRenderView &view) {
+                          return sum + view.count;
+                      }));
+        statistics.surface_count = surface_count;
+        statistics.rigid_body_count = rigid_count;
+        if (fluid) {
+            const auto value = fluid->statistics();
+            statistics.frame_index = std::max(statistics.frame_index, value.frame_index);
+            statistics.finite_failure_count += value.finite_failure_count;
+            statistics.allocated_bytes += value.allocated_bytes;
+        }
+        const auto add_deformable = [this](physics::SoftBodyStatistics value) {
+            statistics.frame_index = std::max(statistics.frame_index, value.frame_index);
+            statistics.finite_failure_count += value.finite_failure_count;
+            statistics.broken_connection_count += value.broken_bond_count;
+        };
+        if (cloth) add_deformable(cloth->statistics());
+        if (rope) add_deformable(rope->statistics());
+        if (soft_body) {
+            add_deformable(soft_body->statistics());
+            statistics.allocated_bytes += soft_body->allocated_bytes();
+            statistics.last_gpu_time_ms += soft_body->telemetry().timings.gpu_total_ms();
+        }
+        if (smoke) {
+            const auto value = smoke->statistics();
+            statistics.frame_index = std::max(statistics.frame_index, value.frame_index);
+            statistics.finite_failure_count += value.finite_failure_count;
+            statistics.allocated_bytes += value.allocated_bytes;
+            statistics.last_gpu_time_ms += smoke->telemetry().timings.gpu_total_ms();
+        }
+        statistics.allocated_bytes += rigid_vertices.size() * sizeof(float3) +
+                                      rigid_triangles.size() * sizeof(uint3) +
+                                      constraints.allocated_bytes();
+    }
+
+    GallerySimulationOptions options{};
+    ResolvedPhysicsOptions resolved{};
+    const SimulationRecipeInfo *info{};
+    std::string asset_path;
+    physics::FrameOptions frame{};
+    std::unique_ptr<physics::Fluid> fluid;
+    std::unique_ptr<physics::Cloth> cloth;
+    std::unique_ptr<physics::Rope> rope;
+    std::unique_ptr<physics::SoftBody> soft_body;
+    std::unique_ptr<physics::RigidBody> rigid;
+    std::unique_ptr<physics::Smoke> smoke;
+    physics::ColliderSet colliders;
+    physics::ConstraintBatch constraints;
+    physics::ConstraintRecord host_constraint{};
+    DeviceBuffer<physics::ConstraintRecord> constraint_records;
+    DeviceBuffer<float3> rigid_vertices;
+    DeviceBuffer<uint3> rigid_triangles;
+    std::array<ParticleRenderView, 2U> particles{};
+    std::array<SurfaceRenderView, 3U> surfaces{};
+    std::array<RigidBodyRenderView, 1U> rigid_views{};
+    std::array<LatticeRenderView, 3U> lattices{};
+    std::uint32_t particle_count{};
+    std::uint32_t surface_count{};
+    std::uint32_t rigid_count{};
+    std::uint32_t lattice_count{};
+    GallerySimulationStatistics statistics{};
 };
 
 GallerySimulation::GallerySimulation() noexcept = default;
 GallerySimulation::~GallerySimulation() = default;
-GallerySimulation::GallerySimulation(GallerySimulation&&) noexcept = default;
-GallerySimulation& GallerySimulation::operator=(GallerySimulation&&) noexcept = default;
+GallerySimulation::GallerySimulation(GallerySimulation &&) noexcept = default;
+GallerySimulation &GallerySimulation::operator=(GallerySimulation &&) noexcept = default;
 
-Status GallerySimulation::create(
-    GallerySimulationOptions options,
-    GallerySimulation& output,
-    cudaStream_t stream) noexcept
-{
+Status GallerySimulation::create(GallerySimulationOptions options, GallerySimulation &output,
+                                 cudaStream_t stream) noexcept {
     return output.initialize(options, stream);
 }
 
-Status GallerySimulation::initialize(
-    GallerySimulationOptions options, cudaStream_t stream) noexcept
-{
-    if (recipe_info(options.recipe) == nullptr) {
-        return invalid("unknown gallery simulation context");
-    }
-    if (!valid(options)) {
-        return invalid("invalid gallery simulation options");
-    }
-    if (requires_soft_body_asset(options.recipe) &&
-        options.soft_body_asset_path.empty()) {
-        return invalid("this gallery context requires a soft-body .msb asset path");
-    }
+Status GallerySimulation::initialize(GallerySimulationOptions options,
+                                     cudaStream_t stream) noexcept {
     try {
-        auto candidate = std::make_unique<Impl>(options, stream);
-        impl_ = std::move(candidate);
-        return success();
-    } catch (const waterlab::detail::StatusException& error) {
-        return translated(error,
-            "a simulation dependency failed during gallery initialization");
-    } catch (const std::bad_alloc&) {
-        return allocation_failure("host allocation failed while initializing simulation");
-    } catch (const std::invalid_argument&) {
-        return invalid("invalid gallery simulation options or soft-body asset");
+        auto replacement = std::make_unique<Impl>();
+        Status status = replacement->initialize(options, stream);
+        if (status) impl_ = std::move(replacement);
+        return status;
+    } catch (const std::bad_alloc &) {
+        return allocation_failure("host allocation failed while initializing gallery");
     } catch (...) {
-        return internal("gallery simulation initialization failed");
+        return {StatusCode::internal_error, cudaSuccess,
+                "gallery initialization raised an unexpected exception"};
     }
 }
 
-Status GallerySimulation::step(cudaStream_t stream) noexcept
-{
-    if (!impl_) return invalid("gallery simulation is not initialized");
-    try {
-        impl_->advance(stream);
-        if (impl_->statistics_.finite_failure_count != 0U) {
-            return internal("gallery simulation produced non-finite state");
-        }
-        return success();
-    } catch (const waterlab::detail::StatusException& error) {
-        return translated(error,
-            "a simulation dependency failed while stepping gallery simulation");
-    } catch (...) {
-        return internal("gallery simulation step failed");
-    }
+Status GallerySimulation::step(cudaStream_t stream) noexcept {
+    return impl_ ? impl_->step(stream) : invalid("gallery simulation is not initialized");
+}
+Status GallerySimulation::reset(cudaStream_t stream) noexcept {
+    return impl_ ? impl_->reset(stream) : invalid("gallery simulation is not initialized");
 }
 
-Status GallerySimulation::reset(cudaStream_t stream) noexcept
-{
-    if (!impl_) return invalid("gallery simulation is not initialized");
-    try {
-        impl_->reset(stream);
-        return success();
-    } catch (const waterlab::detail::StatusException& error) {
-        return translated(error,
-            "a simulation dependency failed while resetting gallery simulation");
-    } catch (...) {
-        return internal("gallery simulation reset failed");
-    }
-}
-
-Status GallerySimulation::resize_particles(
-    std::uint32_t active_count, cudaStream_t stream) noexcept
-{
-    if (!impl_ || !impl_->hybrid_ || impl_->particle_count_ == 0U) {
-        return invalid("gallery context has no fluid particles");
-    }
-    const std::uint32_t capacity = impl_->hybrid_->options().particle_capacity;
-    if (active_count < 256U || active_count > capacity) {
-        return invalid("active particle count is outside the reserved capacity");
-    }
-    try {
-        impl_->hybrid_->resize_particles(active_count, stream);
+Status GallerySimulation::resize_particles(std::uint32_t active_count,
+                                           cudaStream_t stream) noexcept {
+    if (!impl_ || !impl_->fluid) return invalid("gallery recipe has no fluid owner");
+    if (active_count < 8U || active_count > 100'000U)
+        return invalid("fluid particle count must be in [8, 100000]");
+    Status status = impl_->initialize_fluid(active_count, stream);
+    if (status) {
         impl_->refresh_views();
-        impl_->refresh_statistics(0.0F);
-        return success();
-    } catch (const waterlab::detail::StatusException& error) {
-        return translated(error, "a CUDA dependency failed while resizing particles");
-    } catch (...) {
-        return internal("gallery particle resize failed");
+        impl_->refresh_statistics();
     }
+    return status;
 }
 
-bool GallerySimulation::initialized() const noexcept
-{
-    return static_cast<bool>(impl_);
+bool GallerySimulation::initialized() const noexcept { return impl_ != nullptr; }
+SimulationRecipe GallerySimulation::recipe() const noexcept {
+    return impl_ ? impl_->options.recipe : SimulationRecipe::water;
+}
+GallerySimulationOptions GallerySimulation::options() const noexcept {
+    return impl_ ? impl_->options : GallerySimulationOptions{};
+}
+ResolvedPhysicsOptions GallerySimulation::resolved_physics() const noexcept {
+    return impl_ ? impl_->resolved : ResolvedPhysicsOptions{};
+}
+GallerySimulationStatistics GallerySimulation::statistics() const noexcept {
+    return impl_ ? impl_->statistics : GallerySimulationStatistics{};
+}
+FrameRenderView GallerySimulation::render_view() const noexcept {
+    return impl_ ? FrameRenderView{impl_->particles.data(),   impl_->particle_count,
+                                   impl_->surfaces.data(),    impl_->surface_count,
+                                   impl_->rigid_views.data(), impl_->rigid_count,
+                                   impl_->lattices.data(),    impl_->lattice_count}
+                 : FrameRenderView{};
 }
 
-SimulationRecipe GallerySimulation::recipe() const noexcept
-{
-    return impl_ ? impl_->options_.recipe : SimulationRecipe::water;
-}
-
-GallerySimulationOptions GallerySimulation::options() const noexcept
-{
-    return impl_ ? impl_->options_ : GallerySimulationOptions{};
-}
-
-ResolvedPhysicsOptions GallerySimulation::resolved_physics() const noexcept
-{
-    return impl_ ? impl_->resolved_physics_ : ResolvedPhysicsOptions{};
-}
-
-GallerySimulationStatistics GallerySimulation::statistics() const noexcept
-{
-    return impl_ ? impl_->statistics_ : GallerySimulationStatistics{};
-}
-
-FrameRenderView GallerySimulation::render_view() const noexcept
-{
-    if (!impl_) return {};
-    return {
-        impl_->particle_count_ == 0U ? nullptr : impl_->particle_views_.data(),
-        impl_->particle_count_,
-        impl_->surface_count_ == 0U ? nullptr : impl_->surface_views_.data(),
-        impl_->surface_count_,
-        impl_->rigid_count_ == 0U ? nullptr : impl_->rigid_views_.data(),
-        impl_->rigid_count_,
-        impl_->lattice_count_ == 0U ? nullptr : impl_->lattice_views_.data(),
-        impl_->lattice_count_};
-}
-
-SimulationBuilder& SimulationBuilder::timestep(float value) noexcept
-{
-    config_.timestep(value);
+SimulationBuilder &SimulationBuilder::timestep(float value) noexcept {
+    config_.fixed_timestep = value;
     return *this;
 }
-
-SimulationBuilder& SimulationBuilder::iterations(std::uint32_t value) noexcept
-{
-    config_.iterations(value);
+SimulationBuilder &SimulationBuilder::iterations(std::uint32_t value) noexcept {
+    config_.solver_iterations = value;
     return *this;
 }
-
-SimulationBuilder& SimulationBuilder::particles(std::uint32_t value) noexcept
-{
-    config_.particles(value);
+SimulationBuilder &SimulationBuilder::particles(std::uint32_t value) noexcept {
+    config_.particle_count = value;
     return *this;
 }
-
-SimulationBuilder& SimulationBuilder::skin_frequency(std::uint32_t value) noexcept
-{
-    config_.skin_frequency(value);
+SimulationBuilder &SimulationBuilder::skin_frequency(std::uint32_t value) noexcept {
+    config_.physical_skin_frequency = value;
     return *this;
 }
-
-SimulationBuilder& SimulationBuilder::rope_nodes(std::uint32_t value) noexcept
-{
-    config_.rope_nodes(value);
+SimulationBuilder &SimulationBuilder::rope_nodes(std::uint32_t value) noexcept {
+    config_.rope_node_count = value;
     return *this;
 }
-
-SimulationBuilder& SimulationBuilder::cloth_detail(std::uint32_t value) noexcept
-{
-    config_.cloth_resolution(value);
+SimulationBuilder &SimulationBuilder::cloth_detail(std::uint32_t value) noexcept {
+    config_.cloth_detail = value;
     return *this;
 }
-
-SimulationBuilder& SimulationBuilder::bridge_grid(
-    std::uint32_t columns,std::uint32_t rows) noexcept
-{
-    bridge_columns_=columns;
-    bridge_rows_=rows;
+SimulationBuilder &SimulationBuilder::bridge_grid(std::uint32_t columns,
+                                                  std::uint32_t rows) noexcept {
+    bridge_columns_ = columns;
+    bridge_rows_ = rows;
     return *this;
 }
-
-SimulationBuilder& SimulationBuilder::cylinder_grid(
-    std::uint32_t columns,std::uint32_t rows) noexcept
-{
-    cylinder_columns_=columns;
-    cylinder_rows_=rows;
+SimulationBuilder &SimulationBuilder::cylinder_grid(std::uint32_t columns,
+                                                    std::uint32_t rows) noexcept {
+    cylinder_columns_ = columns;
+    cylinder_rows_ = rows;
     return *this;
 }
-
-SimulationBuilder& SimulationBuilder::gravity(float3 value) noexcept
-{
+SimulationBuilder &SimulationBuilder::gravity(float3 value) noexcept {
     gravity_ = value;
     return *this;
 }
-
-SimulationBuilder& SimulationBuilder::soft_body_asset(std::string path)
-{
+SimulationBuilder &SimulationBuilder::soft_body_asset(std::string path) {
     asset_path_ = std::move(path);
     return *this;
 }
 
-Status SimulationBuilder::build(
-    GallerySimulation& output, cudaStream_t stream) const noexcept
-{
+Status SimulationBuilder::build(GallerySimulation &output, cudaStream_t stream) const noexcept {
     const RecipeConfigError error = validate_recipe_config(config_);
-    if (error != RecipeConfigError::none)
-        return invalid(recipe_config_error_message(error).data());
+    if (error != RecipeConfigError::none) return invalid(recipe_config_error_message(error).data());
     GallerySimulationOptions options;
     options.recipe = config_.recipe;
-    options.fixed_step.timestep = config_.fixed_timestep;
+    options.fixed_step = {config_.fixed_timestep};
     options.solver_iterations_override = config_.solver_iterations;
     options.gravity_override = gravity_;
     options.particle_count_override = config_.particle_count;
     options.physical_skin_frequency_override = config_.physical_skin_frequency;
     options.rope_node_count_override = config_.rope_node_count;
     options.cloth_detail_override = config_.cloth_detail;
-    options.bridge_columns_override=bridge_columns_;
-    options.bridge_rows_override=bridge_rows_;
-    options.cylinder_columns_override=cylinder_columns_;
-    options.cylinder_rows_override=cylinder_rows_;
+    options.bridge_columns_override = bridge_columns_;
+    options.bridge_rows_override = bridge_rows_;
+    options.cylinder_columns_override = cylinder_columns_;
+    options.cylinder_rows_override = cylinder_rows_;
     options.soft_body_asset_path = asset_path_;
     return output.initialize(options, stream);
 }

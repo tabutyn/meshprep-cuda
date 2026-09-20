@@ -33,32 +33,31 @@ struct SubstepContext {
 // retain positions/velocities; couplers gather one impulse per point into the
 // writable buffer during the prepared substep.
 struct PointCouplingView {
-    const float3* positions{};
-    const float3* velocities{};
-    float3* external_impulses{};
+    const float3 *positions{};
+    const float3 *velocities{};
+    float3 *external_impulses{};
     // Optional. Solvers that expose positional projection accept deterministic
     // corrections here; force-only solvers leave it null.
-    float3* position_corrections{};
+    float3 *position_corrections{};
     std::uint32_t count{};
     float radius{};
     float inverse_mass{};
 };
 
 [[nodiscard]] bool valid(FrameOptions options) noexcept;
-[[nodiscard]] SubstepContext substep_context(
-    FrameOptions options, std::uint32_t index) noexcept;
+[[nodiscard]] SubstepContext substep_context(FrameOptions options, std::uint32_t index) noexcept;
 
 // Movable CUDA completion event.  Async solver calls enqueue work, record this
 // token, and return without synchronizing.  wait() is the synchronous
 // convenience boundary and reports deferred CUDA execution failures.
 class Completion {
-public:
+  public:
     Completion() noexcept = default;
     ~Completion();
-    Completion(Completion&& other) noexcept;
-    Completion& operator=(Completion&& other) noexcept;
-    Completion(const Completion&) = delete;
-    Completion& operator=(const Completion&) = delete;
+    Completion(Completion &&other) noexcept;
+    Completion &operator=(Completion &&other) noexcept;
+    Completion(const Completion &) = delete;
+    Completion &operator=(const Completion &) = delete;
 
     [[nodiscard]] Status record(cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status wait() noexcept;
@@ -66,7 +65,7 @@ public:
     [[nodiscard]] bool pending() const noexcept { return pending_; }
     [[nodiscard]] Status status() const noexcept { return status_; }
 
-private:
+  private:
     cudaEvent_t event_{};
     Status status_{};
     bool pending_{};
@@ -76,9 +75,8 @@ private:
 // read a solver's borrowed view and write its documented coupling buffers only
 // after prepare_substep and before finish_substep.
 template <typename Solver>
-concept FrameSolver = requires(
-    Solver& solver, FrameOptions frame, SubstepContext substep,
-    Completion& completion, cudaStream_t stream) {
+concept FrameSolver = requires(Solver &solver, FrameOptions frame, SubstepContext substep,
+                               Completion &completion, cudaStream_t stream) {
     { solver.begin_frame(frame, stream) } -> std::same_as<Status>;
     { solver.prepare_substep(substep, stream) } -> std::same_as<Status>;
     { solver.finish_substep(substep, stream) } -> std::same_as<Status>;
@@ -89,10 +87,8 @@ concept FrameSolver = requires(
 // more solvers use the same calls explicitly and insert coupling work between
 // prepare_substep() and finish_substep().
 template <FrameSolver Solver>
-[[nodiscard]] Status step_async(
-    Solver& solver, FrameOptions frame, Completion& completion,
-    cudaStream_t stream = nullptr) noexcept
-{
+[[nodiscard]] Status step_async(Solver &solver, FrameOptions frame, Completion &completion,
+                                cudaStream_t stream = nullptr) noexcept {
     Status status = solver.begin_frame(frame, stream);
     if (!status) return status;
     for (std::uint32_t i = 0U; i < frame.substeps; ++i) {
@@ -106,10 +102,8 @@ template <FrameSolver Solver>
 }
 
 template <FrameSolver Solver>
-[[nodiscard]] Status step(
-    Solver& solver, FrameOptions frame,
-    cudaStream_t stream = nullptr) noexcept
-{
+[[nodiscard]] Status step(Solver &solver, FrameOptions frame,
+                          cudaStream_t stream = nullptr) noexcept {
     Completion completion;
     Status status = step_async(solver, frame, completion, stream);
     return status ? completion.wait() : status;

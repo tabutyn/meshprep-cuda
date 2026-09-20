@@ -78,11 +78,12 @@ The optional gallery composes the same API in five contexts:
 | Soft body + smoke | green bristles receive wind impulses while a rigid sphere rolls through |
 | Rope + smoke | segmented rope bridge receives wind and rigid-sphere contact |
 
-`meshprep-smoke-tests` validates finite advection, respawn, buoyancy, obstacle
-wake, and non-zero coupling. `meshprep-simulation-runtime-tests` initializes
+`parallel-mater-smoke-tests` validates finite advection, respawn, buoyancy,
+obstacle wake, and non-zero coupling. `parallel-mater-simulation-runtime-tests` initializes
 and steps every example composition against the reusable solver APIs and checks
 the dynamic assertions above. The native app uses `Tab` to open the collapsible
-context catalog.
+context catalog. The headless gallery is the installed-API proof; the native
+renderer remains a separate application layer.
 
 ## Current scope
 

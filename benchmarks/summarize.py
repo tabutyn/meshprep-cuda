@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Summarize meshprep-benchmark RESULT rows without third-party packages."""
+"""Summarize parallel-mater-benchmark RESULT rows without third-party packages."""
 
 import csv
 import statistics

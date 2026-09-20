@@ -21,7 +21,7 @@
   "relaxIterations": 24,
   "renderTriangleCount": 1632,
   "renderVertexCount": 931,
-  "schema": "meshprep.softbody-asset.v1",
+  "schema": "parallel_mater.softbody-asset.v1",
   "source": "checker_cylinder.glb",
   "sourceSha256": "6dfd5de51eea8d95f3e17fabbcbb0c5a77b989c5bc6cbc0d5326360994db46c0",
   "surfaceVoxelCount": 500,

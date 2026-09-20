@@ -99,7 +99,7 @@ void host_tests()
 {
     auto asset = make_fixture();
     waterlab::validate_soft_body_asset(asset);
-    const std::string path = "/tmp/meshprep-soft-body-roundtrip.msb";
+    const std::string path = "/tmp/parallel-mater-soft-body-roundtrip.msb";
     waterlab::save_soft_body_asset(asset, path);
     const auto loaded = waterlab::load_soft_body_asset(path);
     std::remove(path.c_str());
@@ -122,8 +122,8 @@ void host_tests()
     }
     require(rejected, "soft-body validation accepted duplicate CSR neighbor");
 
-#ifdef MESHPREP_SOFT_BODY_TEST_ASSET
-    const auto generated = waterlab::load_soft_body_asset(MESHPREP_SOFT_BODY_TEST_ASSET);
+#ifdef PARALLEL_MATER_SOFT_BODY_TEST_ASSET
+    const auto generated = waterlab::load_soft_body_asset(PARALLEL_MATER_SOFT_BODY_TEST_ASSET);
     require(generated.rest_voxels.size() == 1'000U &&
         generated.render_positions.size() == 931U &&
         generated.render_triangles.size() == 1'632U,
@@ -137,7 +137,7 @@ void host_tests()
 #endif
 }
 
-#ifdef MESHPREP_SOFT_BODY_TEST_ASSET
+#ifdef PARALLEL_MATER_SOFT_BODY_TEST_ASSET
 struct ImpactResult {
     float peak_deformation{};
     float peak_edge_strain{};
@@ -219,7 +219,7 @@ void audit_render_geometry(const waterlab::SoftBodyAsset& asset,
 
 ImpactResult run_impact(float impulse_per_voxel)
 {
-    const auto asset = waterlab::load_soft_body_asset(MESHPREP_SOFT_BODY_TEST_ASSET);
+    const auto asset = waterlab::load_soft_body_asset(PARALLEL_MATER_SOFT_BODY_TEST_ASSET);
     waterlab::SoftBodyOptions options;
     options.instance_count = 1U;
     waterlab::SoftBodyCourse body(asset, options);
@@ -461,9 +461,9 @@ void gpu_tests()
     require_finite_state(restored,
         "soft-body restore produced non-finite position or velocity");
 
-#ifdef MESHPREP_SOFT_BODY_TEST_ASSET
-    const auto course_asset = waterlab::load_soft_body_asset(MESHPREP_SOFT_BODY_TEST_ASSET);
-    waterlab::SoftBodyCourse course(MESHPREP_SOFT_BODY_TEST_ASSET);
+#ifdef PARALLEL_MATER_SOFT_BODY_TEST_ASSET
+    const auto course_asset = waterlab::load_soft_body_asset(PARALLEL_MATER_SOFT_BODY_TEST_ASSET);
+    waterlab::SoftBodyCourse course(PARALLEL_MATER_SOFT_BODY_TEST_ASSET);
     const auto before = course.statistics();
     require(before.instance_count == 8U && before.voxels_per_instance == 1'000U &&
         before.total_voxel_count == 8'000U && before.surface_voxel_count == 4'000U,

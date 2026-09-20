@@ -2,7 +2,9 @@
 
 Thomas Butyn is the sole author and copyright owner of the imported implementation used as the historical baseline. That source was recovered from personal repositories and may be relicensed under MIT.
 
-The `legacy-baseline` Git tag preserves only the owned CUDA implementation and matching declaration header. The release branch removes the historical API and product naming, then rebuilds the implementation behind the public `meshprep` C++20 API.
+The `legacy-baseline` Git tag preserves only the owned CUDA implementation and
+matching declaration header. ParallelMater replaces that historical interface
+with installed C++20 geometry and physics APIs in namespace `parallel_mater`.
 
 The separate historical packaging repository is not an upstream dependency and must not be published as this project. Its binaries, bytecode, ctypes wrapper, Blender scripts, and game assets are excluded.
 
@@ -12,4 +14,4 @@ checker texture, GLB, converted `.msb`, metadata, and preview contain no
 third-party model or texture. They are covered by the repository MIT license.
 The generated files are retained because runtime and installed-API tests verify
 the versioned asset loader against them; regeneration and hashes are documented
-in `docs/SOFT_BODY_COURSE.md`.
+in `docs/SOFT_BODY_ASSETS.md`.

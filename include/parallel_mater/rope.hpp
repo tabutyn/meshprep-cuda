@@ -17,34 +17,31 @@ struct RopeOptions {
 };
 
 class Rope {
-public:
+  public:
     Rope() noexcept;
     ~Rope();
-    Rope(Rope&&) noexcept;
-    Rope& operator=(Rope&&) noexcept;
-    Rope(const Rope&) = delete;
-    Rope& operator=(const Rope&) = delete;
+    Rope(Rope &&) noexcept;
+    Rope &operator=(Rope &&) noexcept;
+    Rope(const Rope &) = delete;
+    Rope &operator=(const Rope &) = delete;
 
-    [[nodiscard]] static Status create(RopeOptions options, Rope& output,
-        cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] static Status create(RopeOptions options, Rope &output,
+                                       cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status initialize(RopeOptions options = {},
-        cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status begin_frame(FrameOptions frame,
-        cudaStream_t stream = nullptr) noexcept;
+                                    cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status begin_frame(FrameOptions frame, cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status prepare_substep(SubstepContext substep,
-        cudaStream_t stream = nullptr) noexcept;
+                                         cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status finish_substep(SubstepContext substep,
-        cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status finish_frame(Completion& completion,
-        cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status advance_async(FrameOptions frame,
-        Completion& completion, cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status advance(FrameOptions frame,
-        cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status collect_statistics_async(Completion& completion,
-        cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status collect_statistics(
-        cudaStream_t stream = nullptr) noexcept;
+                                        cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status finish_frame(Completion &completion,
+                                      cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status advance_async(FrameOptions frame, Completion &completion,
+                                       cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status advance(FrameOptions frame, cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status collect_statistics_async(Completion &completion,
+                                                  cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status collect_statistics(cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status reset(cudaStream_t stream = nullptr) noexcept;
 
     [[nodiscard]] bool initialized() const noexcept;
@@ -55,7 +52,7 @@ public:
     [[nodiscard]] SoftBodySurfaceView surface() const noexcept;
     [[nodiscard]] SoftBodyStatistics statistics() const noexcept;
 
-private:
+  private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

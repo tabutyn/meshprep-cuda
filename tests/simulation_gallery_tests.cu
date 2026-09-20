@@ -16,8 +16,8 @@
 #include <stdexcept>
 #include <vector>
 
-#ifndef MESHPREP_SOFT_BODY_TEST_ASSET
-#define MESHPREP_SOFT_BODY_TEST_ASSET "assets/softbody/checker_cylinder.msb"
+#ifndef PARALLEL_MATER_SOFT_BODY_TEST_ASSET
+#define PARALLEL_MATER_SOFT_BODY_TEST_ASSET "assets/softbody/checker_cylinder.msb"
 #endif
 
 namespace {
@@ -343,7 +343,7 @@ void gpu_fixture_test()
         const waterlab::HybridOptions physics =
             waterlab::gallery::make_recipe_physics(context);
         auto deformable = waterlab::gallery::make_recipe_deformable(
-            context, physics, MESHPREP_SOFT_BODY_TEST_ASSET);
+            context, physics, PARALLEL_MATER_SOFT_BODY_TEST_ASSET);
         require(static_cast<bool>(deformable) == (expected[index].instances != 0U),
             "gallery context created the wrong number of deformable systems");
         if (!deformable) continue;
@@ -703,7 +703,7 @@ void gpu_mixed_context_hold_test()
             waterlab::gallery::make_recipe_physics(context);
         waterlab::HybridDroplet particles(physics);
         auto deformable = waterlab::gallery::make_recipe_deformable(
-            context, physics, MESHPREP_SOFT_BODY_TEST_ASSET);
+            context, physics, PARALLEL_MATER_SOFT_BODY_TEST_ASSET);
         require(deformable != nullptr,
             "mixed gallery context omitted its deformable");
         waterlab::SoftBodyState authored;
@@ -953,7 +953,7 @@ void gpu_soft_sphere_cloth_contact_test()
     const auto context = SimulationRecipe::cloth_soft_body;
     const auto physics = waterlab::gallery::make_recipe_physics(context);
     auto deformable = waterlab::gallery::make_recipe_deformable(
-        context, physics, MESHPREP_SOFT_BODY_TEST_ASSET);
+        context, physics, PARALLEL_MATER_SOFT_BODY_TEST_ASSET);
     require(deformable != nullptr, "soft sphere/cloth fixture is absent");
     waterlab::SoftBodyState baseline;
     deformable->capture_state(baseline);
@@ -1025,7 +1025,7 @@ void gpu_soft_sphere_cloth_contact_test()
     // collision law must not depend on triangle winding or a hard-coded +Z
     // front side.
     auto reverse = waterlab::gallery::make_recipe_deformable(
-        context, physics, MESHPREP_SOFT_BODY_TEST_ASSET);
+        context, physics, PARALLEL_MATER_SOFT_BODY_TEST_ASSET);
     waterlab::SoftBodyState reverse_baseline;
     reverse->capture_state(reverse_baseline);
     for (std::size_t node = 0U; node < 1'000U; ++node) {
@@ -1053,7 +1053,7 @@ void gpu_soft_sphere_cloth_contact_test()
     // must transfer enough pre-projection strain to tear the target cloth.
     // Source-body bonds are outside the fracture range and must remain whole.
     auto heavy = waterlab::gallery::make_recipe_deformable(
-        context, physics, MESHPREP_SOFT_BODY_TEST_ASSET);
+        context, physics, PARALLEL_MATER_SOFT_BODY_TEST_ASSET);
     heavy->set_primary_body_mass(2.0F);
     for (std::uint32_t frame=0U;frame<180U;++frame) {
         const auto timing=heavy->step(make_float3(0.0F,-9.60F,-2.75F));
@@ -1130,7 +1130,7 @@ void gpu_rolling_rigid_cloth_test()
     const auto context = SimulationRecipe::cloth;
     const auto physics = waterlab::gallery::make_recipe_physics(context);
     auto deformable = waterlab::gallery::make_recipe_deformable(
-        context, physics, MESHPREP_SOFT_BODY_TEST_ASSET);
+        context, physics, PARALLEL_MATER_SOFT_BODY_TEST_ASSET);
     auto sphere = waterlab::gallery::initial_rigid_sphere(context);
     const auto initial_view = deformable->render_view();
     std::vector<float3> initial_render(initial_view.vertex_count);
@@ -1240,7 +1240,7 @@ void gpu_rolling_rigid_post_test()
     const auto context = SimulationRecipe::soft_body;
     const auto physics = waterlab::gallery::make_recipe_physics(context);
     auto deformable = waterlab::gallery::make_recipe_deformable(
-        context, physics, MESHPREP_SOFT_BODY_TEST_ASSET);
+        context, physics, PARALLEL_MATER_SOFT_BODY_TEST_ASSET);
     auto sphere = waterlab::gallery::initial_rigid_sphere(context);
     waterlab::SoftBodyState initial;
     deformable->capture_state(initial);
@@ -1288,7 +1288,7 @@ void gpu_rolling_rigid_post_test()
         recovered_maximum->y - recovered_minimum->y,
         deformable->statistics().broken_edge_count);
     auto no_hit = waterlab::gallery::make_recipe_deformable(
-        context, physics, MESHPREP_SOFT_BODY_TEST_ASSET);
+        context, physics, PARALLEL_MATER_SOFT_BODY_TEST_ASSET);
     for (std::uint32_t frame = 0U; frame < 900U; ++frame) {
         const auto timing = no_hit->step(physics.gravity);
         require(finite(timing) &&
@@ -1315,7 +1315,7 @@ void gpu_rope_rigid_test()
     const auto context = SimulationRecipe::rope;
     const auto physics = waterlab::gallery::make_recipe_physics(context);
     auto rope = waterlab::gallery::make_recipe_deformable(
-        context, physics, MESHPREP_SOFT_BODY_TEST_ASSET, 40U);
+        context, physics, PARALLEL_MATER_SOFT_BODY_TEST_ASSET, 40U);
     auto sphere = waterlab::gallery::initial_rigid_sphere(context, 40U);
     const auto lattice = rope->lattice_view();
     const std::uint32_t endpoint = lattice.voxels_per_instance - 1U;
@@ -1383,7 +1383,7 @@ void gpu_rope_rigid_test()
         "rope endpoint detached or graph allowed unbounded rigid-body travel");
 
     auto enclosed=waterlab::gallery::make_recipe_deformable(
-        context,physics,MESHPREP_SOFT_BODY_TEST_ASSET,40U);
+        context,physics,PARALLEL_MATER_SOFT_BODY_TEST_ASSET,40U);
     auto tethered=waterlab::gallery::initial_rigid_sphere(context,40U);
     auto glass=waterlab::gallery::initial_caged_rigid_sphere(40U);
     glass.velocity=make_float3(3.0F,1.0F,-2.0F);
@@ -1449,7 +1449,7 @@ void gpu_rope_bridge_crossing_test()
     const auto context = SimulationRecipe::soft_body_rope;
     const auto physics = waterlab::gallery::make_recipe_physics(context);
     auto bridge = waterlab::gallery::make_recipe_deformable(
-        context, physics, MESHPREP_SOFT_BODY_TEST_ASSET);
+        context, physics, PARALLEL_MATER_SOFT_BODY_TEST_ASSET);
     auto sphere = waterlab::gallery::initial_rigid_sphere(context);
     waterlab::SoftBodyState baseline;
     bridge->capture_state(baseline);
@@ -1495,7 +1495,7 @@ void gpu_segmented_rope_contact_test()
     const auto context=SimulationRecipe::cloth_rope;
     const auto physics=waterlab::gallery::make_recipe_physics(context);
     auto bridge=waterlab::gallery::make_recipe_deformable(
-        context,physics,MESHPREP_SOFT_BODY_TEST_ASSET);
+        context,physics,PARALLEL_MATER_SOFT_BODY_TEST_ASSET);
     auto sphere=waterlab::gallery::initial_rigid_sphere(context);
     waterlab::SoftBodyState baseline;
     bridge->capture_state(baseline);

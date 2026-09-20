@@ -612,7 +612,7 @@ def write_asset(path: Path, data: SoftBodyData, source_path: Path | None, write_
     if write_manifest:
         voxel_runtime = [runtime_vector(point) for point in data.voxels]
         manifest = {
-            "schema": "meshprep.softbody-asset.v1",
+            "schema": "parallel_mater.softbody-asset.v1",
             "binary": path.name,
             "binarySha256": hashlib.sha256(payload).hexdigest(),
             "source": source_path.name if source_path is not None else None,
@@ -867,7 +867,7 @@ def main() -> None:
         create_example_glb(arguments.glb, texture, arguments.preview)
         convert(arguments.glb, arguments.asset, 1000, arguments.relax_iterations)
         first = validate(arguments.asset)
-        with tempfile.TemporaryDirectory(prefix="meshprep-softbody-") as temporary_directory:
+        with tempfile.TemporaryDirectory(prefix="parallel-mater-softbody-") as temporary_directory:
             repeated = Path(temporary_directory) / arguments.asset.name
             convert(arguments.glb, repeated, 1000, arguments.relax_iterations, write_manifest=False)
             second_hash = hashlib.sha256(repeated.read_bytes()).hexdigest()

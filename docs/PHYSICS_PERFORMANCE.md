@@ -1,6 +1,6 @@
 # Public soft-body performance
 
-This is a narrow package-level baseline, not a claim about the eight gallery
+This is a narrow package-level baseline, not a claim about the example gallery
 scenes. It measures the public `parallel_mater::physics::SoftBody` frame protocol and
 the custom analytic ground kernel in `examples/soft_body.cu`.
 
@@ -19,11 +19,12 @@ the custom analytic ground kernel in `examples/soft_body.cu`.
 
 | GPU frame p5 | Median | p95 | Retained allocation | Broken bonds | Non-finite failures |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1.049 ms | 1.327 ms | 1.445 ms | 4.15 MiB | 0 | 0 |
+| 0.698 ms | 0.701 ms | 0.722 ms | 0.97 MiB | 0 | 0 |
 
 The measured total includes lattice prediction/constraints, surface
-deformation and normals, and render/member hierarchy refits. It excludes
-application rendering and CPU wall time. This fixture is intentionally small;
+deformation and normals, and surface-hierarchy refitting. It excludes
+application rendering and CPU wall time. This post-separation measurement was
+recorded on 2026-09-20. This fixture is intentionally small;
 instance count, asset topology, solver iterations, and application contact
 kernels all change the cost.
 

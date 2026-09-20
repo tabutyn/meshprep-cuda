@@ -7,5 +7,5 @@ if [[ $# -ne 2 ]]; then
     exit 2
 fi
 ncu --set full --kernel-name-base demangled --launch-skip 0 --launch-count 20 \
-    --export meshprep-ncu --force-overwrite "$1" --obj "$2" \
+    --export parallel-mater-ncu --force-overwrite "$1" --obj "$2" \
     --operation hierarchy --warmups 0 --iterations 1

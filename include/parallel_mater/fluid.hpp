@@ -12,7 +12,10 @@
 
 namespace parallel_mater::physics {
 
-struct FluidParticle { float3 position{}; float3 velocity{}; };
+struct FluidParticle {
+    float3 position{};
+    float3 velocity{};
+};
 
 struct FluidOptions {
     float particle_radius{0.0225F};
@@ -25,9 +28,9 @@ struct FluidOptions {
 };
 
 struct FluidView {
-    const float3* positions{};
-    const float3* velocities{};
-    float3* external_impulses{};
+    const float3 *positions{};
+    const float3 *velocities{};
+    float3 *external_impulses{};
     std::uint32_t particle_count{};
     float particle_radius{};
     float inverse_particle_mass{};
@@ -42,35 +45,33 @@ struct FluidStatistics {
 };
 
 class Fluid {
-public:
+  public:
     Fluid() noexcept;
     ~Fluid();
-    Fluid(Fluid&&) noexcept;
-    Fluid& operator=(Fluid&&) noexcept;
-    Fluid(const Fluid&) = delete;
-    Fluid& operator=(const Fluid&) = delete;
+    Fluid(Fluid &&) noexcept;
+    Fluid &operator=(Fluid &&) noexcept;
+    Fluid(const Fluid &) = delete;
+    Fluid &operator=(const Fluid &) = delete;
 
     [[nodiscard]] static Status create(std::span<const FluidParticle> particles,
-        FluidOptions options, Fluid& output,
-        cudaStream_t stream = nullptr) noexcept;
+                                       FluidOptions options, Fluid &output,
+                                       cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status initialize(std::span<const FluidParticle> particles,
-        FluidOptions options = {}, cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status begin_frame(FrameOptions frame,
-        cudaStream_t stream = nullptr) noexcept;
+                                    FluidOptions options = {},
+                                    cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status begin_frame(FrameOptions frame, cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status prepare_substep(SubstepContext substep,
-        cudaStream_t stream = nullptr) noexcept;
+                                         cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status finish_substep(SubstepContext substep,
-        cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status finish_frame(Completion& completion,
-        cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status advance_async(FrameOptions frame,
-        Completion& completion, cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status advance(FrameOptions frame,
-        cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status collect_statistics_async(Completion& completion,
-        cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status collect_statistics(
-        cudaStream_t stream = nullptr) noexcept;
+                                        cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status finish_frame(Completion &completion,
+                                      cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status advance_async(FrameOptions frame, Completion &completion,
+                                       cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status advance(FrameOptions frame, cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status collect_statistics_async(Completion &completion,
+                                                  cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status collect_statistics(cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status reset(cudaStream_t stream = nullptr) noexcept;
 
     [[nodiscard]] bool initialized() const noexcept;
@@ -80,7 +81,7 @@ public:
     // Last completed snapshot; frame submission itself performs no readback.
     [[nodiscard]] FluidStatistics statistics() const noexcept;
 
-private:
+  private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

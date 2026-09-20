@@ -500,10 +500,10 @@ int main()
 {
     int devices=0;
     if (cudaGetDeviceCount(&devices)!=cudaSuccess || devices==0) {
-        std::puts("SKIP meshprep-fluid-visual-tests: no CUDA device"); return 77;
+        std::puts("SKIP parallel-mater-fluid-visual-tests: no CUDA device"); return 77;
     }
-    try { run_tests(); std::puts("PASS meshprep-fluid-visual-tests"); return 0; }
+    try { run_tests(); std::puts("PASS parallel-mater-fluid-visual-tests"); return 0; }
     catch (const std::exception& error) {
-        std::fprintf(stderr,"FAIL meshprep-fluid-visual-tests: %s\n",error.what()); return 1;
+        std::fprintf(stderr,"FAIL parallel-mater-fluid-visual-tests: %s\n",error.what()); return 1;
     }
 }

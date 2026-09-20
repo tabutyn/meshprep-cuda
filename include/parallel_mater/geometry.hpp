@@ -24,16 +24,16 @@ enum class StatusCode : std::uint8_t {
 struct Status {
     StatusCode code{StatusCode::success};
     cudaError_t cuda_error{cudaSuccess};
-    const char* message{"success"};
+    const char *message{"success"};
 
     [[nodiscard]] constexpr bool ok() const noexcept { return code == StatusCode::success; }
     [[nodiscard]] constexpr explicit operator bool() const noexcept { return ok(); }
 };
 
 struct DeviceMeshView {
-    const float3* positions{};
+    const float3 *positions{};
     std::uint64_t vertex_count{};
-    const uint3* triangles{};
+    const uint3 *triangles{};
     std::uint64_t triangle_count{};
 };
 
@@ -43,12 +43,12 @@ struct Aabb {
 };
 
 struct DeviceAabbView {
-    const Aabb* bounds{};
+    const Aabb *bounds{};
     std::uint64_t primitive_count{};
 };
 
 struct SharpEdgeView {
-    const uint2* edges{};
+    const uint2 *edges{};
     std::uint64_t edge_count{};
 };
 
@@ -80,151 +80,134 @@ struct HierarchyStatistics {
 };
 
 class Workspace {
-public:
+  public:
     Workspace() noexcept = default;
     ~Workspace();
-    Workspace(Workspace&& other) noexcept;
-    Workspace& operator=(Workspace&& other) noexcept;
-    Workspace(const Workspace&) = delete;
-    Workspace& operator=(const Workspace&) = delete;
+    Workspace(Workspace &&other) noexcept;
+    Workspace &operator=(Workspace &&other) noexcept;
+    Workspace(const Workspace &) = delete;
+    Workspace &operator=(const Workspace &) = delete;
 
     [[nodiscard]] Status reserve(std::size_t bytes);
     [[nodiscard]] std::size_t capacity_bytes() const noexcept { return capacity_bytes_; }
 
-private:
-    void* storage_{};
+  private:
+    void *storage_{};
     std::size_t capacity_bytes_{};
 
-    friend Status compute_normals(
-        DeviceMeshView, SharpEdgeView, Workspace&, class NormalOutput&, cudaStream_t);
-    friend Status build_hierarchy(
-        DeviceMeshView, HierarchyOptions, Workspace&, class Hierarchy&, cudaStream_t);
-    friend Status build_hierarchy(
-        DeviceAabbView, HierarchyOptions, Workspace&, class Hierarchy&, cudaStream_t);
+    friend Status compute_normals(DeviceMeshView, SharpEdgeView, Workspace &, class NormalOutput &,
+                                  cudaStream_t);
+    friend Status build_hierarchy(DeviceMeshView, HierarchyOptions, Workspace &, class Hierarchy &,
+                                  cudaStream_t);
+    friend Status build_hierarchy(DeviceAabbView, HierarchyOptions, Workspace &, class Hierarchy &,
+                                  cudaStream_t);
 };
 
 class NormalOutput {
-public:
+  public:
     NormalOutput() noexcept = default;
     ~NormalOutput();
-    NormalOutput(NormalOutput&& other) noexcept;
-    NormalOutput& operator=(NormalOutput&& other) noexcept;
-    NormalOutput(const NormalOutput&) = delete;
-    NormalOutput& operator=(const NormalOutput&) = delete;
+    NormalOutput(NormalOutput &&other) noexcept;
+    NormalOutput &operator=(NormalOutput &&other) noexcept;
+    NormalOutput(const NormalOutput &) = delete;
+    NormalOutput &operator=(const NormalOutput &) = delete;
 
-    [[nodiscard]] const float3* face_normals() const noexcept { return face_normals_; }
-    [[nodiscard]] const float3* vertex_normals() const noexcept { return vertex_normals_; }
-    [[nodiscard]] const std::uint32_t* corner_normal_indices() const noexcept {
+    [[nodiscard]] const float3 *face_normals() const noexcept { return face_normals_; }
+    [[nodiscard]] const float3 *vertex_normals() const noexcept { return vertex_normals_; }
+    [[nodiscard]] const std::uint32_t *corner_normal_indices() const noexcept {
         return corner_normal_indices_;
     }
     [[nodiscard]] NormalStatistics statistics() const noexcept { return statistics_; }
-    [[nodiscard]] std::size_t allocated_bytes() const noexcept
-    {
+    [[nodiscard]] std::size_t allocated_bytes() const noexcept {
         return face_capacity_ * sizeof(float3) + vertex_capacity_ * sizeof(float3) +
-            corner_capacity_ * sizeof(std::uint32_t);
+               corner_capacity_ * sizeof(std::uint32_t);
     }
 
-private:
-    float3* face_normals_{};
-    float3* vertex_normals_{};
-    std::uint32_t* corner_normal_indices_{};
+  private:
+    float3 *face_normals_{};
+    float3 *vertex_normals_{};
+    std::uint32_t *corner_normal_indices_{};
     std::size_t face_capacity_{};
     std::size_t vertex_capacity_{};
     std::size_t corner_capacity_{};
     NormalStatistics statistics_{};
 
-    friend Status compute_normals(
-        DeviceMeshView, SharpEdgeView, Workspace&, NormalOutput&, cudaStream_t);
+    friend Status compute_normals(DeviceMeshView, SharpEdgeView, Workspace &, NormalOutput &,
+                                  cudaStream_t);
 };
 
 class Hierarchy {
-public:
+  public:
     Hierarchy() noexcept = default;
     ~Hierarchy();
-    Hierarchy(Hierarchy&& other) noexcept;
-    Hierarchy& operator=(Hierarchy&& other) noexcept;
-    Hierarchy(const Hierarchy&) = delete;
-    Hierarchy& operator=(const Hierarchy&) = delete;
+    Hierarchy(Hierarchy &&other) noexcept;
+    Hierarchy &operator=(Hierarchy &&other) noexcept;
+    Hierarchy(const Hierarchy &) = delete;
+    Hierarchy &operator=(const Hierarchy &) = delete;
 
-    [[nodiscard]] const HierarchyNode* nodes() const noexcept { return nodes_; }
-    [[nodiscard]] const std::uint32_t* primitive_indices() const noexcept {
+    [[nodiscard]] const HierarchyNode *nodes() const noexcept { return nodes_; }
+    [[nodiscard]] const std::uint32_t *primitive_indices() const noexcept {
         return primitive_indices_;
     }
-    [[nodiscard]] std::uint32_t primitive_count() const noexcept {
-        return primitive_count_;
-    }
+    [[nodiscard]] std::uint32_t primitive_count() const noexcept { return primitive_count_; }
     [[nodiscard]] HierarchyStatistics statistics() const noexcept { return statistics_; }
-    [[nodiscard]] std::size_t allocated_bytes() const noexcept
-    {
+    [[nodiscard]] std::size_t allocated_bytes() const noexcept {
         return node_capacity_ * sizeof(HierarchyNode) +
-            primitive_capacity_ * sizeof(std::uint32_t) +
-            branch_node_capacity_ * sizeof(std::uint32_t) +
-            proxy_position_capacity_ * sizeof(float3) +
-            proxy_triangle_capacity_ * sizeof(uint3) +
-            (proxy_validation_ != nullptr ? sizeof(std::uint32_t) : 0U);
+               primitive_capacity_ * sizeof(std::uint32_t) +
+               branch_node_capacity_ * sizeof(std::uint32_t) +
+               proxy_position_capacity_ * sizeof(float3) +
+               proxy_triangle_capacity_ * sizeof(uint3) +
+               (proxy_validation_ != nullptr ? sizeof(std::uint32_t) : 0U);
     }
 
-private:
-    HierarchyNode* nodes_{};
-    std::uint32_t* primitive_indices_{};
-    std::uint32_t* branch_node_ids_{};
+  private:
+    HierarchyNode *nodes_{};
+    std::uint32_t *primitive_indices_{};
+    std::uint32_t *branch_node_ids_{};
     std::size_t node_capacity_{};
     std::size_t primitive_capacity_{};
     std::size_t branch_node_capacity_{};
     std::uint32_t primitive_count_{};
-    float3* proxy_positions_{};
-    uint3* proxy_triangles_{};
-    std::uint32_t* proxy_validation_{};
+    float3 *proxy_positions_{};
+    uint3 *proxy_triangles_{};
+    std::uint32_t *proxy_validation_{};
     std::size_t proxy_position_capacity_{};
     std::size_t proxy_triangle_capacity_{};
     HierarchyStatistics statistics_{};
     std::vector<std::pair<std::uint32_t, std::uint32_t>> branch_levels_;
 
-    friend Status build_hierarchy(
-        DeviceMeshView, HierarchyOptions, Workspace&, Hierarchy&, cudaStream_t);
-    friend Status build_hierarchy(
-        DeviceAabbView, HierarchyOptions, Workspace&, Hierarchy&, cudaStream_t);
-    friend Status refit_hierarchy(DeviceAabbView, Hierarchy&, cudaStream_t);
-    friend Status refit_hierarchy_unchecked_async(
-        DeviceAabbView, Hierarchy&, cudaStream_t);
+    friend Status build_hierarchy(DeviceMeshView, HierarchyOptions, Workspace &, Hierarchy &,
+                                  cudaStream_t);
+    friend Status build_hierarchy(DeviceAabbView, HierarchyOptions, Workspace &, Hierarchy &,
+                                  cudaStream_t);
+    friend Status refit_hierarchy(DeviceAabbView, Hierarchy &, cudaStream_t);
+    friend Status refit_hierarchy_unchecked_async(DeviceAabbView, Hierarchy &, cudaStream_t);
 };
 
-[[nodiscard]] Status compute_normals(
-    DeviceMeshView mesh,
-    SharpEdgeView sharp_edges,
-    Workspace& workspace,
-    NormalOutput& output,
-    cudaStream_t stream = nullptr);
+[[nodiscard]] Status compute_normals(DeviceMeshView mesh, SharpEdgeView sharp_edges,
+                                     Workspace &workspace, NormalOutput &output,
+                                     cudaStream_t stream = nullptr);
 
-[[nodiscard]] Status build_hierarchy(
-    DeviceMeshView mesh,
-    HierarchyOptions options,
-    Workspace& workspace,
-    Hierarchy& output,
-    cudaStream_t stream = nullptr);
+[[nodiscard]] Status build_hierarchy(DeviceMeshView mesh, HierarchyOptions options,
+                                     Workspace &workspace, Hierarchy &output,
+                                     cudaStream_t stream = nullptr);
 
 // Recomputes bounds without changing topology or primitive order. The input
 // count must match the hierarchy's original primitive count.
-[[nodiscard]] Status refit_hierarchy(
-    DeviceAabbView primitives,
-    Hierarchy& hierarchy,
-    cudaStream_t stream = nullptr);
+[[nodiscard]] Status refit_hierarchy(DeviceAabbView primitives, Hierarchy &hierarchy,
+                                     cudaStream_t stream = nullptr);
 
 // Advanced enqueue-only variant for finite, ordered bounds produced by a
 // preceding kernel on the same stream. The caller supplies the completion
 // boundary and observes asynchronous CUDA failures there.
-[[nodiscard]] Status refit_hierarchy_unchecked_async(
-    DeviceAabbView primitives,
-    Hierarchy& hierarchy,
-    cudaStream_t stream = nullptr);
+[[nodiscard]] Status refit_hierarchy_unchecked_async(DeviceAabbView primitives,
+                                                     Hierarchy &hierarchy,
+                                                     cudaStream_t stream = nullptr);
 
-[[nodiscard]] Status build_hierarchy(
-    DeviceAabbView primitives,
-    HierarchyOptions options,
-    Workspace& workspace,
-    Hierarchy& output,
-    cudaStream_t stream = nullptr);
+[[nodiscard]] Status build_hierarchy(DeviceAabbView primitives, HierarchyOptions options,
+                                     Workspace &workspace, Hierarchy &output,
+                                     cudaStream_t stream = nullptr);
 
-[[nodiscard]] const char* status_code_name(StatusCode code) noexcept;
+[[nodiscard]] const char *status_code_name(StatusCode code) noexcept;
 
 } // namespace parallel_mater

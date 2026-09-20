@@ -33,30 +33,30 @@ struct Collider {
 };
 
 struct ColliderView {
-    const Collider* data{}; // device memory
+    const Collider *data{}; // device memory
     std::uint32_t count{};
 };
 
 // Owns a device collider array. update_async copies the caller's host span;
 // the source may be released once the supplied stream reaches completion.
 class ColliderSet {
-public:
+  public:
     ColliderSet() noexcept;
     ~ColliderSet();
-    ColliderSet(ColliderSet&&) noexcept;
-    ColliderSet& operator=(ColliderSet&&) noexcept;
-    ColliderSet(const ColliderSet&) = delete;
-    ColliderSet& operator=(const ColliderSet&) = delete;
+    ColliderSet(ColliderSet &&) noexcept;
+    ColliderSet &operator=(ColliderSet &&) noexcept;
+    ColliderSet(const ColliderSet &) = delete;
+    ColliderSet &operator=(const ColliderSet &) = delete;
 
     [[nodiscard]] Status reserve(std::uint32_t capacity) noexcept;
     [[nodiscard]] Status update_async(std::span<const Collider> colliders,
-        cudaStream_t stream = nullptr) noexcept;
+                                      cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status update(std::span<const Collider> colliders,
-        cudaStream_t stream = nullptr) noexcept;
+                                cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] ColliderView view() const noexcept;
     [[nodiscard]] std::uint32_t capacity() const noexcept;
 
-private:
+  private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
@@ -72,29 +72,28 @@ struct ConstraintRecord {
 };
 
 struct ConstraintRecordView {
-    const ConstraintRecord* data{}; // device memory
+    const ConstraintRecord *data{}; // device memory
     std::uint32_t count{};
 };
 
 class ConstraintBatch {
-public:
+  public:
     ConstraintBatch() noexcept;
     ~ConstraintBatch();
-    ConstraintBatch(ConstraintBatch&&) noexcept;
-    ConstraintBatch& operator=(ConstraintBatch&&) noexcept;
-    ConstraintBatch(const ConstraintBatch&) = delete;
-    ConstraintBatch& operator=(const ConstraintBatch&) = delete;
+    ConstraintBatch(ConstraintBatch &&) noexcept;
+    ConstraintBatch &operator=(ConstraintBatch &&) noexcept;
+    ConstraintBatch(const ConstraintBatch &) = delete;
+    ConstraintBatch &operator=(const ConstraintBatch &) = delete;
 
-    [[nodiscard]] Status reserve(std::uint32_t capacity,
-        cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status apply_async(ConstraintRecordView records,
-        PointCouplingView target, cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status apply(ConstraintRecordView records,
-        PointCouplingView target, cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status reserve(std::uint32_t capacity, cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status apply_async(ConstraintRecordView records, PointCouplingView target,
+                                     cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status apply(ConstraintRecordView records, PointCouplingView target,
+                               cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] std::uint32_t capacity() const noexcept;
     [[nodiscard]] std::size_t allocated_bytes() const noexcept;
 
-private:
+  private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

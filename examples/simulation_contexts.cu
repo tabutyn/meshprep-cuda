@@ -5,8 +5,7 @@
 
 #include <cstdio>
 
-int main()
-{
+int main() {
     // Water is fully procedural: no application window, renderer, or asset
     // path is required. The simulation owns all CUDA allocations.
     parallel_mater::examples::GallerySimulation simulation;
@@ -48,9 +47,8 @@ int main()
         return 1;
     }
     float3 first_particle{};
-    const cudaError_t copied = cudaMemcpy(&first_particle,
-        frame.particle_systems[0].positions, sizeof(first_particle),
-        cudaMemcpyDeviceToHost);
+    const cudaError_t copied = cudaMemcpy(&first_particle, frame.particle_systems[0].positions,
+                                          sizeof(first_particle), cudaMemcpyDeviceToHost);
     if (copied != cudaSuccess) {
         std::fprintf(stderr, "particle download failed: %s\n", cudaGetErrorString(copied));
         return 1;
@@ -58,14 +56,12 @@ int main()
 
     const auto stats = simulation.statistics();
     const auto physics = simulation.resolved_physics();
-    std::printf(
-        "Water: %u particles, %u rigid bodies, frame %llu, "
-        "dt=%.5f, iterations=%u, gravity=(%.2f, %.2f, %.2f), "
-        "first=(%.3f, %.3f, %.3f)\n",
-        stats.particle_count, stats.rigid_body_count,
-        static_cast<unsigned long long>(stats.frame_index),
-        physics.fixed_step.timestep, physics.solver_iterations,
-        physics.gravity.x, physics.gravity.y, physics.gravity.z,
-        first_particle.x, first_particle.y, first_particle.z);
+    std::printf("Water: %u particles, %u rigid bodies, frame %llu, "
+                "dt=%.5f, iterations=%u, gravity=(%.2f, %.2f, %.2f), "
+                "first=(%.3f, %.3f, %.3f)\n",
+                stats.particle_count, stats.rigid_body_count,
+                static_cast<unsigned long long>(stats.frame_index), physics.fixed_step.timestep,
+                physics.solver_iterations, physics.gravity.x, physics.gravity.y, physics.gravity.z,
+                first_particle.x, first_particle.y, first_particle.z);
     return 0;
 }

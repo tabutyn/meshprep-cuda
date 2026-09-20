@@ -41,17 +41,17 @@ the memory overload parses and copies bytes before returning and performs no
 filesystem access.
 
 `SoftBodyOptions` controls the fixed timestep, substeps, deterministic Jacobi
-constraint iterations, mass, stiffness, damping, fracture threshold, speed and
-projection bounds, hierarchy leaf size, optional non-bonded node collision,
-and per-instance origins. It does not contain a scene, camera, gameplay goal,
+constraint iterations, mass, stiffness, velocity damping, fracture threshold,
+speed and projection bounds, hierarchy leaf size, and per-instance origins. It
+does not contain a scene, camera, gameplay goal,
 or renderer.
 
 Initialization validates these public ranges: instances `[1,256]`, substeps
-`[1,32]`, constraint iterations `[1,256]`, stiffness `[100,160000]`, spring
-damping ratio `[0,4]`, velocity damping `[0,30]`, maximum projection fraction
+`[1,32]`, constraint iterations `[1,256]`, stiffness `[100,160000]`, velocity
+damping `[0,30]`, maximum projection fraction
 `(0,1]`, velocity response `[0,1]`, fracture persistence `[1,64]`, maximum
-speed `[0.5,30]`, strength multiplier `[0.0625,64]`, ground friction `[0,50]`,
-and hierarchy leaf size `[1,32]`. Timestep, mass, stiffness, break strain, and
+speed `[0.5,30]`, strength multiplier `[0.0625,64]`, and hierarchy leaf size
+`[1,32]`. Timestep, mass, stiffness, break strain, and
 strength must be finite and positive; active origins and gravity must be finite.
 
 `step(gravity, timings, stream)` is the shortest complete update. Applications

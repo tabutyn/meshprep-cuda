@@ -1,11 +1,11 @@
 # Benchmarks
 
-`meshprep-benchmark` accepts a triangulated OBJ or generates a deterministic grid. Mesh upload and OBJ parsing occur before timing. Warmups retain all output and workspace allocations.
+`parallel-mater-benchmark` accepts a triangulated OBJ or generates a deterministic grid. Mesh upload and OBJ parsing occur before timing. Warmups retain all output and workspace allocations.
 
 ```bash
-./build/meshprep-benchmark --obj benchmarks/data/mesh/sibenik.obj \
+./build/parallel-mater-benchmark --obj benchmarks/data/mesh/sibenik.obj \
   --operation hierarchy --warmups 5 --iterations 30
-./build/meshprep-benchmark --triangles 9963191 \
+./build/parallel-mater-benchmark --triangles 9963191 \
   --operation hierarchy --warmups 1 --iterations 3
 ```
 

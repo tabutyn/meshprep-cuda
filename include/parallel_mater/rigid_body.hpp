@@ -32,40 +32,37 @@ struct RigidBodyState {
 };
 
 class RigidBody {
-public:
+  public:
     RigidBody() noexcept;
     ~RigidBody();
-    RigidBody(RigidBody&&) noexcept;
-    RigidBody& operator=(RigidBody&&) noexcept;
-    RigidBody(const RigidBody&) = delete;
-    RigidBody& operator=(const RigidBody&) = delete;
+    RigidBody(RigidBody &&) noexcept;
+    RigidBody &operator=(RigidBody &&) noexcept;
+    RigidBody(const RigidBody &) = delete;
+    RigidBody &operator=(const RigidBody &) = delete;
 
-    [[nodiscard]] static Status create(RigidBodyState state,
-        RigidBodyOptions options, RigidBody& output) noexcept;
+    [[nodiscard]] static Status create(RigidBodyState state, RigidBodyOptions options,
+                                       RigidBody &output) noexcept;
     [[nodiscard]] Status initialize(RigidBodyState state = {},
-        RigidBodyOptions options = {}) noexcept;
-    [[nodiscard]] Status begin_frame(FrameOptions frame,
-        cudaStream_t stream = nullptr) noexcept;
+                                    RigidBodyOptions options = {}) noexcept;
+    [[nodiscard]] Status begin_frame(FrameOptions frame, cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status prepare_substep(SubstepContext substep,
-        cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status apply_force(float3 force,
-        float3 world_point) noexcept;
+                                         cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status apply_force(float3 force, float3 world_point) noexcept;
     [[nodiscard]] Status apply_torque(float3 torque) noexcept;
     [[nodiscard]] Status finish_substep(SubstepContext substep,
-        cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status finish_frame(Completion& completion,
-        cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status advance_async(FrameOptions frame,
-        Completion& completion, cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status advance(FrameOptions frame,
-        cudaStream_t stream = nullptr) noexcept;
+                                        cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status finish_frame(Completion &completion,
+                                      cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status advance_async(FrameOptions frame, Completion &completion,
+                                       cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status advance(FrameOptions frame, cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status reset() noexcept;
 
     [[nodiscard]] bool initialized() const noexcept;
     [[nodiscard]] RigidBodyOptions options() const noexcept;
     [[nodiscard]] RigidBodyState state() const noexcept;
 
-private:
+  private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

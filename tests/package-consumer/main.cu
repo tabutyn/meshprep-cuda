@@ -4,8 +4,7 @@
 
 #include <type_traits>
 
-int main()
-{
+int main() {
     static_assert(std::is_move_constructible_v<parallel_mater::physics::SoftBody>);
     static_assert(!std::is_copy_constructible_v<parallel_mater::physics::SoftBody>);
     static_assert(std::is_move_constructible_v<parallel_mater::physics::Smoke>);
@@ -23,11 +22,10 @@ int main()
     parallel_mater::physics::Rope rope;
     parallel_mater::physics::RigidBody rigid_body;
     parallel_mater::Workspace workspace;
-    return !soft_body.initialized() && !smoke.initialized() &&
-            !fluid.initialized() && !cloth.initialized() &&
-            !rope.initialized() && !rigid_body.initialized() &&
-            options.instance_count == 1U &&
-            options.substeps == 4U && workspace.capacity_bytes() == 0U
-        ? 0
-        : 1;
+    return !soft_body.initialized() && !smoke.initialized() && !fluid.initialized() &&
+                   !cloth.initialized() && !rope.initialized() && !rigid_body.initialized() &&
+                   options.instance_count == 1U && options.substeps == 4U &&
+                   workspace.capacity_bytes() == 0U
+               ? 0
+               : 1;
 }

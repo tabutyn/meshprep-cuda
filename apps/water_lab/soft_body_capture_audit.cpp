@@ -30,12 +30,12 @@
 
 namespace {
 
-#ifndef MESHPREP_SOFT_BODY_ASSET_PATH
-#define MESHPREP_SOFT_BODY_ASSET_PATH "assets/softbody/checker_cylinder.msb"
+#ifndef PARALLEL_MATER_SOFT_BODY_ASSET_PATH
+#define PARALLEL_MATER_SOFT_BODY_ASSET_PATH "assets/softbody/checker_cylinder.msb"
 #endif
 
 constexpr std::string_view latest_capture_file =
-    "/tmp/meshprep-hybrid-captures/LAST_CAPTURE.txt";
+    "/tmp/parallel-mater-hybrid-captures/LAST_CAPTURE.txt";
 constexpr std::array<char, 8> capture_magic{'M','P','H','C','A','P','1','\0'};
 constexpr std::uint32_t minimum_capture_version = 4U;
 constexpr std::uint32_t maximum_capture_version = 6U;
@@ -97,7 +97,7 @@ struct Capture {
 
 struct CommandLine {
     std::filesystem::path capture_path;
-    std::filesystem::path asset_path{MESHPREP_SOFT_BODY_ASSET_PATH};
+    std::filesystem::path asset_path{PARALLEL_MATER_SOFT_BODY_ASSET_PATH};
     std::filesystem::path csv_path;
     bool baseline_only{};
     bool skin_contact{};
@@ -1678,10 +1678,10 @@ CommandLine parse_command_line(int argc, char** argv)
             std::exit(0);
         }
         if (argument == "--help") {
-            std::cout << "usage: meshprep-soft-body-capture-audit [CAPTURE] "
+            std::cout << "usage: parallel-mater-soft-body-capture-audit [CAPTURE] "
                 "[--asset FILE] [--csv FILE] [--baseline-only] [--skin-contact] "
                 "[--resimulate-saved-start] [--stride N] [--render-contact]\n"
-                "CAPTURE defaults to /tmp/meshprep-hybrid-captures/LAST_CAPTURE.txt.\n"
+                "CAPTURE defaults to /tmp/parallel-mater-hybrid-captures/LAST_CAPTURE.txt.\n"
                 "--skin-contact-self-test checks the analytic CPU reference without a capture.\n";
             std::exit(0);
         }

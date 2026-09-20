@@ -32,8 +32,8 @@ bool finite(float3 value)
 
 std::string soft_body_asset_path()
 {
-#ifdef MESHPREP_SOFT_BODY_TEST_ASSET
-    return MESHPREP_SOFT_BODY_TEST_ASSET;
+#ifdef PARALLEL_MATER_SOFT_BODY_TEST_ASSET
+    return PARALLEL_MATER_SOFT_BODY_TEST_ASSET;
 #else
     return (std::filesystem::path(__FILE__).parent_path().parent_path() /
         "assets/softbody/checker_cylinder.msb").string();
@@ -577,22 +577,22 @@ int main()
     int device_count = 0;
     const cudaError_t status = cudaGetDeviceCount(&device_count);
     if (status != cudaSuccess || device_count == 0) {
-        std::puts("SKIP meshprep-hybrid-tests: no CUDA device");
+        std::puts("SKIP parallel-mater-hybrid-tests: no CUDA device");
         return 77;
     }
     try {
-        if (std::getenv("MESHPREP_VISUAL_SANITIZER_SMOKE") != nullptr) {
+        if (std::getenv("PARALLEL_MATER_VISUAL_SANITIZER_SMOKE") != nullptr) {
             test_fluid_visual_render_modes();
             test_soft_post_occlusion();
-            std::puts("PASS meshprep-hybrid-tests visual rendering smoke");
+            std::puts("PASS parallel-mater-hybrid-tests visual rendering smoke");
             return 0;
         }
-        if (std::getenv("MESHPREP_SANITIZER_SMOKE") != nullptr) {
+        if (std::getenv("PARALLEL_MATER_SANITIZER_SMOKE") != nullptr) {
             waterlab::HybridDroplet droplet;
             require_timings(droplet.step(make_float3(-400.0F, 0.0F, 0.0F), 5.0F));
             require_state(droplet);
             require_debug_forces_finite(droplet);
-            std::puts("PASS meshprep-hybrid-tests sanitizer smoke");
+            std::puts("PASS parallel-mater-hybrid-tests sanitizer smoke");
             return 0;
         }
         test_idle_and_reset();
@@ -605,10 +605,10 @@ int main()
         test_sphere_contact_paint();
         test_fluid_visual_render_modes();
         test_soft_post_occlusion();
-        std::puts("PASS meshprep-hybrid-tests");
+        std::puts("PASS parallel-mater-hybrid-tests");
         return 0;
     } catch (const std::exception& error) {
-        std::fprintf(stderr, "FAIL meshprep-hybrid-tests: %s\n", error.what());
+        std::fprintf(stderr, "FAIL parallel-mater-hybrid-tests: %s\n", error.what());
         return 1;
     }
 }

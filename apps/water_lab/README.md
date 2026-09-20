@@ -1,8 +1,11 @@
 # Parallel Mater native gallery
 
-`parallel-mater-lab` is the interactive CUDA/OpenGL client for the installed
-Parallel Mater simulation API. The application owns camera, input, objectives,
-and rendering; `GallerySimulation` and the component solvers own CUDA state.
+`parallel-mater-lab` is the interactive CUDA/OpenGL application. It owns camera,
+input, objectives, rendering, and several specialized historical simulation
+fixtures. The headless `parallel-mater-gallery-example`, not this native client,
+is the proof that a complete composition can be built solely from installed
+ParallelMater APIs. Application-only solvers are isolated under this directory
+and are never installed or linked into `ParallelMater::physics`.
 
 ## Context catalog
 
@@ -65,5 +68,5 @@ The CUDA regression suite is separate from rendering:
 
 ```bash
 ctest --test-dir build --output-on-failure \
-  -R 'meshprep-simulation-(api|runtime|gallery)-tests'
+  -R 'parallel-mater-(simulation-api|simulation-runtime|simulation-gallery)-tests'
 ```

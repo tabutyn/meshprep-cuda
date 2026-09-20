@@ -1,9 +1,19 @@
-# From nondeterministic atomics to stable CUDA mesh preprocessing
+# ParallelMater: deterministic CUDA geometry and composable physics
 
-I rebuilt an old set of CUDA geometry kernels as `meshprep-cuda`, an MIT-licensed C++20 library for deterministic normal generation and eight-way AABB hierarchy construction.
+ParallelMater began as a recovery of my old CUDA geometry kernels and grew into
+an MIT-licensed C++20 library for deterministic normal generation, eight-way
+AABB hierarchies, and composable GPU physics owners.
 
-The original was fast on small meshes, but identical runs changed leaf ordering and a 9,963,191-triangle scene exceeded CUDA's grid-Y launch limit. The redesign uses CUB radix sort and scans to make `(vertex, triangle, corner)` adjacency and `(parent, octant)` partitioning explicit. Flattened launches now complete San Miguel in a median 239.3 ms on my 4 GB RTX 3050 Ti, while 100-run tests verify bit-identical topology and indexing.
+The original geometry code was fast on small meshes, but identical runs changed
+leaf ordering and a 9,963,191-triangle scene exceeded CUDA's grid-Y launch
+limit. CUB radix sort, scans, and flattened launches made ordering explicit and
+removed that scale failure. The newer physics layer adds independent Fluid,
+Cloth, Rope, SoftBody, RigidBody, and Smoke owners behind one frame/substep
+protocol, plus generic colliders and deterministic constraint gathering.
 
-There is no hidden speedup claim: stable ordering costs 34–40% on Sibenik and Sponza versus the legacy path, and a pinned CUDA LBVH is faster still while producing a different binary hierarchy. The performance report includes that regression, memory use, profiler workflow, and the experiments I would run next.
+There is no hidden speedup claim: stable geometry ordering costs 34–40% on
+Sibenik and Sponza versus the legacy path, and a pinned CUDA LBVH is faster
+while producing a different hierarchy. Measurements, memory use, constraints,
+and limitations are recorded beside reproducible commands.
 
 Links to add at publication: source repository, design report, performance report, tests, and reproducible benchmark commands.

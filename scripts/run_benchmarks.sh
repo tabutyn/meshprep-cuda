@@ -9,7 +9,7 @@ fi
 build_dir="$1"
 output="${2:-results.csv}"
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-benchmark="${build_dir}/meshprep-benchmark"
+benchmark="${build_dir}/parallel-mater-benchmark"
 
 : > "${output}"
 for scene in sibenik sponza sanmiguel; do

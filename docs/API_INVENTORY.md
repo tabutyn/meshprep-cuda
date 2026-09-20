@@ -7,7 +7,7 @@ they are application code.
 
 As of this pass the installed headers contain 3 enums, 39 structures, 12
 classes, and 10 free functions/templates; the installed implementation contains
-58 private CUDA kernels. Gallery recipes and render aggregation are excluded.
+44 private CUDA kernels. Gallery recipes and render aggregation are excluded.
 
 ## Geometry
 
@@ -111,8 +111,8 @@ from frame submission.
 | `node_pinned` | Marks a soft-body node as kinematic rather than dynamically integrated. |
 | `Bond` | Identifies two connected nodes and their rest length. |
 | `SoftBodyAssetView` | Borrows an in-memory `.msb` payload that initialization validates and copies. |
-| `SoftBodyOptions` | Configures topology instances, timestep, mass, spring solving, fracture, damping, collision, hierarchy, and instance placement. |
-| `SoftBodyMaterial` | Groups runtime-adjustable stiffness, damping, speed, and ground-friction values. |
+| `SoftBodyOptions` | Configures topology instances, timestep, mass, spring solving, fracture, velocity damping, hierarchy, and instance placement. |
+| `SoftBodyMaterial` | Groups runtime-adjustable stiffness, velocity damping, and speed limits. |
 | `SoftBodyNodeView` | Borrows device node state and writable impulse/correction buffers for application-defined coupling kernels. |
 | `SoftBodyBondView` | Borrows device positions, flags, shared bonds, and per-instance bond activity. |
 | `SoftBodySurfaceView` | Borrows the deformed surface mesh, normals, UVs, active triangles, and its hierarchy. |

@@ -27,8 +27,8 @@ enum class ParticleMaterial : std::uint8_t {
 // retain ownership and may replace their allocations between frames; callers
 // must reacquire views after every simulation step.
 struct ParticleRenderView {
-    const float3* positions{};
-    const float3* velocities{};
+    const float3 *positions{};
+    const float3 *velocities{};
     std::uint32_t count{};
     float radius{};
     ParticleMaterial material{ParticleMaterial::fluid};
@@ -36,9 +36,9 @@ struct ParticleRenderView {
 
 struct SurfaceRenderView {
     DeviceMeshView mesh{};
-    const float3* vertex_normals{};
-    const float2* texcoords{};
-    const std::uint8_t* triangle_active{};
+    const float3 *vertex_normals{};
+    const float2 *texcoords{};
+    const std::uint8_t *triangle_active{};
 };
 
 struct RigidBodyRenderView {
@@ -60,10 +60,10 @@ using LatticeBond = physics::Bond;
 // is bond_active[i * bonds_per_instance + b]; zero means permanently broken
 // until reset. Flags use lattice_node_surface and lattice_node_pinned.
 struct LatticeRenderView {
-    const float3* positions{};
-    const std::uint32_t* flags{};
-    const LatticeBond* bonds{};
-    const std::uint8_t* bond_active{};
+    const float3 *positions{};
+    const std::uint32_t *flags{};
+    const LatticeBond *bonds{};
+    const std::uint8_t *bond_active{};
     std::uint32_t node_count{};
     std::uint32_t nodes_per_instance{};
     std::uint32_t bonds_per_instance{};
@@ -72,13 +72,13 @@ struct LatticeRenderView {
 };
 
 struct FrameRenderView {
-    const ParticleRenderView* particle_systems{};
+    const ParticleRenderView *particle_systems{};
     std::uint32_t particle_system_count{};
-    const SurfaceRenderView* surfaces{};
+    const SurfaceRenderView *surfaces{};
     std::uint32_t surface_count{};
-    const RigidBodyRenderView* rigid_bodies{};
+    const RigidBodyRenderView *rigid_bodies{};
     std::uint32_t rigid_body_count{};
-    const LatticeRenderView* lattices{};
+    const LatticeRenderView *lattices{};
     std::uint32_t lattice_count{};
 };
 
@@ -89,10 +89,9 @@ struct FixedStepOptions {
 // Header-only validation keeps the fixed-step contract identical for sample
 // applications and future solver backends without introducing a windowing or
 // renderer dependency into the installed package.
-[[nodiscard]] constexpr bool valid(FixedStepOptions options) noexcept
-{
+[[nodiscard]] constexpr bool valid(FixedStepOptions options) noexcept {
     return options.timestep > 0.0F && options.timestep == options.timestep &&
-        options.timestep <= std::numeric_limits<float>::max();
+           options.timestep <= std::numeric_limits<float>::max();
 }
 
 // Configuration for the experimental, headless gallery backend. The asset
@@ -143,40 +142,37 @@ struct GallerySimulationStatistics {
     std::size_t allocated_bytes{};
 };
 
-[[nodiscard]] constexpr bool requires_soft_body_asset(
-    SimulationRecipe context) noexcept
-{
-    return context == SimulationRecipe::soft_body ||
-        context == SimulationRecipe::soft_body_smoke;
+[[nodiscard]] constexpr bool requires_soft_body_asset(SimulationRecipe context) noexcept {
+    return context == SimulationRecipe::soft_body || context == SimulationRecipe::water_soft_body ||
+           context == SimulationRecipe::cloth_soft_body ||
+           context == SimulationRecipe::soft_body_rope ||
+           context == SimulationRecipe::soft_body_smoke;
 }
 
 // Owning, synchronous fixed-step simulation without a window or renderer.
 // Device pointers in render_view() remain owned by this object. Reacquire the
 // view after every step/reset and do not retain it across initialize() or move.
 // All public operations translate implementation exceptions into Status.
-// CUDA and meshprep dependency failures preserve their StatusCode and
+// CUDA and ParallelMater dependency failures preserve their StatusCode and
 // cudaError_t; unexpected implementation exceptions become internal_error.
 class GallerySimulation {
-public:
+  public:
     GallerySimulation() noexcept;
     ~GallerySimulation();
-    GallerySimulation(GallerySimulation&&) noexcept;
-    GallerySimulation& operator=(GallerySimulation&&) noexcept;
-    GallerySimulation(const GallerySimulation&) = delete;
-    GallerySimulation& operator=(const GallerySimulation&) = delete;
+    GallerySimulation(GallerySimulation &&) noexcept;
+    GallerySimulation &operator=(GallerySimulation &&) noexcept;
+    GallerySimulation(const GallerySimulation &) = delete;
+    GallerySimulation &operator=(const GallerySimulation &) = delete;
 
-    [[nodiscard]] static Status create(
-        GallerySimulationOptions options,
-        GallerySimulation& output,
-        cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] static Status create(GallerySimulationOptions options, GallerySimulation &output,
+                                       cudaStream_t stream = nullptr) noexcept;
 
-    [[nodiscard]] Status initialize(
-        GallerySimulationOptions options,
-        cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status initialize(GallerySimulationOptions options,
+                                    cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status step(cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status reset(cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status resize_particles(
-        std::uint32_t active_count, cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status resize_particles(std::uint32_t active_count,
+                                          cudaStream_t stream = nullptr) noexcept;
 
     [[nodiscard]] bool initialized() const noexcept;
     [[nodiscard]] SimulationRecipe recipe() const noexcept;
@@ -186,7 +182,7 @@ public:
     [[nodiscard]] GallerySimulationStatistics statistics() const noexcept;
     [[nodiscard]] FrameRenderView render_view() const noexcept;
 
-private:
+  private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
@@ -196,28 +192,26 @@ private:
 // enter only at build(). Existing GallerySimulationOptions remains available
 // for callers that prefer aggregate initialization.
 class SimulationBuilder {
-public:
+  public:
     explicit SimulationBuilder(SimulationRecipe recipe) noexcept
         : config_(RecipeConfig::for_recipe(recipe)) {}
 
-    SimulationBuilder& timestep(float value) noexcept;
-    SimulationBuilder& iterations(std::uint32_t value) noexcept;
-    SimulationBuilder& particles(std::uint32_t value) noexcept;
-    SimulationBuilder& skin_frequency(std::uint32_t value) noexcept;
-    SimulationBuilder& rope_nodes(std::uint32_t value) noexcept;
-    SimulationBuilder& cloth_detail(std::uint32_t value) noexcept;
-    SimulationBuilder& bridge_grid(
-        std::uint32_t columns, std::uint32_t rows) noexcept;
-    SimulationBuilder& cylinder_grid(
-        std::uint32_t columns, std::uint32_t rows) noexcept;
-    SimulationBuilder& gravity(float3 value) noexcept;
-    SimulationBuilder& soft_body_asset(std::string path);
+    SimulationBuilder &timestep(float value) noexcept;
+    SimulationBuilder &iterations(std::uint32_t value) noexcept;
+    SimulationBuilder &particles(std::uint32_t value) noexcept;
+    SimulationBuilder &skin_frequency(std::uint32_t value) noexcept;
+    SimulationBuilder &rope_nodes(std::uint32_t value) noexcept;
+    SimulationBuilder &cloth_detail(std::uint32_t value) noexcept;
+    SimulationBuilder &bridge_grid(std::uint32_t columns, std::uint32_t rows) noexcept;
+    SimulationBuilder &cylinder_grid(std::uint32_t columns, std::uint32_t rows) noexcept;
+    SimulationBuilder &gravity(float3 value) noexcept;
+    SimulationBuilder &soft_body_asset(std::string path);
 
-    [[nodiscard]] const RecipeConfig& config() const noexcept { return config_; }
-    [[nodiscard]] Status build(
-        GallerySimulation& output, cudaStream_t stream = nullptr) const noexcept;
+    [[nodiscard]] const RecipeConfig &config() const noexcept { return config_; }
+    [[nodiscard]] Status build(GallerySimulation &output,
+                               cudaStream_t stream = nullptr) const noexcept;
 
-private:
+  private:
     RecipeConfig config_{};
     std::optional<float3> gravity_{};
     std::optional<std::uint32_t> bridge_columns_{};

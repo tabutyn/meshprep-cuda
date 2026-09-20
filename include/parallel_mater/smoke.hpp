@@ -30,10 +30,10 @@ struct SmokeOptions {
 };
 
 struct SmokeParticleView {
-    const float3* positions{};
-    const float3* velocities{};
-    const float* ages{};
-    const float* temperatures{};
+    const float3 *positions{};
+    const float3 *velocities{};
+    const float *ages{};
+    const float *temperatures{};
     std::uint32_t count{};
     float radius{};
 };
@@ -42,10 +42,7 @@ struct SmokeTimings {
     float integrate_ms{};
     float couple_ms{};
 
-    [[nodiscard]] constexpr float gpu_total_ms() const noexcept
-    {
-        return integrate_ms + couple_ms;
-    }
+    [[nodiscard]] constexpr float gpu_total_ms() const noexcept { return integrate_ms + couple_ms; }
 };
 
 struct SmokeStatistics {
@@ -65,47 +62,41 @@ struct SmokeTelemetry {
 // visual and coupling model, not a pressure-projected CFD solver. Advancing is
 // enqueue-only; diagnostic readbacks are opt-in through collect_telemetry.
 class Smoke {
-public:
+  public:
     Smoke() noexcept;
     ~Smoke();
-    Smoke(Smoke&&) noexcept;
-    Smoke& operator=(Smoke&&) noexcept;
-    Smoke(const Smoke&) = delete;
-    Smoke& operator=(const Smoke&) = delete;
+    Smoke(Smoke &&) noexcept;
+    Smoke &operator=(Smoke &&) noexcept;
+    Smoke(const Smoke &) = delete;
+    Smoke &operator=(const Smoke &) = delete;
 
-    [[nodiscard]] static Status create(
-        SmokeOptions options, Smoke& output,
-        cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status initialize(
-        SmokeOptions options = {}, cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] static Status create(SmokeOptions options, Smoke &output,
+                                       cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status initialize(SmokeOptions options = {},
+                                    cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status set_colliders(ColliderView colliders) noexcept;
-    [[nodiscard]] Status step(float3 acceleration = {},
-        ColliderView colliders = {}, cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status step(float3 acceleration, ColliderView colliders,
-        SmokeTimings& timings, cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status step_async(float3 acceleration,
-        ColliderView colliders, Completion& completion,
-        cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status begin_frame(
-        FrameOptions frame, cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status prepare_substep(
-        SubstepContext substep, cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status finish_substep(
-        SubstepContext substep, cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status finish_frame(
-        Completion& completion, cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status advance_async(
-        FrameOptions frame, Completion& completion,
-        cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status advance(
-        FrameOptions frame, cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status couple(PointCouplingView body, float timestep,
-        float drag_coefficient, cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status collect_telemetry_async(Completion& completion,
-        cudaStream_t stream = nullptr) noexcept;
-    [[nodiscard]] Status resolve_telemetry(SmokeTelemetry& output) noexcept;
-    [[nodiscard]] Status collect_telemetry(
-        cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status step(float3 acceleration = {}, ColliderView colliders = {},
+                              cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status step(float3 acceleration, ColliderView colliders, SmokeTimings &timings,
+                              cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status step_async(float3 acceleration, ColliderView colliders,
+                                    Completion &completion, cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status begin_frame(FrameOptions frame, cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status prepare_substep(SubstepContext substep,
+                                         cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status finish_substep(SubstepContext substep,
+                                        cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status finish_frame(Completion &completion,
+                                      cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status advance_async(FrameOptions frame, Completion &completion,
+                                       cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status advance(FrameOptions frame, cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status couple(PointCouplingView body, float timestep, float drag_coefficient,
+                                cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status collect_telemetry_async(Completion &completion,
+                                                 cudaStream_t stream = nullptr) noexcept;
+    [[nodiscard]] Status resolve_telemetry(SmokeTelemetry &output) noexcept;
+    [[nodiscard]] Status collect_telemetry(cudaStream_t stream = nullptr) noexcept;
     [[nodiscard]] Status reset(cudaStream_t stream = nullptr) noexcept;
 
     [[nodiscard]] bool initialized() const noexcept;
@@ -114,7 +105,7 @@ public:
     [[nodiscard]] SmokeTelemetry telemetry() const noexcept;
     [[nodiscard]] SmokeStatistics statistics() const noexcept;
 
-private:
+  private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

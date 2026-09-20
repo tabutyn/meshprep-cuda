@@ -46,7 +46,7 @@ constexpr double fold_reference_recovery_seconds = 2.80000015;
 
 struct Args {
     std::uint32_t runs{5}, iterations{1};
-    std::filesystem::path output{"/tmp/meshprep-contact-experiment"};
+    std::filesystem::path output{"/tmp/parallel-mater-contact-experiment"};
     bool stiff_material{};
     bool verbose{};
     float box_damping{64.0F};
@@ -818,7 +818,7 @@ int execute(const Args& args) {
 int main(int argc,char** argv) {
     int device_count=0; const cudaError_t device_status=cudaGetDeviceCount(&device_count);
     if (device_status!=cudaSuccess || device_count==0) {
-        std::puts("SKIP meshprep-contact-experiment: no CUDA device");
+        std::puts("SKIP parallel-mater-contact-experiment: no CUDA device");
         return 77;
     }
     try { Args args; if (!parse(argc,argv,args)) { std::fprintf(stderr,"usage: %s [--runs N] [--iterations 1..8] [--output DIR] "
