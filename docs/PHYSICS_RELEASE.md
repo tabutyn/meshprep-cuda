@@ -16,7 +16,8 @@ library APIs.
 - [x] Asset ownership and deterministic regeneration documented.
 - [x] Compute Sanitizer memcheck, racecheck, initcheck, and synccheck on the
   public physics, smoke, and gallery-runtime executables.
-- [ ] CI passes with CUDA 12.6 and 13.1 after the new target is pushed.
+- [x] CI passes with CUDA 12.6 and 13.1 after the new target is pushed
+  ([build 35522367518](https://github.com/tabutyn/meshprep-cuda/actions/runs/35522367518)).
 - [x] Run `clang-format` over the installed library, public examples, package
   consumer, and public runtime tests; keep the isolated historical app out of
   formatting-only release churn.
