@@ -433,7 +433,7 @@ void test_fluid_visual_render_modes()
     require(differing_pixels(particles, combined_wire_base) == 0U,
         "combined wire mode must retain the particle layer before host wire overlays");
 
-    meshprep::Hierarchy no_particles;
+    parallel_mater::Hierarchy no_particles;
     const float wire_without_particles = renderer.render_hybrid(
         droplet.skin_mesh(), droplet.skin_normals(), droplet.skin_hierarchy(),
         nullptr, droplet.particle_radius(), no_particles, false,
@@ -501,19 +501,19 @@ void test_soft_post_occlusion()
         "deformable post render hierarchy is incomplete");
     const float radius = 0.10F;
     const float3 point = make_float3(peg.x, waterlab::course_floor_y + 0.7F, peg.z - 0.8F);
-    const meshprep::Aabb bounds{make_float3(point.x-radius, point.y-radius, point.z-radius),
+    const parallel_mater::Aabb bounds{make_float3(point.x-radius, point.y-radius, point.z-radius),
         make_float3(point.x+radius, point.y+radius, point.z+radius)};
     float3* device_point = nullptr;
-    meshprep::Aabb* device_bounds = nullptr;
+    parallel_mater::Aabb* device_bounds = nullptr;
     require(cudaMalloc(reinterpret_cast<void**>(&device_point), 2U*sizeof(point)) == cudaSuccess &&
             cudaMalloc(reinterpret_cast<void**>(&device_bounds), sizeof(bounds)) == cudaSuccess,
         "failed to allocate occlusion fixture");
     require(cudaMemcpy(device_point, &point, sizeof(point), cudaMemcpyHostToDevice) == cudaSuccess &&
             cudaMemcpy(device_bounds, &bounds, sizeof(bounds), cudaMemcpyHostToDevice) == cudaSuccess,
         "failed to upload occlusion fixture");
-    meshprep::Workspace workspace;
-    meshprep::Hierarchy particles, empty_skin;
-    require(meshprep::build_hierarchy({device_bounds, 1U}, {}, workspace, particles).ok(),
+    parallel_mater::Workspace workspace;
+    parallel_mater::Hierarchy particles, empty_skin;
+    require(parallel_mater::build_hierarchy({device_bounds, 1U}, {}, workspace, particles).ok(),
         "failed to build occlusion hierarchy");
     waterlab::FluidVisuals visuals(1U);
     require(cudaMemset(device_point+1, 0, sizeof(point)) == cudaSuccess,
@@ -527,7 +527,7 @@ void test_soft_post_occlusion()
     camera.eye = make_float3(peg.x, point.y, 1.0F);
     camera.target = point;
     waterlab::RayTracer renderer;
-    meshprep::NormalOutput empty_normals;
+    parallel_mater::NormalOutput empty_normals;
     constexpr std::uint32_t width = 160U, height = 120U;
     const auto render = [&](waterlab::FluidDisplay display,
                             waterlab::SoftBodyRenderView posts, bool course) {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-#include <meshprep/meshprep.hpp>
+#include <parallel_mater/geometry.hpp>
 
 #include <cuda_runtime.h>
 
@@ -188,20 +188,20 @@ bool read_obj(const std::filesystem::path& path, HostMesh& mesh)
     return !mesh.positions.empty() && !mesh.triangles.empty();
 }
 
-meshprep::Status run_operation(
+parallel_mater::Status run_operation(
     const std::string& operation,
-    meshprep::DeviceMeshView mesh,
-    meshprep::Workspace& workspace,
-    meshprep::NormalOutput& normals,
-    meshprep::Hierarchy& hierarchy)
+    parallel_mater::DeviceMeshView mesh,
+    parallel_mater::Workspace& workspace,
+    parallel_mater::NormalOutput& normals,
+    parallel_mater::Hierarchy& hierarchy)
 {
     if (operation == "normals" || operation == "pipeline") {
-        const meshprep::Status status =
-            meshprep::compute_normals(mesh, {}, workspace, normals);
+        const parallel_mater::Status status =
+            parallel_mater::compute_normals(mesh, {}, workspace, normals);
         if (!status) return status;
     }
     if (operation == "hierarchy" || operation == "pipeline") {
-        return meshprep::build_hierarchy(mesh, {}, workspace, hierarchy);
+        return parallel_mater::build_hierarchy(mesh, {}, workspace, hierarchy);
     }
     return {};
 }
@@ -240,13 +240,13 @@ int main(int argc, char** argv)
 
     DeviceArray<float3> positions(host_mesh.positions);
     DeviceArray<uint3> triangles(host_mesh.triangles);
-    const meshprep::DeviceMeshView mesh{
+    const parallel_mater::DeviceMeshView mesh{
         positions.data(), host_mesh.positions.size(), triangles.data(), host_mesh.triangles.size()};
-    meshprep::Workspace workspace;
-    meshprep::NormalOutput normals;
-    meshprep::Hierarchy hierarchy;
+    parallel_mater::Workspace workspace;
+    parallel_mater::NormalOutput normals;
+    parallel_mater::Hierarchy hierarchy;
     for (int i = 0; i < options.warmups; ++i) {
-        const meshprep::Status status =
+        const parallel_mater::Status status =
             run_operation(options.operation, mesh, workspace, normals, hierarchy);
         if (!status) {
             std::fprintf(stderr, "warmup failed: %s (%s)\n", status.message, cudaGetErrorString(status.cuda_error));
@@ -264,7 +264,7 @@ int main(int argc, char** argv)
     for (int iteration = 0; iteration < options.iterations; ++iteration) {
         cudaEventRecord(begin);
         const auto wall_begin = std::chrono::steady_clock::now();
-        const meshprep::Status status =
+        const parallel_mater::Status status =
             run_operation(options.operation, mesh, workspace, normals, hierarchy);
         const auto wall_end = std::chrono::steady_clock::now();
         cudaEventRecord(end);

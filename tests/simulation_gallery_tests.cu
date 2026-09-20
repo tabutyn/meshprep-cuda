@@ -22,7 +22,7 @@
 
 namespace {
 
-using meshprep::sim::SimulationRecipe;
+using parallel_mater::examples::SimulationRecipe;
 
 void require(bool condition, const char* message)
 {
@@ -54,11 +54,11 @@ void host_catalog_test()
     constexpr std::array<std::uint32_t, 15U> expected_component_counts{
         2U,2U,2U,2U,2U,4U,3U,3U,2U,3U,3U,3U,3U,3U,3U};
     for (std::size_t index = 0U;
-         index < meshprep::sim::simulation_recipes.size(); ++index) {
+         index < parallel_mater::examples::simulation_recipes.size(); ++index) {
         const auto context = expected_contexts[index];
         const auto& info = waterlab::gallery::recipe_info(context);
         require(info.recipe == context &&
-                meshprep::sim::simulation_recipes[index].recipe == context,
+                parallel_mater::examples::simulation_recipes[index].recipe == context,
             "gallery context order diverged from the installed catalog");
         require(std::popcount(static_cast<std::uint32_t>(info.components)) ==
                 expected_component_counts[index],
@@ -1215,7 +1215,7 @@ void gpu_rolling_rigid_cloth_test()
         }
         ++rigid_dangling_triangles;
     }
-    meshprep::HierarchyNode root{};
+    parallel_mater::HierarchyNode root{};
     require(cudaMemcpy(&root, view.nodes, sizeof(root),
                 cudaMemcpyDeviceToHost) == cudaSuccess,
         "hanging cloth hierarchy root was unreadable");

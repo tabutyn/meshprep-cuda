@@ -6,7 +6,7 @@
 - 20,484 total vertices, 40,960 total triangles, and 61,440 undirected graph edges;
 - eight zero-gravity surface iterations per frame;
 - continuous vertex/OBB collision and eight triangle/OBB contact projections per surface iteration;
-- public `meshprep::compute_normals` face, smoothing-group, and vertex-normal pipeline every frame;
+- public `parallel_mater::compute_normals` face, smoothing-group, and vertex-normal pipeline every frame;
 - complete deterministic hierarchy and AABB rebuild every frame;
 - 960×720 primary rays with barycentrically interpolated normals, an analytic solid box, and a second hierarchy traversal through water after a hit;
 - pinned device-to-host render-target transfer included in wall time;
@@ -49,7 +49,7 @@ The moving-box median retains 10.977 ms of the 60 FPS budget at the reduced stre
 
 ## Prototype fusion event
 
-A 420-frame 64×64 run reached the first cross-component vertex contact. Runtime surgery removed both incident fans, aligned and stitched the equal-size boundary rings, rebuilt and validated the closed-manifold host graph, and uploaded the inactive topology buffers in 19.878 ms wall time. Triangle and edge counts remained 40,960 and 61,440. `meshprep::compute_normals` subsequently reported 20,482 active normal groups because the two removed vertex IDs remain inactive in the fixed 20,484-slot pool.
+A 420-frame 64×64 run reached the first cross-component vertex contact. Runtime surgery removed both incident fans, aligned and stitched the equal-size boundary rings, rebuilt and validated the closed-manifold host graph, and uploaded the inactive topology buffers in 19.878 ms wall time. Triangle and edge counts remained 40,960 and 61,440. `parallel_mater::compute_normals` subsequently reported 20,482 active normal groups because the two removed vertex IDs remain inactive in the fixed 20,484-slot pool.
 
 This one-time host implementation satisfies the 33.33 ms correctness target for a 30 Hz event, but not the 2 ms stretch target or a continuous 30 Hz graph-update design. Its measurement includes device position download, contact search, surgery, adjacency reconstruction, validation, and upload. The next phase moves detection and graph construction to GPU double buffers and reports graph work independently each second frame.
 
@@ -73,7 +73,7 @@ Instrumentation raises the measured median frame to 8.31 ms. Aggregate kernel ev
 | Center accumulation | 122.5 µs | 15.3% | Atomic global constraint, once per substep |
 | Volume accumulation | 82.4 µs | 10.3% | Atomic triangle reduction, once per substep |
 | CSR surface step + swept vertex collision | 12.2 µs | 1.5% | All vertices and adjacent springs, once per substep |
-| `meshprep::compute_normals` NVTX range | 0.365 ms median | 4.3% | Validation, corner sort, fan grouping, and normal emission |
+| `parallel_mater::compute_normals` NVTX range | 0.365 ms median | 4.3% | Validation, corner sort, fan grouping, and normal emission |
 
 The requested all-vertex neighbor solver remains inexpensive: eight launches total roughly 98 µs. The collision projection adds about 1.36 ms of raw kernel execution per frame, while global center/volume atomics remain the other substantial physics cost. The general-purpose normal API costs more than a topology-specific gather kernel would, but it exercises the library's deterministic corner-normal contract and remains under 0.3 ms without instrumentation.
 

@@ -14,27 +14,27 @@
 
 namespace waterlab::gallery {
 
-const meshprep::sim::SimulationRecipeInfo& recipe_info(
-    meshprep::sim::SimulationRecipe context) noexcept
+const parallel_mater::examples::SimulationRecipeInfo& recipe_info(
+    parallel_mater::examples::SimulationRecipe context) noexcept
 {
-    for (const auto& item : meshprep::sim::simulation_recipes) {
+    for (const auto& item : parallel_mater::examples::simulation_recipes) {
         if (item.recipe == context) return item;
     }
-    return meshprep::sim::simulation_recipes.front();
+    return parallel_mater::examples::simulation_recipes.front();
 }
 
 bool recipe_has(
-    meshprep::sim::SimulationRecipe context,
-    meshprep::sim::Component component) noexcept
+    parallel_mater::examples::SimulationRecipe context,
+    parallel_mater::examples::Component component) noexcept
 {
-    return meshprep::sim::has_component(recipe_info(context).components, component);
+    return parallel_mater::examples::has_component(recipe_info(context).components, component);
 }
 
 HybridOptions make_recipe_physics(
-    meshprep::sim::SimulationRecipe context,
+    parallel_mater::examples::SimulationRecipe context,
     const RecipePhysicsOverrides& overrides) noexcept
 {
-    using meshprep::sim::SimulationRecipe;
+    using parallel_mater::examples::SimulationRecipe;
     const bool course = context == SimulationRecipe::water_cloth;
     HybridOptions options = course ? course_options() : HybridOptions{};
     if (course) {
@@ -141,7 +141,7 @@ HybridOptions make_recipe_physics(
 }
 
 std::unique_ptr<SoftBodyCourse> make_recipe_deformable(
-    meshprep::sim::SimulationRecipe context,
+    parallel_mater::examples::SimulationRecipe context,
     const HybridOptions& physics,
     std::string_view soft_body_asset_path,
     std::uint32_t rope_node_count,
@@ -154,30 +154,30 @@ std::unique_ptr<SoftBodyCourse> make_recipe_deformable(
     SoftBodyOptions options;
     options.fixed_dt = physics.fixed_dt;
     options.solver_substeps = physics.physics_iterations;
-    if (context == meshprep::sim::SimulationRecipe::soft_body ||
-        context == meshprep::sim::SimulationRecipe::water_soft_body ||
-        context == meshprep::sim::SimulationRecipe::cloth_soft_body ||
-        context == meshprep::sim::SimulationRecipe::water_rope ||
-        context == meshprep::sim::SimulationRecipe::rope ||
-        context == meshprep::sim::SimulationRecipe::cloth_rope ||
-        context == meshprep::sim::SimulationRecipe::soft_body_rope)
+    if (context == parallel_mater::examples::SimulationRecipe::soft_body ||
+        context == parallel_mater::examples::SimulationRecipe::water_soft_body ||
+        context == parallel_mater::examples::SimulationRecipe::cloth_soft_body ||
+        context == parallel_mater::examples::SimulationRecipe::water_rope ||
+        context == parallel_mater::examples::SimulationRecipe::rope ||
+        context == parallel_mater::examples::SimulationRecipe::cloth_rope ||
+        context == parallel_mater::examples::SimulationRecipe::soft_body_rope)
         options.spring_solver_iterations = 16U;
     options.maximum_speed = physics.maximum_skin_speed;
     // The cloth carries its own weight from two pins before any impact.
     options.strength_multiplier =
-        recipe_has(context, meshprep::sim::Component::cloth) ||
-        context == meshprep::sim::SimulationRecipe::soft_body ||
-        context == meshprep::sim::SimulationRecipe::water_soft_body ||
-        context == meshprep::sim::SimulationRecipe::cloth_soft_body
+        recipe_has(context, parallel_mater::examples::Component::cloth) ||
+        context == parallel_mater::examples::SimulationRecipe::soft_body ||
+        context == parallel_mater::examples::SimulationRecipe::water_soft_body ||
+        context == parallel_mater::examples::SimulationRecipe::cloth_soft_body
         ? 1.5F : 0.5F;
-    if (context == meshprep::sim::SimulationRecipe::soft_body) {
+    if (context == parallel_mater::examples::SimulationRecipe::soft_body) {
         // A bonded column must support gravity before any impact. These values
         // sit well below the live maxima, leaving meaningful room for both the
         // SOFT SPRING and SOFT BOND controls to strengthen it further.
         options.spring_stiffness = 80'000.0F;
         options.strength_multiplier = 8.0F;
         options.velocity_damping = 0.45F;
-    } else if (context == meshprep::sim::SimulationRecipe::cloth_soft_body) {
+    } else if (context == parallel_mater::examples::SimulationRecipe::cloth_soft_body) {
         // The free sphere is a load-bearing volume, not a tearable cloth. Its
         // dense rest graph and non-bonded barrier preserve volume while the
         // low ground drag above lets that volume translate and roll.
@@ -187,7 +187,7 @@ std::unique_ptr<SoftBodyCourse> make_recipe_deformable(
         options.unbonded_voxel_collisions = true;
         options.velocity_damping = 0.45F;
         options.cross_source_mass_multiplier = 8.0F;
-    } else if (context == meshprep::sim::SimulationRecipe::cloth) {
+    } else if (context == parallel_mater::examples::SimulationRecipe::cloth) {
         // Impact strain is sampled before projection in this scene. Require a
         // persistent but locally reachable strain so rolling contact can tear
         // the sheet without treating one gravity-loaded solve as damage.
@@ -197,25 +197,25 @@ std::unique_ptr<SoftBodyCourse> make_recipe_deformable(
         // the measured rigid-contact impulse in the contact pass below.
         options.strength_multiplier = 8.0F;
         options.fracture_persistence_substeps = 16U;
-    } else if (context == meshprep::sim::SimulationRecipe::water_rope) {
+    } else if (context == parallel_mater::examples::SimulationRecipe::water_rope) {
         options.spring_stiffness = 22'000.0F;
         options.strength_multiplier = 64.0F;
         options.spring_damping_ratio = 0.92F;
         options.velocity_damping = 0.65F;
         options.render_internal_members = true;
-    } else if (context == meshprep::sim::SimulationRecipe::water_soft_body) {
+    } else if (context == parallel_mater::examples::SimulationRecipe::water_soft_body) {
         // Shared by the top stage and the extruded outer wheel. It controls
         // rigid-ball rolling only; water and wheel gravity remain authored.
         options.ground_friction = 10.0F;
-    } else if (context == meshprep::sim::SimulationRecipe::rope) {
+    } else if (context == parallel_mater::examples::SimulationRecipe::rope) {
         options.spring_stiffness = 18'000.0F;
         options.strength_multiplier = 64.0F;
         options.spring_damping_ratio = 0.9F;
         options.velocity_damping = 0.35F;
         options.render_internal_members = true;
-    } else if (context == meshprep::sim::SimulationRecipe::cloth_rope ||
-               context == meshprep::sim::SimulationRecipe::soft_body_rope ||
-               context == meshprep::sim::SimulationRecipe::rope_smoke) {
+    } else if (context == parallel_mater::examples::SimulationRecipe::cloth_rope ||
+               context == parallel_mater::examples::SimulationRecipe::soft_body_rope ||
+               context == parallel_mater::examples::SimulationRecipe::rope_smoke) {
         options.spring_stiffness = 32'000.0F;
         options.strength_multiplier = 64.0F;
         options.spring_damping_ratio = 0.92F;
@@ -223,22 +223,22 @@ std::unique_ptr<SoftBodyCourse> make_recipe_deformable(
         options.render_internal_members = true;
     }
     options.course_board_collisions =
-        context != meshprep::sim::SimulationRecipe::water_soft_body;
+        context != parallel_mater::examples::SimulationRecipe::water_soft_body;
     options.arena = physics.arena;
     options.render_internal_members =
-        context == meshprep::sim::SimulationRecipe::water_rope ||
-        context == meshprep::sim::SimulationRecipe::rope ||
-        context == meshprep::sim::SimulationRecipe::cloth_rope ||
-        context == meshprep::sim::SimulationRecipe::soft_body_rope ||
-        context == meshprep::sim::SimulationRecipe::rope_smoke;
+        context == parallel_mater::examples::SimulationRecipe::water_rope ||
+        context == parallel_mater::examples::SimulationRecipe::rope ||
+        context == parallel_mater::examples::SimulationRecipe::cloth_rope ||
+        context == parallel_mater::examples::SimulationRecipe::soft_body_rope ||
+        context == parallel_mater::examples::SimulationRecipe::rope_smoke;
     options.fracture_before_projection =
-        context == meshprep::sim::SimulationRecipe::cloth ||
-        context == meshprep::sim::SimulationRecipe::cloth_soft_body;
+        context == parallel_mater::examples::SimulationRecipe::cloth ||
+        context == parallel_mater::examples::SimulationRecipe::cloth_soft_body;
     options.preserve_fractured_triangle_shape =
-        context == meshprep::sim::SimulationRecipe::cloth ||
-        context == meshprep::sim::SimulationRecipe::cloth_soft_body;
+        context == parallel_mater::examples::SimulationRecipe::cloth ||
+        context == parallel_mater::examples::SimulationRecipe::cloth_soft_body;
 
-    using meshprep::sim::SimulationRecipe;
+    using parallel_mater::examples::SimulationRecipe;
     if (context == SimulationRecipe::water ||
         context == SimulationRecipe::water_cloth ||
         context == SimulationRecipe::smoke ||
@@ -545,23 +545,23 @@ std::unique_ptr<SoftBodyCourse> make_recipe_deformable(
     return std::make_unique<SoftBodyCourse>(std::move(cylinder), options);
 }
 
-FluidDisplay default_recipe_display(meshprep::sim::SimulationRecipe context) noexcept
+FluidDisplay default_recipe_display(parallel_mater::examples::SimulationRecipe context) noexcept
 {
-    return context == meshprep::sim::SimulationRecipe::water_cloth ||
-        context == meshprep::sim::SimulationRecipe::water ||
-        context == meshprep::sim::SimulationRecipe::water_rope ||
-        context == meshprep::sim::SimulationRecipe::water_soft_body ||
-        context == meshprep::sim::SimulationRecipe::fluid_smoke
+    return context == parallel_mater::examples::SimulationRecipe::water_cloth ||
+        context == parallel_mater::examples::SimulationRecipe::water ||
+        context == parallel_mater::examples::SimulationRecipe::water_rope ||
+        context == parallel_mater::examples::SimulationRecipe::water_soft_body ||
+        context == parallel_mater::examples::SimulationRecipe::fluid_smoke
         ? FluidDisplay::Surface : FluidDisplay::Particles;
 }
 
 RigidSphereState initial_rigid_sphere(
-    meshprep::sim::SimulationRecipe context, std::uint32_t rope_node_count) noexcept
+    parallel_mater::examples::SimulationRecipe context, std::uint32_t rope_node_count) noexcept
 {
     RigidSphereState sphere;
     sphere.radius = 0.40F;
     sphere.mass = 20.0F;
-    if (context == meshprep::sim::SimulationRecipe::water) {
+    if (context == parallel_mater::examples::SimulationRecipe::water) {
         sphere.radius = 0.34F;
         // One particle has unit simulation mass. This exceeds the roughly
         // 2,500 particles displaced by the sphere, so it settles on the bowl
@@ -569,14 +569,14 @@ RigidSphereState initial_rigid_sphere(
         sphere.mass = 3'500.0F;
         sphere.center = make_float3(0.0F, 0.80F, -1.8F);
         sphere.velocity = make_float3(0.35F, -0.15F, 0.0F);
-    } else if (context == meshprep::sim::SimulationRecipe::cloth) {
+    } else if (context == parallel_mater::examples::SimulationRecipe::cloth) {
         // Start far enough from the tensioned cloth to make the approach
         // legible. Its lower pinned row is buried below the floor rather than
         // protruding into the sphere's path as an invisible curb.
         sphere.center = make_float3(0.0F, 0.18F, 1.45F);
         sphere.velocity = make_float3(0.0F, 0.0F, 0.0F);
         sphere.mass = 250.0F;
-    } else if (context == meshprep::sim::SimulationRecipe::water_rope) {
+    } else if (context == parallel_mater::examples::SimulationRecipe::water_rope) {
         // A sphere remains the conservative fluid/contact proxy while the
         // renderer presents it as a treasure chest.
         sphere.radius = fishing_chest_radius;
@@ -585,12 +585,12 @@ RigidSphereState initial_rigid_sphere(
         sphere.mass = 3'500.0F;
         sphere.center = fishing_chest_start;
         sphere.velocity = {};
-    } else if (context == meshprep::sim::SimulationRecipe::soft_body) {
+    } else if (context == parallel_mater::examples::SimulationRecipe::soft_body) {
         sphere.radius = 0.34F;
         sphere.mass = 80.0F;
         sphere.center = make_float3(-2.0F, course_floor_y + sphere.radius, -1.8F);
         sphere.velocity = make_float3(1.8F, 0.0F, 0.0F);
-    } else if (context == meshprep::sim::SimulationRecipe::water_soft_body) {
+    } else if (context == parallel_mater::examples::SimulationRecipe::water_soft_body) {
         // Start on the right stage and cross over the wheel toward the open
         // left exit. Bumper rails confine lateral motion to the stage.
         sphere.radius = 0.26F;
@@ -601,7 +601,7 @@ RigidSphereState initial_rigid_sphere(
             water_wheel_top_platform_y + sphere.radius,
             water_wheel_stage_z);
         sphere.velocity = {};
-    } else if (context == meshprep::sim::SimulationRecipe::rope) {
+    } else if (context == parallel_mater::examples::SimulationRecipe::rope) {
         rope_node_count = std::clamp(rope_node_count, 16U, 512U);
         const std::uint32_t trunk_nodes=std::max(8U,rope_node_count/2U);
         const std::uint32_t branch_nodes=std::max(
@@ -623,29 +623,29 @@ RigidSphereState initial_rigid_sphere(
             endpoint.y,
             endpoint.z+direction.z*(sphere.radius+node_radius));
         sphere.velocity = {};
-    } else if (context == meshprep::sim::SimulationRecipe::cloth_rope ||
-               context == meshprep::sim::SimulationRecipe::soft_body_rope ||
-               context == meshprep::sim::SimulationRecipe::rope_smoke) {
+    } else if (context == parallel_mater::examples::SimulationRecipe::cloth_rope ||
+               context == parallel_mater::examples::SimulationRecipe::soft_body_rope ||
+               context == parallel_mater::examples::SimulationRecipe::rope_smoke) {
         sphere.radius = 0.34F;
-        sphere.mass = context==meshprep::sim::SimulationRecipe::cloth_rope
+        sphere.mass = context==parallel_mater::examples::SimulationRecipe::cloth_rope
             ? 180.0F : 45.0F;
         sphere.center = make_float3(0.0F,
             rope_bridge_land_y + sphere.radius,
             rope_bridge_land_inner_z + 0.65F);
         sphere.velocity = {};
-    } else if (context == meshprep::sim::SimulationRecipe::smoke) {
+    } else if (context == parallel_mater::examples::SimulationRecipe::smoke) {
         sphere.radius=0.36F;
         sphere.mass=28.0F;
         sphere.center=make_float3(-1.8F,course_floor_y+sphere.radius,-1.2F);
         sphere.velocity=make_float3(1.35F,0.0F,0.0F);
-    } else if (context == meshprep::sim::SimulationRecipe::soft_body_smoke) {
+    } else if (context == parallel_mater::examples::SimulationRecipe::soft_body_smoke) {
         sphere.radius=0.30F;
         sphere.mass=45.0F;
         sphere.center=make_float3(-1.75F,course_floor_y+sphere.radius,-1.25F);
         sphere.velocity=make_float3(0.9F,0.0F,0.0F);
-    } else if (context == meshprep::sim::SimulationRecipe::cloth_smoke) {
+    } else if (context == parallel_mater::examples::SimulationRecipe::cloth_smoke) {
         sphere.center=make_float3(3.0F,course_floor_y+sphere.radius,-1.2F);
-    } else if (context == meshprep::sim::SimulationRecipe::fluid_smoke) {
+    } else if (context == parallel_mater::examples::SimulationRecipe::fluid_smoke) {
         sphere.center=make_float3(3.0F,course_floor_y+sphere.radius,-1.2F);
     } else {
         // A grazing track loads the breakable wall while not demanding that a
@@ -657,7 +657,7 @@ RigidSphereState initial_rigid_sphere(
 }
 
 void initialize_recipe_motion(
-    meshprep::sim::SimulationRecipe context, SoftBodyCourse& body)
+    parallel_mater::examples::SimulationRecipe context, SoftBodyCourse& body)
 {
     // Cloth-Softbody is driven by the same live gravity tilt as every other
     // gallery scene. It starts from rest so translation and rotation come

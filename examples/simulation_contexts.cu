@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-#include <parallel_mater/gallery.hpp>
+#include "gallery.hpp"
 
 #include <cuda_runtime_api.h>
 
@@ -9,13 +9,13 @@ int main()
 {
     // Water is fully procedural: no application window, renderer, or asset
     // path is required. The simulation owns all CUDA allocations.
-    parallel_mater::sim::GallerySimulation simulation;
+    parallel_mater::examples::GallerySimulation simulation;
     // One fluent builder is enough to select a complete authored simulation.
     // Omitted properties retain the level preset; no window or renderer is
     // pulled into the installed headless library.
     const parallel_mater::Status initialized =
-        parallel_mater::sim::SimulationBuilder(
-            parallel_mater::sim::SimulationRecipe::water)
+        parallel_mater::examples::SimulationBuilder(
+            parallel_mater::examples::SimulationRecipe::water)
             .particles(512U)
             .timestep(1.0F / 60.0F)
             .build(simulation);
@@ -41,7 +41,7 @@ int main()
     }
 
     // Views are borrowed device pointers and must be reacquired after a step.
-    const parallel_mater::sim::FrameRenderView frame = simulation.render_view();
+    const parallel_mater::examples::FrameRenderView frame = simulation.render_view();
     if (frame.particle_system_count != 1U || frame.particle_systems == nullptr ||
         frame.particle_systems[0].count != 2'048U) {
         std::fprintf(stderr, "unexpected Water render view\n");

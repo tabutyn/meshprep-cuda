@@ -86,13 +86,13 @@ void validate_foam(const std::vector<waterlab::FoamParticle>& values)
 struct Fixture {
     static constexpr float radius=0.0225F, spacing=0.06F, support=0.11F;
     std::vector<float3> positions, zero, uniform, energetic;
-    std::vector<meshprep::Aabb> bounds;
+    std::vector<parallel_mater::Aabb> bounds;
     DeviceBuffer<float3> device_positions, device_velocities;
-    DeviceBuffer<meshprep::Aabb> device_bounds;
+    DeviceBuffer<parallel_mater::Aabb> device_bounds;
     DeviceBuffer<std::uint64_t> device_cell_keys;
     DeviceBuffer<std::uint32_t> device_cell_indices;
-    meshprep::Workspace workspace;
-    meshprep::Hierarchy hierarchy;
+    parallel_mater::Workspace workspace;
+    parallel_mater::Hierarchy hierarchy;
 
     Fixture()
     {
@@ -124,7 +124,7 @@ struct Fixture {
         keys.reserve(cells.size()); indices.reserve(cells.size());
         for (const auto [key,index] : cells) { keys.push_back(key); indices.push_back(index); }
         device_cell_keys.upload(keys); device_cell_indices.upload(indices);
-        const auto status=meshprep::build_hierarchy(
+        const auto status=parallel_mater::build_hierarchy(
             {device_bounds.get(),bounds.size()},{},workspace,hierarchy);
         require(status.ok(),"failed to build visual fixture hierarchy");
     }
@@ -318,12 +318,12 @@ void test_particle_surface()
     constexpr float support=0.12F;
     // Radius h/3=.04: individual spheres separated by .09 leave a .01 gap.
     const std::vector<float3> positions{{-0.045F,0,0},{0.045F,0,0}};
-    const std::vector<meshprep::Aabb> bounds{{positions[0],positions[0]},{positions[1],positions[1]}};
+    const std::vector<parallel_mater::Aabb> bounds{{positions[0],positions[0]},{positions[1],positions[1]}};
     DeviceBuffer<float3> device_positions; device_positions.upload(positions);
-    DeviceBuffer<meshprep::Aabb> device_bounds; device_bounds.upload(bounds);
-    meshprep::Workspace workspace;
-    meshprep::Hierarchy hierarchy;
-    require(meshprep::build_hierarchy({device_bounds.get(),bounds.size()},{},workspace,hierarchy).ok(),
+    DeviceBuffer<parallel_mater::Aabb> device_bounds; device_bounds.upload(bounds);
+    parallel_mater::Workspace workspace;
+    parallel_mater::Hierarchy hierarchy;
+    require(parallel_mater::build_hierarchy({device_bounds.get(),bounds.size()},{},workspace,hierarchy).ok(),
         "build surface fixture hierarchy");
     waterlab::FluidSurface surface(32U);
     require(surface.update(device_positions.get(),2U,hierarchy,support)>=0,"invalid surface timing");

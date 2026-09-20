@@ -7,10 +7,10 @@
 namespace waterlab {
 namespace {
 
-[[nodiscard]] bool valid_recipe(meshprep::sim::SimulationRecipe recipe) noexcept
+[[nodiscard]] bool valid_recipe(parallel_mater::examples::SimulationRecipe recipe) noexcept
 {
-    return std::any_of(meshprep::sim::simulation_recipes.begin(),
-        meshprep::sim::simulation_recipes.end(),[recipe](const auto& candidate) {
+    return std::any_of(parallel_mater::examples::simulation_recipes.begin(),
+        parallel_mater::examples::simulation_recipes.end(),[recipe](const auto& candidate) {
             return candidate.recipe==recipe;
         });
 }
@@ -23,7 +23,7 @@ namespace {
 } // namespace
 
 const GalleryObjective& gallery_objective(
-    meshprep::sim::SimulationRecipe recipe) noexcept
+    parallel_mater::examples::SimulationRecipe recipe) noexcept
 {
     for (const auto& objective:gallery_objectives) {
         if (objective.recipe==recipe) return objective;
@@ -32,7 +32,7 @@ const GalleryObjective& gallery_objective(
 }
 
 ObjectiveProgress evaluate_objective(
-    meshprep::sim::SimulationRecipe recipe,const ObjectiveMetrics& metrics) noexcept
+    parallel_mater::examples::SimulationRecipe recipe,const ObjectiveMetrics& metrics) noexcept
 {
     ObjectiveProgress result{recipe};
     const GalleryObjective& objective=gallery_objective(recipe);
@@ -67,7 +67,7 @@ ObjectiveProgress evaluate_objective(
     return result;
 }
 
-void GalleryProgression::select(meshprep::sim::SimulationRecipe recipe) noexcept
+void GalleryProgression::select(parallel_mater::examples::SimulationRecipe recipe) noexcept
 {
     if (!valid_recipe(recipe)) return;
     recipe_=recipe;
@@ -83,13 +83,13 @@ ObjectiveProgress GalleryProgression::update(const ObjectiveMetrics& metrics) no
     }
     ++completed_frames_;
     if (completed_frames_>=90U &&
-        recipe_!=meshprep::sim::simulation_recipes.back().recipe) {
-        const auto current=std::find_if(meshprep::sim::simulation_recipes.begin(),
-            meshprep::sim::simulation_recipes.end(),[this](const auto& candidate) {
+        recipe_!=parallel_mater::examples::simulation_recipes.back().recipe) {
+        const auto current=std::find_if(parallel_mater::examples::simulation_recipes.begin(),
+            parallel_mater::examples::simulation_recipes.end(),[this](const auto& candidate) {
                 return candidate.recipe==recipe_;
             });
-        if (current==meshprep::sim::simulation_recipes.end() ||
-            current+1==meshprep::sim::simulation_recipes.end()) return result;
+        if (current==parallel_mater::examples::simulation_recipes.end() ||
+            current+1==parallel_mater::examples::simulation_recipes.end()) return result;
         recipe_=(current+1)->recipe;
         completed_frames_=0U;
         result.advanced=true;

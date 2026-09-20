@@ -28,7 +28,7 @@ __device__ std::uint32_t grid_dimension(float extent, float pitch)
         static_cast<std::uint32_t>(ceilf(extent / pitch)) + 1U));
 }
 
-__global__ void initialize_grid(const meshprep::HierarchyNode* nodes, float radius,
+__global__ void initialize_grid(const parallel_mater::HierarchyNode* nodes, float radius,
     std::uint32_t resolution, FluidSurfaceGrid* descriptor, std::uint32_t* errors)
 {
     const auto root = nodes[0];
@@ -71,7 +71,7 @@ __global__ void initialize_grid(const meshprep::HierarchyNode* nodes, float radi
     *descriptor = grid;
 }
 
-__device__ float bounds_distance_squared(float3 p, const meshprep::HierarchyNode& node)
+__device__ float bounds_distance_squared(float3 p, const parallel_mater::HierarchyNode& node)
 {
     const float x = fmaxf(fmaxf(node.bounds_min.x-p.x, 0), p.x-node.bounds_max.x);
     const float y = fmaxf(fmaxf(node.bounds_min.y-p.y, 0), p.y-node.bounds_max.y);
@@ -99,7 +99,7 @@ __device__ bool accumulate_field_particle(float3 sample, const float3* positions
 }
 
 __global__ void build_field(const float3* positions, std::uint32_t particle_count,
-    const meshprep::HierarchyNode* nodes, const std::uint32_t* indices,
+    const parallel_mater::HierarchyNode* nodes, const std::uint32_t* indices,
     std::uint32_t node_count, const FluidSurfaceGrid* descriptor,
     ParticleCellView cells, std::uint32_t sample_count, float* values,
     std::uint32_t* errors)
@@ -216,7 +216,7 @@ FluidSurface::~FluidSurface()
 }
 
 float FluidSurface::update(const float3* positions, std::uint32_t particle_count,
-    const meshprep::Hierarchy& hierarchy, float support_radius, cudaStream_t stream,
+    const parallel_mater::Hierarchy& hierarchy, float support_radius, cudaStream_t stream,
     ParticleCellView cells)
 {
     const auto stats = hierarchy.statistics();

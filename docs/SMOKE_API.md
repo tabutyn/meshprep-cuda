@@ -51,12 +51,13 @@ order.
 - `Smoke` owns its CUDA allocations and is movable but not copyable.
 - `SmokeParticleView` and all input coupling views are borrowed.
 - Reacquire particle views after `initialize()` or `reset()`.
-- Calls are synchronous before returning in the current release.
+- Legacy `step` and `couple` calls are synchronous; the common frame protocol
+  returns a `Completion` token after its internal statistics readback.
 - `external_impulses` is accumulated, not cleared or replaced.
 - A `SmokeCouplingView::timestep` is the receiving solver's substep; smoke
   advection keeps its own fixed `SmokeOptions::timestep`.
 
-## Gallery validation
+## Example-gallery validation
 
 The optional gallery composes the same API in five contexts:
 
@@ -70,7 +71,7 @@ The optional gallery composes the same API in five contexts:
 
 `meshprep-smoke-tests` validates finite advection, respawn, buoyancy, obstacle
 wake, and non-zero coupling. `meshprep-simulation-runtime-tests` initializes
-and steps every composition through the installed-style public API and checks
+and steps every example composition against the reusable solver APIs and checks
 the dynamic assertions above. The native app uses `Tab` to open the collapsible
 context catalog.
 

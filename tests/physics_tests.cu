@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT
-#include <meshprep/physics.hpp>
+#include <parallel_mater/physics.hpp>
 
 #include <cuda_runtime_api.h>
 
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
+#include <fstream>
 #include <stdexcept>
 #include <type_traits>
+#include <vector>
 
 #ifndef MESHPREP_PHYSICS_TEST_ASSET
 #define MESHPREP_PHYSICS_TEST_ASSET "assets/softbody/checker_cylinder.msb"
@@ -21,7 +24,7 @@ void require(bool condition, const char* message)
 
 void test_contract()
 {
-    using meshprep::physics::SoftBody;
+    using parallel_mater::physics::SoftBody;
     static_assert(std::is_default_constructible_v<SoftBody>);
     static_assert(std::is_move_constructible_v<SoftBody>);
     static_assert(!std::is_copy_constructible_v<SoftBody>);
@@ -31,7 +34,7 @@ void test_contract()
     require(!body.step({0.0F, -9.81F, 0.0F}),
         "uninitialized soft body accepted a step");
 
-    meshprep::physics::SoftBodyOptions invalid;
+    parallel_mater::physics::SoftBodyOptions invalid;
     invalid.substeps = 0U;
     require(!body.initialize(MESHPREP_PHYSICS_TEST_ASSET, invalid),
         "soft body accepted zero substeps");
@@ -39,7 +42,7 @@ void test_contract()
 
 void test_standalone_solver()
 {
-    meshprep::physics::SoftBodyOptions options;
+    parallel_mater::physics::SoftBodyOptions options;
     options.instance_count = 2U;
     options.substeps = 2U;
     options.constraint_iterations = 4U;
@@ -47,8 +50,8 @@ void test_standalone_solver()
     options.instance_origins[1] = {0.4F, 1.5F, 0.0F};
     options.render_internal_members = true;
 
-    meshprep::physics::SoftBody body;
-    require(meshprep::physics::SoftBody::create(
+    parallel_mater::physics::SoftBody body;
+    require(parallel_mater::physics::SoftBody::create(
                 MESHPREP_PHYSICS_TEST_ASSET, options, body).ok(),
         "standalone soft body failed to initialize");
     require(body.initialized(), "soft body did not retain initialization");
@@ -88,7 +91,7 @@ void test_standalone_solver()
         require(body.finish_substep(dt, {0.0F, 0.0F, 0.0F}).ok(),
             "manual substep completion failed");
     }
-    meshprep::physics::SoftBodyTimings timings;
+    parallel_mater::physics::SoftBodyTimings timings;
     require(body.finish_frame(timings).ok(), "manual frame completion failed");
     require(timings.gpu_total_ms() >= 0.0F && std::isfinite(timings.gpu_total_ms()),
         "manual frame returned invalid timings");
@@ -110,6 +113,127 @@ void test_standalone_solver()
         "standalone reset failed");
 }
 
+std::vector<std::byte> read_asset_bytes()
+{
+    std::ifstream input(MESHPREP_PHYSICS_TEST_ASSET,
+        std::ios::binary | std::ios::ate);
+    require(static_cast<bool>(input), "could not open soft-body test asset");
+    const auto size = static_cast<std::size_t>(input.tellg());
+    std::vector<std::byte> bytes(size);
+    input.seekg(0, std::ios::beg);
+    input.read(reinterpret_cast<char*>(bytes.data()),
+        static_cast<std::streamsize>(bytes.size()));
+    require(static_cast<bool>(input), "could not read soft-body test asset");
+    return bytes;
+}
+
+void test_memory_asset_and_protocol()
+{
+    const auto bytes = read_asset_bytes();
+    parallel_mater::physics::SoftBody body;
+    const parallel_mater::physics::SoftBodyAssetView asset{
+        bytes.data(), bytes.size()};
+    require(body.initialize(asset).ok(),
+        "memory-backed soft body failed to initialize");
+
+    parallel_mater::physics::Completion completion;
+    parallel_mater::physics::FrameOptions frame;
+    frame.substeps = 2U;
+    frame.acceleration = {0.0F, -9.81F, 0.0F};
+    require(body.advance_async(frame, completion).ok(),
+        "soft-body async frame failed to enqueue");
+    require(completion.pending(), "soft-body completion was not recorded");
+    require(completion.wait().ok(), "soft-body async frame failed");
+    require(body.statistics().frame_index == 1U,
+        "soft-body protocol did not advance one frame");
+}
+
+void test_independent_owners()
+{
+    using namespace parallel_mater::physics;
+    static_assert(FrameSolver<Fluid>);
+    static_assert(FrameSolver<Cloth>);
+    static_assert(FrameSolver<Rope>);
+    static_assert(FrameSolver<RigidBody>);
+
+    std::vector<FluidParticle> particles;
+    for (std::uint32_t z = 0U; z < 2U; ++z) {
+        for (std::uint32_t y = 0U; y < 2U; ++y) {
+            for (std::uint32_t x = 0U; x < 2U; ++x) {
+                particles.push_back({make_float3(
+                    0.05F * static_cast<float>(x),
+                    0.05F * static_cast<float>(y),
+                    0.05F * static_cast<float>(z)), {}});
+            }
+        }
+    }
+    Fluid fluid;
+    require(fluid.initialize(particles).ok(), "fluid owner failed to initialize");
+    Completion fluid_completion;
+    FrameOptions fluid_frame;
+    fluid_frame.substeps = 2U;
+    fluid_frame.acceleration = {0.0F, -1.0F, 0.0F};
+    require(fluid.advance_async(fluid_frame, fluid_completion).ok() &&
+            fluid_completion.wait().ok(),
+        "fluid owner failed to advance");
+    require(fluid.statistics().frame_index == 1U &&
+            fluid.particles().particle_count == particles.size(),
+        "fluid owner reported inconsistent state");
+    require(fluid.coupling_points().count == particles.size(),
+        "fluid owner omitted common coupling view");
+
+    ClothOptions cloth_options;
+    cloth_options.columns = 6U;
+    cloth_options.rows = 5U;
+    cloth_options.solver.substeps = 1U;
+    Cloth cloth;
+    require(cloth.initialize(cloth_options).ok(),
+        "cloth owner failed to initialize");
+    require(cloth.advance(FrameOptions{1.0F / 60.0F, 1U,
+                {0.0F, -1.0F, 0.0F}}).ok(),
+        "cloth owner failed to advance");
+    require(cloth.nodes().node_count == 30U,
+        "cloth owner produced unexpected topology");
+    require(cloth.coupling_points().count == cloth.nodes().node_count,
+        "cloth owner omitted common coupling view");
+
+    RopeOptions rope_options;
+    rope_options.node_count = 12U;
+    rope_options.direction = {0.0F, -1.0F, 0.0F};
+    rope_options.solver.substeps = 1U;
+    Rope rope;
+    require(rope.initialize(rope_options).ok(),
+        "rope owner failed to initialize");
+    require(rope.advance(FrameOptions{1.0F / 60.0F, 1U,
+                {0.0F, -1.0F, 0.0F}}).ok(),
+        "rope owner failed to advance");
+    require(rope.nodes().node_count == rope_options.node_count,
+        "rope owner produced unexpected topology");
+
+    RigidBody rigid;
+    require(rigid.initialize().ok(), "rigid-body owner failed to initialize");
+    const FrameOptions rigid_frame{1.0F / 60.0F, 2U,
+        {0.0F, -9.81F, 0.0F}};
+    require(rigid.begin_frame(rigid_frame).ok(),
+        "rigid-body frame failed to begin");
+    for (std::uint32_t i = 0U; i < rigid_frame.substeps; ++i) {
+        const auto substep = substep_context(rigid_frame, i);
+        require(rigid.prepare_substep(substep).ok(),
+            "rigid-body substep failed to prepare");
+        require(rigid.apply_force({0.0F, 20.0F, 0.0F},
+                    {0.5F, 0.0F, 0.0F}).ok(),
+            "rigid-body force was rejected");
+        require(rigid.finish_substep(substep).ok(),
+            "rigid-body substep failed to finish");
+    }
+    Completion rigid_completion;
+    require(rigid.finish_frame(rigid_completion).ok() &&
+            rigid_completion.wait().ok(),
+        "rigid-body frame failed to finish");
+    require(rigid.state().position.y > 0.0F,
+        "rigid-body force did not affect translation");
+}
+
 } // namespace
 
 int main()
@@ -122,6 +246,8 @@ int main()
     try {
         test_contract();
         test_standalone_solver();
+        test_memory_asset_and_protocol();
+        test_independent_owners();
         std::puts("all public physics tests passed");
         return 0;
     } catch (const std::exception& error) {

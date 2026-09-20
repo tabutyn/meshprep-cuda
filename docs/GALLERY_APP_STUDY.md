@@ -1,7 +1,7 @@
 # ParallelMater native gallery study guide
 
 `parallel-mater-lab` is the original native CUDA/OpenGL application, now with
-nine numbered contexts. It is intentionally a consumer of the installable ParallelMater targets rather
+fifteen selectable recipes. It is intentionally a consumer of the installable ParallelMater targets rather
 than a second simulation implementation.
 
 ## Build boundary
@@ -11,8 +11,8 @@ The dependency direction is:
 ```text
 parallel-mater-lab
   -> parallel-mater-gallery-runtime (ray-tracing/fluid presentation kernels)
-  -> ParallelMater::gallery          (nine simulation contexts)
-  -> ParallelMater::physics          (general fixed-topology soft body)
+  -> parallel-mater-example-gallery  (example-only simulation compositions)
+  -> ParallelMater::physics          (independent owning solvers)
   -> ParallelMater::geometry         (normals and hierarchy)
 ```
 
@@ -23,13 +23,13 @@ library targets.
 
 ## Reading order
 
-1. `include/parallel_mater/recipes.hpp` forwards to the portable scene recipe
-   and component configuration API.
-2. `include/parallel_mater/gallery.hpp` forwards to the owning headless CUDA
-   gallery API and its borrowed render views.
-3. `src/recipes.cpp` implements portable recipe validation without CUDA or a
+1. `examples/gallery/recipes.hpp` declares the example recipe catalog and
+   component configuration.
+2. `examples/gallery/gallery.hpp` declares the headless example composition
+   and its borrowed render views.
+3. `examples/gallery/recipes.cpp` implements recipe validation without CUDA or a
    window system.
-4. `src/simulation.cpp` adapts the scene recipes to the CUDA simulation
+4. `examples/gallery/gallery.cpp` adapts the scene recipes to the CUDA simulation
    components and exposes `GallerySimulation`.
 5. `apps/water_lab/campaign.cpp` owns objectives and auto-progression solely for
    the example gallery.
@@ -37,11 +37,11 @@ library targets.
    Tab browser selects a pending recipe that is rebuilt at the frame boundary.
 7. `apps/water_lab/simulation_gallery.cpp` contains the advanced native fixture
    assembly still needed by the renderer. It is compiled into
-   `ParallelMater::gallery`, not privately into the executable.
+   `parallel-mater-example-gallery`, not the installed API.
 
 For the smallest headless consumer, start with
-`examples/simulation_contexts.cu`; it uses only installed ParallelMater headers
-and the `ParallelMater::gallery` target.
+`examples/simulation_contexts.cu`; it uses the build-tree example headers and
+the `parallel-mater-example-gallery` target.
 
 The public `GallerySimulation` is deliberately smaller than the native app. It
 owns headless fixed-step simulation and borrowed CUDA render views. Camera,
@@ -65,6 +65,5 @@ Press `1` through `9` to switch contexts. Use `P` for physics controls, `L` for
 simulation quantities, `V` for the combined diagnostic view, and `T` for stage
 timings.
 
-The compatibility `<meshprep/...>` headers and namespace remain temporarily so
-older source keeps building, but all new consumer-facing examples use
-`parallel_mater` and `ParallelMater::` names.
+Only the real `parallel_mater` namespace is installed; the former
+`<meshprep/...>` compatibility headers and namespace alias have been removed.

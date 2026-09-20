@@ -4,11 +4,11 @@ Deterministic CUDA C++ mesh preprocessing: face/vertex normals and eight-way AAB
 
 ParallelMater is an MIT-licensed C++20/CUDA library for applications that keep geometry
 and simulation state on the GPU. Its stable core builds normals and spatial
-hierarchies. Its general-purpose physics layer provides fixed-topology
-volumetric soft bodies plus deterministic device-resident smoke/advection
-particles. Applications compose contacts and aerodynamic impulses through
-explicit coupling buffers. No renderer, window system, input model, or game
-rules are required.
+hierarchies. Its general-purpose physics layer provides independent owning
+fluid, cloth, rope, soft-body, rigid-body, and smoke solvers. Applications
+compose contacts and impulses through one frame/substep protocol and explicit
+coupling buffers. No renderer, window system, input model, recipe catalog, or
+game rules are installed with the library.
 
 Stable CUB sorting replaces atomic scatter order, so topology, primitive
 permutation, and corner-normal indices are repeatable on the same supported
@@ -48,8 +48,11 @@ The implementation began as working production geometry code with two concrete d
 - breadth-first eight-way hierarchy with contiguous child and primitive ranges;
 - generic device-AABB hierarchy input for particles and non-triangle primitives;
 - reusable movable RAII workspace and outputs, with no exceptions across the API;
-- separately linkable `ParallelMater::physics` soft-body and smoke solvers with application-owned contacts;
-- versioned `.msb` lattice assets, fixed stepping, fracture statistics, live
+- separately linkable `ParallelMater::physics` fluid, cloth, rope, soft-body,
+  rigid-body, and smoke owners with application-owned contacts;
+- a shared prepare/couple/finish protocol, movable CUDA completion tokens, and
+  synchronous `advance()` convenience calls;
+- versioned `.msb` lattice assets accepted from memory or files, fixed stepping, fracture statistics, live
   material controls, and borrowed CUDA node/bond/surface views;
 - validation for non-finite coordinates, indices, sharp-edge endpoints, and 32-bit limits;
 - seeded CPU-reference tests, 100-run determinism checks, Compute Sanitizer gates, and a 10M-triangle scale test;
@@ -57,29 +60,37 @@ The implementation began as working production geometry code with two concrete d
 
 ## General-purpose physics API
 
-`<parallel_mater/physics.hpp>` and the `ParallelMater::physics` CMake target are independent
-of the gallery. A `SoftBody` owns CUDA state and a converted `.msb` lattice.
-Use `step()` for a complete fixed update, or use the frame/substep protocol to
-run custom CUDA contact kernels between prediction and constraint completion:
+`<parallel_mater/physics.hpp>` and the `ParallelMater::physics` target expose
+six independent owners. Convenience headers such as
+`<parallel_mater/fluid.hpp>`, `<parallel_mater/cloth.hpp>`,
+`<parallel_mater/rope.hpp>`, and `<parallel_mater/rigid_body.hpp>` select the
+same ABI without exposing gallery policy.
+
+Every owner implements `begin_frame`, `prepare_substep`, `finish_substep`, and
+`finish_frame`. Coupling belongs between prepare and finish. `advance()` drives
+the sequence synchronously; `advance_async()` returns a movable `Completion`:
 
 ```cpp
-parallel_mater::physics::SoftBodyOptions options;
-options.instance_origins[0] = {0.0F, 1.0F, 0.0F};
+parallel_mater::physics::FrameOptions frame{
+    .timestep = 1.0F / 60.0F,
+    .substeps = 4,
+    .acceleration = gravity,
+};
+parallel_mater::physics::Fluid fluid;
+parallel_mater::Status status = fluid.initialize(initial_particles);
+if (status) status = fluid.begin_frame(frame, stream);
 
-parallel_mater::physics::SoftBody body;
-parallel_mater::Status status = body.initialize("asset.msb", options);
-if (status) status = body.begin_frame();
-
-const float dt = options.timestep / options.substeps;
-for (std::uint32_t i = 0; status && i < options.substeps; ++i) {
-    status = body.prepare_substep(dt, gravity, stream);
+for (std::uint32_t i = 0; status && i < frame.substeps; ++i) {
+    auto substep = parallel_mater::physics::substep_context(frame, i);
+    status = fluid.prepare_substep(substep, stream);
     if (!status) break;
-    auto nodes = body.nodes(); // write impulses/corrections with your kernels
-    status = body.finish_substep(dt, gravity, stream);
+    auto particles = fluid.particles(); // add contact impulses on the stream
+    status = fluid.finish_substep(substep, stream);
 }
 
-parallel_mater::physics::SoftBodyTimings timings;
-if (status) status = body.finish_frame(timings, stream);
+parallel_mater::physics::Completion completion;
+if (status) status = fluid.finish_frame(completion, stream);
+if (status) status = completion.wait();
 ```
 
 See [`examples/soft_body.cu`](examples/soft_body.cu) for a custom analytic
@@ -87,6 +98,9 @@ ground contact. Public calls return `Status`; owning objects are movable;
 device views are borrowed and must be reacquired after stepping. A narrow
 package-level timing baseline is recorded in
 [`docs/PHYSICS_PERFORMANCE.md`](docs/PHYSICS_PERFORMANCE.md).
+
+[`examples/solvers.cu`](examples/solvers.cu) creates and advances independent
+fluid, cloth, rope, and rigid-body owners without a recipe or game layer.
 
 `<parallel_mater/smoke.hpp>` exposes an independent owning `Smoke` solver.
 `step()` advects a deterministic stream with buoyancy, damping, turbulence,
@@ -96,18 +110,13 @@ particular cloth, rope, or soft-body implementation. See
 [`examples/smoke.cu`](examples/smoke.cu) and the ownership/coupling contract in
 [`docs/SMOKE_API.md`](docs/SMOKE_API.md).
 
-## Optional gallery API
+## Example gallery
 
-When configured with `-DPARALLEL_MATER_BUILD_GALLERY=ON`, the dependency-free
-`<parallel_mater/recipes.hpp>` header defines the native recipe
-catalog and fluent `RecipeConfig`; objectives and progression belong exclusively
-to the example application. `<parallel_mater/gallery.hpp>` adds borrowed CUDA render
-views and `SimulationBuilder`, which turns a portable configuration into an
-owning headless CUDA simulation. The separately exported
-`ParallelMater::gallery` target owns and steps those recipes headlessly;
-it has no GLFW, OpenGL, ray-tracer, or HUD dependency. Native and headless
-recipes share one preset factory; optional gravity and solver-iteration
-overrides are explicit, and `resolved_physics()` reports what was selected.
+`-DPARALLEL_MATER_BUILD_GALLERY=ON` builds the recipe catalog and headless
+gallery from [`examples/gallery`](examples/gallery). These headers and targets
+are build-tree examples: they are not installed, exported, or part of the
+ParallelMater package contract. Objectives and progression remain in
+`apps/water_lab`.
 The optional gallery has a 20,000-particle hemispherical paint bowl with a dynamic sphere,
 closed-box rigid-sphere/cloth and rigid-sphere/soft-body examples, a combined
 sphere/particle/catching-cloth scene, a torque-driven water wheel with compliant
@@ -119,8 +128,8 @@ smoke compositions covering rigid wake turbulence, water-to-steam presentation,
 pitched cloth blades, soft grass, and a wind-loaded rope bridge. The native `Tab`
 catalog color-codes the systems used by each recipe; the native `P`
 panel exposes active particle count and physical water-skin detail where
-applicable. These scene recipes remain experimental and are deliberately
-separate from the general physics contract.
+applicable. These scenes remain experimental demonstrations of solver
+composition.
 
 See [`docs/API_INVENTORY.md`](docs/API_INVENTORY.md) for a one-sentence inventory
 of every installed type and free function plus the current extraction priorities.
@@ -160,7 +169,7 @@ ctest --test-dir build --output-on-failure
 ```
 
 The default package build is intentionally small: geometry and general physics
-only. Benchmarks, tests, capture tools, the fifteen-scene gallery API, and the
+only. Benchmarks, tests, capture tools, the fifteen-scene example gallery, and the
 OpenGL app are opt-in CMake options. CI enables all of them explicitly.
 
 The test and sanitizer commands need a CUDA-capable host. Tests cover smooth and sharp meshes, a sharp cube, disconnected fans, duplicate edges, a non-manifold edge, degenerate faces, identical centroids, invalid inputs, and seeded triangle soup.
@@ -185,10 +194,10 @@ parallel_mater::Status particle_hierarchy_status = parallel_mater::build_hierarc
 For an optional complete gallery preset, the convenience API is intentionally small:
 
 ```cpp
-parallel_mater::sim::GallerySimulation simulation;
+parallel_mater::examples::GallerySimulation simulation;
 parallel_mater::Status status =
-    parallel_mater::sim::SimulationBuilder(
-        parallel_mater::sim::SimulationRecipe::water)
+    parallel_mater::examples::SimulationBuilder(
+        parallel_mater::examples::SimulationRecipe::water)
         .particles(20'000)
         .iterations(4)
         .build(simulation);
@@ -215,12 +224,14 @@ flowchart LR
     W -. reused scratch .-> P
 ```
 
-Calls are synchronous before return in v0.1.0. Inputs and outputs stay on the device. Output objects own their allocations; views do not. One `Workspace` must not be used concurrently by multiple calls.
+Geometry calls are synchronous before return. Inputs and outputs stay on the
+device. Output objects own their allocations; views do not. One `Workspace`
+must not be used concurrently by multiple calls. Physics owners additionally
+support the completion-token protocol described above.
 
-The former `<meshprep/...>` headers, `meshprep` namespace, and build-tree target
-aliases remain temporarily available for source compatibility. New consumers
-should use the `parallel_mater` headers/namespace and `ParallelMater::` CMake
-targets. This compatibility layer does not create a second implementation.
+Only `<parallel_mater/...>`, the real `parallel_mater` namespace, and
+`ParallelMater::` installed targets are supported; the former `meshprep`
+compatibility surface has been removed.
 
 ## Performance snapshot
 

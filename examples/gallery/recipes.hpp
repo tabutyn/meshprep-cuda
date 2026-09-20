@@ -7,7 +7,7 @@
 #include <optional>
 #include <string_view>
 
-namespace meshprep::sim {
+namespace parallel_mater::examples {
 
 // Components are deliberately composable. Recipes describe example solver
 // compositions; they do not define gameplay or progression.
@@ -169,4 +169,4 @@ enum class RecipeConfigError : std::uint8_t {
 [[nodiscard]] std::string_view recipe_config_error_message(
     RecipeConfigError error) noexcept;
 
-} // namespace meshprep::sim
+} // namespace parallel_mater::examples

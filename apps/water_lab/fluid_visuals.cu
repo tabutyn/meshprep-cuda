@@ -26,14 +26,14 @@ void check(cudaError_t status, const char* operation)
     }
 }
 
-void check(meshprep::Status status, const char* operation)
+void check(parallel_mater::Status status, const char* operation)
 {
     if (!status.ok()) {
         throw std::runtime_error(std::string(operation) + ": " + status.message);
     }
 }
 
-void check_foam_depth(const meshprep::Hierarchy& hierarchy)
+void check_foam_depth(const parallel_mater::Hierarchy& hierarchy)
 {
     if (hierarchy.statistics().max_depth > 18U) {
         throw std::runtime_error("foam hierarchy depth exceeds traversal stack contract");
@@ -76,7 +76,7 @@ __device__ float smooth(float low, float high, float value)
     return t*t*(3.0F-2.0F*t);
 }
 
-__device__ float bounds_distance_squared(float3 p, const meshprep::HierarchyNode& node)
+__device__ float bounds_distance_squared(float3 p, const parallel_mater::HierarchyNode& node)
 {
     const float x = fmaxf(fmaxf(node.bounds_min.x-p.x, 0.0F), p.x-node.bounds_max.x);
     const float y = fmaxf(fmaxf(node.bounds_min.y-p.y, 0.0F), p.y-node.bounds_max.y);
@@ -114,7 +114,7 @@ __device__ void clear_foam(FoamParticle& foam)
 }
 
 __device__ void emit_foam_bounds(const FoamParticle& foam, float3 anchor,
-    meshprep::Aabb& bounds)
+    parallel_mater::Aabb& bounds)
 {
     if (!valid_live_foam(foam)) {
         bounds.minimum = anchor;
@@ -128,7 +128,7 @@ __device__ void emit_foam_bounds(const FoamParticle& foam, float3 anchor,
     bounds.maximum = make_float3(p.x+radius, p.y+radius, p.z+radius);
 }
 
-__device__ bool push_children(const meshprep::HierarchyNode& node,
+__device__ bool push_children(const parallel_mater::HierarchyNode& node,
     std::uint32_t node_count, std::uint32_t* stack, std::uint32_t& pending)
 {
     // Eight-way DFS needs at most 1+7*depth entries (127 at depth 18).
@@ -161,7 +161,7 @@ __device__ bool accumulate_fluid_velocity(float3 point, const float3* positions,
 }
 
 __device__ bool sample_fluid_velocity(float3 point, const float3* positions,
-    const float3* velocities, const meshprep::HierarchyNode* nodes,
+    const float3* velocities, const parallel_mater::HierarchyNode* nodes,
     const std::uint32_t* indices, std::uint32_t node_count, std::uint32_t count,
     ParticleCellView cells, float support_radius, float3& velocity,
     std::uint32_t* errors)
@@ -262,7 +262,7 @@ __device__ bool accumulate_distribution_sample(std::uint32_t particle,
 }
 
 __global__ void update_distribution_normals(const float3* positions,
-    const float3* velocities, const meshprep::HierarchyNode* nodes,
+    const float3* velocities, const parallel_mater::HierarchyNode* nodes,
     const std::uint32_t* indices, std::uint32_t node_count, std::uint32_t count,
     ParticleCellView cells, float radius, float3 up, float4* normal_source,
     std::uint32_t* errors)
@@ -338,11 +338,11 @@ __global__ void update_distribution_normals(const float3* positions,
 }
 
 __global__ void update_foam_particles(const float3* positions, const float3* velocities,
-    const float4* normal_source, const meshprep::HierarchyNode* fluid_nodes,
+    const float4* normal_source, const parallel_mater::HierarchyNode* fluid_nodes,
     const std::uint32_t* fluid_indices, std::uint32_t fluid_node_count,
     std::uint32_t particle_count, ParticleCellView cells, FluidSurfaceView surface,
     float support_radius, float dt, std::uint64_t tick, bool use_course,
-    FoamSettings settings, FoamParticle* particles, meshprep::Aabb* bounds,
+    FoamSettings settings, FoamParticle* particles, parallel_mater::Aabb* bounds,
     float3* anchor_output, std::uint32_t* errors)
 {
     const std::uint32_t slot = blockIdx.x*blockDim.x+threadIdx.x;
@@ -447,7 +447,7 @@ __global__ void update_foam_particles(const float3* positions, const float3* vel
 }
 
 __global__ void restore_foam_bounds(const FoamParticle* particles, float3 anchor,
-    meshprep::Aabb* bounds)
+    parallel_mater::Aabb* bounds)
 {
     const std::uint32_t slot = blockIdx.x*blockDim.x+threadIdx.x;
     if (slot < FluidVisuals::foam_capacity) emit_foam_bounds(particles[slot], anchor, bounds[slot]);
@@ -464,7 +464,7 @@ FluidVisuals::FluidVisuals(std::uint32_t particle_count, std::uint32_t surface_r
             "allocate fluid visual normals");
         check(cudaMalloc(&foam_particles_, foam_capacity*sizeof(FoamParticle)),
             "allocate foam particles");
-        check(cudaMalloc(&foam_bounds_, foam_capacity*sizeof(meshprep::Aabb)),
+        check(cudaMalloc(&foam_bounds_, foam_capacity*sizeof(parallel_mater::Aabb)),
             "allocate foam bounds");
         check(cudaMalloc(&foam_anchor_, sizeof(float3)), "allocate foam anchor");
         check(cudaMalloc(&errors_, sizeof(std::uint32_t)), "allocate fluid visual audit");
@@ -516,7 +516,7 @@ FluidVisuals::~FluidVisuals()
 }
 
 float FluidVisuals::update(const float3* positions, const float3* velocities,
-    const meshprep::Hierarchy& hierarchy, float support_radius, float3 gravity,
+    const parallel_mater::Hierarchy& hierarchy, float support_radius, float3 gravity,
     float dt, cudaStream_t stream, bool obstacle_course, ParticleCellView cells)
 {
     nvtx3::scoped_range range{"waterlab/fluid_visuals"};
@@ -560,7 +560,7 @@ float FluidVisuals::update(const float3* positions, const float3* velocities,
         statistics.node_count, count_, cells, surface_.view(), support_radius, dt, tick_,
         obstacle_course, foam_settings_, foam_particles_, foam_bounds_, foam_anchor_, errors_);
     check(cudaGetLastError(), "launch foam particles");
-    check(meshprep::build_hierarchy({foam_bounds_, foam_capacity}, {}, foam_workspace_,
+    check(parallel_mater::build_hierarchy({foam_bounds_, foam_capacity}, {}, foam_workspace_,
         foam_hierarchy_, stream), "build foam hierarchy");
     check_foam_depth(foam_hierarchy_);
     check(cudaEventRecord(end_, stream), "end fluid visuals");
@@ -584,12 +584,12 @@ void FluidVisuals::reset(cudaStream_t stream)
         stream), "reset fluid visual normals");
     check(cudaMemsetAsync(foam_particles_, 0, foam_capacity*sizeof(FoamParticle), stream),
         "reset foam particles");
-    check(cudaMemsetAsync(foam_bounds_, 0, foam_capacity*sizeof(meshprep::Aabb), stream),
+    check(cudaMemsetAsync(foam_bounds_, 0, foam_capacity*sizeof(parallel_mater::Aabb), stream),
         "reset foam bounds");
     check(cudaMemsetAsync(foam_anchor_, 0, sizeof(float3), stream), "reset foam anchor");
     check(cudaMemsetAsync(errors_, 0, sizeof(std::uint32_t), stream),
         "reset fluid visual audit");
-    check(meshprep::build_hierarchy({foam_bounds_, foam_capacity}, {}, foam_workspace_,
+    check(parallel_mater::build_hierarchy({foam_bounds_, foam_capacity}, {}, foam_workspace_,
         foam_hierarchy_, stream), "build reset foam hierarchy");
     check_foam_depth(foam_hierarchy_);
     check(cudaStreamSynchronize(stream), "complete fluid visual reset");
@@ -655,7 +655,7 @@ void FluidVisuals::restore_foam(const std::vector<FoamParticle>& input, std::uin
     restore_foam_bounds<<<(foam_capacity+block_size-1U)/block_size, block_size, 0, stream>>>(
         foam_particles_, anchor, foam_bounds_);
     check(cudaGetLastError(), "launch restored foam bounds");
-    check(meshprep::build_hierarchy({foam_bounds_, foam_capacity}, {}, foam_workspace_,
+    check(parallel_mater::build_hierarchy({foam_bounds_, foam_capacity}, {}, foam_workspace_,
         foam_hierarchy_, stream), "build restored foam hierarchy");
     check_foam_depth(foam_hierarchy_);
     check(cudaStreamSynchronize(stream), "complete foam restore");

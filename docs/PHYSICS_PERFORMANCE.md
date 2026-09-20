@@ -1,7 +1,7 @@
 # Public soft-body performance
 
 This is a narrow package-level baseline, not a claim about the eight gallery
-scenes. It measures the public `meshprep::physics::SoftBody` frame protocol and
+scenes. It measures the public `parallel_mater::physics::SoftBody` frame protocol and
 the custom analytic ground kernel in `examples/soft_body.cu`.
 
 ## Configuration
@@ -31,9 +31,9 @@ Reproduce from the repository root:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-  -DMESHPREP_BUILD_EXAMPLES=ON -DCMAKE_CUDA_ARCHITECTURES=86
-cmake --build build --target meshprep-soft-body-example -j
-./build/meshprep-soft-body-example assets/softbody/checker_cylinder.msb
+  -DPARALLEL_MATER_BUILD_EXAMPLES=ON -DCMAKE_CUDA_ARCHITECTURES=86
+cmake --build build --target parallel-mater-soft-body-example -j
+./build/parallel-mater-soft-body-example assets/softbody/checker_cylinder.msb
 ```
 
 The executable prints its own p5/median/p95 values and retained allocation so

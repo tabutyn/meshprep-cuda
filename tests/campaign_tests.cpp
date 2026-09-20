@@ -18,7 +18,7 @@ void expect(bool condition,const char* message)
 
 int main()
 {
-    using meshprep::sim::SimulationRecipe;
+    using parallel_mater::examples::SimulationRecipe;
 
     waterlab::ObjectiveMetrics metrics;
     metrics.painted_fraction=0.42F;

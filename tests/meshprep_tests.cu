@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-#include <meshprep/meshprep.hpp>
+#include <parallel_mater/geometry.hpp>
 
 #include <cuda_runtime.h>
 
@@ -103,7 +103,7 @@ struct DeviceMesh {
     {
     }
 
-    [[nodiscard]] meshprep::DeviceMeshView view() const
+    [[nodiscard]] parallel_mater::DeviceMeshView view() const
     {
         return {positions.data(), position_count, triangles.data(), triangle_count};
     }
@@ -146,18 +146,18 @@ float3 cpu_face_normal(const HostMesh& mesh, std::size_t triangle_index)
 
 void test_empty_input()
 {
-    meshprep::Workspace workspace;
-    meshprep::NormalOutput normals;
-    meshprep::Hierarchy hierarchy;
+    parallel_mater::Workspace workspace;
+    parallel_mater::NormalOutput normals;
+    parallel_mater::Hierarchy hierarchy;
     CHECK(
-        meshprep::compute_normals({}, {}, workspace, normals).code ==
-        meshprep::StatusCode::invalid_argument);
+        parallel_mater::compute_normals({}, {}, workspace, normals).code ==
+        parallel_mater::StatusCode::invalid_argument);
     CHECK(
-        meshprep::build_hierarchy(meshprep::DeviceMeshView{}, {}, workspace, hierarchy).code ==
-        meshprep::StatusCode::invalid_argument);
+        parallel_mater::build_hierarchy(parallel_mater::DeviceMeshView{}, {}, workspace, hierarchy).code ==
+        parallel_mater::StatusCode::invalid_argument);
     CHECK(
-        meshprep::build_hierarchy(meshprep::DeviceAabbView{}, {}, workspace, hierarchy).code ==
-        meshprep::StatusCode::invalid_argument);
+        parallel_mater::build_hierarchy(parallel_mater::DeviceAabbView{}, {}, workspace, hierarchy).code ==
+        parallel_mater::StatusCode::invalid_argument);
 }
 
 void test_triangle_and_degenerate_normals()
@@ -171,10 +171,10 @@ void test_triangle_and_degenerate_normals()
         {make_uint3(0, 1, 2), make_uint3(0, 0, 0)},
     };
     const DeviceMesh device(host);
-    meshprep::Workspace workspace;
-    meshprep::NormalOutput output;
-    const meshprep::Status status =
-        meshprep::compute_normals(device.view(), {}, workspace, output);
+    parallel_mater::Workspace workspace;
+    parallel_mater::NormalOutput output;
+    const parallel_mater::Status status =
+        parallel_mater::compute_normals(device.view(), {}, workspace, output);
     CHECK(status.ok());
     CHECK(output.statistics().degenerate_triangle_count == 1);
     const auto faces = download(output.face_normals(), 2);
@@ -186,9 +186,9 @@ void test_smooth_and_sharp_quad()
 {
     const HostMesh host = quad_mesh();
     const DeviceMesh device(host);
-    meshprep::Workspace workspace;
-    meshprep::NormalOutput smooth;
-    meshprep::Status status = meshprep::compute_normals(device.view(), {}, workspace, smooth);
+    parallel_mater::Workspace workspace;
+    parallel_mater::NormalOutput smooth;
+    parallel_mater::Status status = parallel_mater::compute_normals(device.view(), {}, workspace, smooth);
     CHECK(status.ok());
     CHECK(smooth.statistics().vertex_normal_count == 4);
     const auto smooth_normals = download(
@@ -202,8 +202,8 @@ void test_smooth_and_sharp_quad()
 
     const std::vector<uint2> host_edges{make_uint2(2, 0), make_uint2(0, 2)};
     const DeviceArray<uint2> device_edges(host_edges);
-    meshprep::NormalOutput sharp;
-    status = meshprep::compute_normals(
+    parallel_mater::NormalOutput sharp;
+    status = parallel_mater::compute_normals(
         device.view(), {device_edges.data(), host_edges.size()}, workspace, sharp);
     CHECK(status.ok());
     CHECK(sharp.statistics().vertex_normal_count == 6);
@@ -213,7 +213,7 @@ void test_smooth_and_sharp_quad()
 
     const auto reference_indices = sharp_indices;
     for (int iteration = 0; iteration < 100; ++iteration) {
-        status = meshprep::compute_normals(
+        status = parallel_mater::compute_normals(
             device.view(), {device_edges.data(), host_edges.size()}, workspace, sharp);
         CHECK(status.ok());
         CHECK(download(sharp.corner_normal_indices(), 6) == reference_indices);
@@ -245,9 +245,9 @@ void test_normal_topology_fixtures()
     };
     const DeviceMesh cube_device(cube);
     const DeviceArray<uint2> cube_edge_device(cube_edges);
-    meshprep::Workspace workspace;
-    meshprep::NormalOutput output;
-    CHECK(meshprep::compute_normals(
+    parallel_mater::Workspace workspace;
+    parallel_mater::NormalOutput output;
+    CHECK(parallel_mater::compute_normals(
               cube_device.view(), {cube_edge_device.data(), cube_edges.size()}, workspace, output)
               .ok());
     CHECK(output.statistics().vertex_normal_count == 24);
@@ -260,7 +260,7 @@ void test_normal_topology_fixtures()
         {make_uint3(0, 1, 2), make_uint3(0, 3, 4)},
     };
     const DeviceMesh disconnected_device(disconnected_fans);
-    CHECK(meshprep::compute_normals(disconnected_device.view(), {}, workspace, output).ok());
+    CHECK(parallel_mater::compute_normals(disconnected_device.view(), {}, workspace, output).ok());
     CHECK(output.statistics().vertex_normal_count == 6);
 
     const HostMesh non_manifold{
@@ -271,7 +271,7 @@ void test_normal_topology_fixtures()
         {make_uint3(0, 1, 2), make_uint3(1, 0, 3), make_uint3(0, 1, 4)},
     };
     const DeviceMesh non_manifold_device(non_manifold);
-    CHECK(meshprep::compute_normals(non_manifold_device.view(), {}, workspace, output).ok());
+    CHECK(parallel_mater::compute_normals(non_manifold_device.view(), {}, workspace, output).ok());
     CHECK(output.statistics().vertex_normal_count == 5);
 }
 
@@ -280,43 +280,43 @@ void test_invalid_meshes()
     HostMesh bad_index = quad_mesh();
     bad_index.triangles[0].z = 99;
     const DeviceMesh device_bad_index(bad_index);
-    meshprep::Workspace workspace;
-    meshprep::NormalOutput normals;
+    parallel_mater::Workspace workspace;
+    parallel_mater::NormalOutput normals;
     CHECK(
-        meshprep::compute_normals(device_bad_index.view(), {}, workspace, normals).code ==
-        meshprep::StatusCode::invalid_mesh);
+        parallel_mater::compute_normals(device_bad_index.view(), {}, workspace, normals).code ==
+        parallel_mater::StatusCode::invalid_mesh);
 
     HostMesh nonfinite = quad_mesh();
     nonfinite.positions[0].x = std::numeric_limits<float>::quiet_NaN();
     const DeviceMesh device_nonfinite(nonfinite);
-    meshprep::Hierarchy hierarchy;
+    parallel_mater::Hierarchy hierarchy;
     CHECK(
-        meshprep::build_hierarchy(device_nonfinite.view(), {}, workspace, hierarchy).code ==
-        meshprep::StatusCode::invalid_mesh);
+        parallel_mater::build_hierarchy(device_nonfinite.view(), {}, workspace, hierarchy).code ==
+        parallel_mater::StatusCode::invalid_mesh);
 
     const std::vector<uint2> self_edge{make_uint2(0, 0)};
     const DeviceArray<uint2> device_edge(self_edge);
     const DeviceMesh valid_device(quad_mesh());
     CHECK(
-        meshprep::compute_normals(
+        parallel_mater::compute_normals(
             valid_device.view(), {device_edge.data(), 1}, workspace, normals).code ==
-        meshprep::StatusCode::invalid_mesh);
+        parallel_mater::StatusCode::invalid_mesh);
 
     const std::vector<uint2> out_of_range_edge{make_uint2(0, 99)};
     const DeviceArray<uint2> out_of_range_edge_device(out_of_range_edge);
     CHECK(
-        meshprep::compute_normals(
+        parallel_mater::compute_normals(
             valid_device.view(), {out_of_range_edge_device.data(), 1}, workspace, normals).code ==
-        meshprep::StatusCode::invalid_mesh);
+        parallel_mater::StatusCode::invalid_mesh);
 
-    meshprep::Hierarchy invalid_options_output;
+    parallel_mater::Hierarchy invalid_options_output;
     CHECK(
-        meshprep::build_hierarchy(
-            valid_device.view(), meshprep::HierarchyOptions{0}, workspace, invalid_options_output)
-            .code == meshprep::StatusCode::invalid_argument);
+        parallel_mater::build_hierarchy(
+            valid_device.view(), parallel_mater::HierarchyOptions{0}, workspace, invalid_options_output)
+            .code == parallel_mater::StatusCode::invalid_argument);
 }
 
-bool same_node(const meshprep::HierarchyNode& a, const meshprep::HierarchyNode& b)
+bool same_node(const parallel_mater::HierarchyNode& a, const parallel_mater::HierarchyNode& b)
 {
     return std::bit_cast<std::uint32_t>(a.bounds_min.x) ==
             std::bit_cast<std::uint32_t>(b.bounds_min.x) &&
@@ -344,7 +344,7 @@ bool bounds_contain(float3 minimum, float3 maximum, float3 point)
 
 void validate_hierarchy(
     const HostMesh& mesh,
-    const std::vector<meshprep::HierarchyNode>& nodes,
+    const std::vector<parallel_mater::HierarchyNode>& nodes,
     const std::vector<std::uint32_t>& permutation,
     std::uint32_t max_leaf_size)
 {
@@ -414,11 +414,11 @@ void test_hierarchy_and_determinism()
 {
     const HostMesh host = identical_centroid_mesh(257);
     const DeviceMesh device(host);
-    meshprep::Workspace workspace;
-    meshprep::Hierarchy hierarchy;
-    const meshprep::HierarchyOptions options{4};
-    meshprep::Status status =
-        meshprep::build_hierarchy(device.view(), options, workspace, hierarchy);
+    parallel_mater::Workspace workspace;
+    parallel_mater::Hierarchy hierarchy;
+    const parallel_mater::HierarchyOptions options{4};
+    parallel_mater::Status status =
+        parallel_mater::build_hierarchy(device.view(), options, workspace, hierarchy);
     CHECK(status.ok());
     CHECK(hierarchy.statistics().max_depth > 0);
     const auto reference_nodes = download(hierarchy.nodes(), hierarchy.statistics().node_count);
@@ -427,7 +427,7 @@ void test_hierarchy_and_determinism()
     validate_hierarchy(host, reference_nodes, reference_permutation, options.max_leaf_size);
 
     for (int iteration = 0; iteration < 100; ++iteration) {
-        status = meshprep::build_hierarchy(device.view(), options, workspace, hierarchy);
+        status = parallel_mater::build_hierarchy(device.view(), options, workspace, hierarchy);
         CHECK(status.ok());
         CHECK(hierarchy.statistics().node_count == reference_nodes.size());
         const auto nodes = download(hierarchy.nodes(), hierarchy.statistics().node_count);
@@ -442,7 +442,7 @@ void test_hierarchy_and_determinism()
 
 void test_aabb_hierarchy()
 {
-    std::vector<meshprep::Aabb> host_bounds;
+    std::vector<parallel_mater::Aabb> host_bounds;
     HostMesh proxy_mesh;
     for (std::uint32_t index = 0; index < 257U; ++index) {
         const float x = static_cast<float>(index % 17U) * 0.25F;
@@ -457,12 +457,12 @@ void test_aabb_hierarchy()
         proxy_mesh.positions.push_back(make_float3(x, y, z));
         proxy_mesh.triangles.push_back(make_uint3(base, base + 1U, base + 2U));
     }
-    DeviceArray<meshprep::Aabb> device_bounds(host_bounds);
-    meshprep::Workspace workspace;
-    meshprep::Hierarchy hierarchy;
-    const meshprep::HierarchyOptions options{4};
-    meshprep::Status status = meshprep::build_hierarchy(
-        meshprep::DeviceAabbView{device_bounds.data(), host_bounds.size()},
+    DeviceArray<parallel_mater::Aabb> device_bounds(host_bounds);
+    parallel_mater::Workspace workspace;
+    parallel_mater::Hierarchy hierarchy;
+    const parallel_mater::HierarchyOptions options{4};
+    parallel_mater::Status status = parallel_mater::build_hierarchy(
+        parallel_mater::DeviceAabbView{device_bounds.data(), host_bounds.size()},
         options,
         workspace,
         hierarchy);
@@ -472,8 +472,8 @@ void test_aabb_hierarchy()
         hierarchy.primitive_indices(), host_bounds.size());
     validate_hierarchy(proxy_mesh, reference_nodes, reference_permutation, options.max_leaf_size);
     for (int iteration = 0; iteration < 20; ++iteration) {
-        status = meshprep::build_hierarchy(
-            meshprep::DeviceAabbView{device_bounds.data(), host_bounds.size()},
+        status = parallel_mater::build_hierarchy(
+            parallel_mater::DeviceAabbView{device_bounds.data(), host_bounds.size()},
             options,
             workspace,
             hierarchy);
@@ -491,8 +491,8 @@ void test_aabb_hierarchy()
         bounds.maximum.x += 10.0F;
     }
     device_bounds.upload(host_bounds);
-    status = meshprep::refit_hierarchy(
-        meshprep::DeviceAabbView{device_bounds.data(), host_bounds.size()}, hierarchy);
+    status = parallel_mater::refit_hierarchy(
+        parallel_mater::DeviceAabbView{device_bounds.data(), host_bounds.size()}, hierarchy);
     CHECK(status.ok());
     CHECK(download(hierarchy.primitive_indices(), host_bounds.size()) == reference_permutation);
     const auto refitted_nodes = download(
@@ -507,36 +507,36 @@ void test_aabb_hierarchy()
     CHECK(std::abs(refitted_nodes[0].bounds_min.x - 9.97F) < 1.0e-6F);
     CHECK(std::abs(refitted_nodes[0].bounds_max.x - 14.03F) < 1.0e-6F);
     CHECK(
-        meshprep::refit_hierarchy(
-            meshprep::DeviceAabbView{device_bounds.data(), host_bounds.size() - 1U}, hierarchy).code ==
-        meshprep::StatusCode::invalid_argument);
+        parallel_mater::refit_hierarchy(
+            parallel_mater::DeviceAabbView{device_bounds.data(), host_bounds.size() - 1U}, hierarchy).code ==
+        parallel_mater::StatusCode::invalid_argument);
 
     host_bounds[0] = {make_float3(1.0F, 0.0F, 0.0F), make_float3(-1.0F, 0.0F, 0.0F)};
     device_bounds.upload(host_bounds);
-    status = meshprep::refit_hierarchy(
-        meshprep::DeviceAabbView{device_bounds.data(), host_bounds.size()}, hierarchy);
-    CHECK(status.code == meshprep::StatusCode::invalid_mesh);
+    status = parallel_mater::refit_hierarchy(
+        parallel_mater::DeviceAabbView{device_bounds.data(), host_bounds.size()}, hierarchy);
+    CHECK(status.code == parallel_mater::StatusCode::invalid_mesh);
     const auto nodes_after_failed_refit = download(
         hierarchy.nodes(), hierarchy.statistics().node_count);
     for (std::size_t node = 0; node < refitted_nodes.size(); ++node) {
         CHECK(same_node(nodes_after_failed_refit[node], refitted_nodes[node]));
     }
-    status = meshprep::build_hierarchy(
-        meshprep::DeviceAabbView{device_bounds.data(), host_bounds.size()},
+    status = parallel_mater::build_hierarchy(
+        parallel_mater::DeviceAabbView{device_bounds.data(), host_bounds.size()},
         options,
         workspace,
         hierarchy);
-    CHECK(status.code == meshprep::StatusCode::invalid_mesh);
+    CHECK(status.code == parallel_mater::StatusCode::invalid_mesh);
 }
 
 void test_root_leaf()
 {
     const HostMesh host = quad_mesh();
     const DeviceMesh device(host);
-    meshprep::Workspace workspace;
-    meshprep::Hierarchy hierarchy;
-    const meshprep::Status status =
-        meshprep::build_hierarchy(device.view(), {}, workspace, hierarchy);
+    parallel_mater::Workspace workspace;
+    parallel_mater::Hierarchy hierarchy;
+    const parallel_mater::Status status =
+        parallel_mater::build_hierarchy(device.view(), {}, workspace, hierarchy);
     CHECK(status.ok());
     CHECK(hierarchy.statistics().node_count == 1);
     CHECK(hierarchy.statistics().leaf_count == 1);
@@ -562,17 +562,17 @@ void test_seeded_triangle_soup_against_cpu()
     }
 
     const DeviceMesh device(host);
-    meshprep::Workspace workspace;
-    meshprep::NormalOutput normals;
-    CHECK(meshprep::compute_normals(device.view(), {}, workspace, normals).ok());
+    parallel_mater::Workspace workspace;
+    parallel_mater::NormalOutput normals;
+    CHECK(parallel_mater::compute_normals(device.view(), {}, workspace, normals).ok());
     CHECK(normals.statistics().vertex_normal_count == triangle_count * 3U);
     const auto gpu_faces = download(normals.face_normals(), triangle_count);
     for (std::size_t i = 0; i < gpu_faces.size(); ++i) {
         CHECK(near(gpu_faces[i], cpu_face_normal(host, i), 2.0e-5F));
     }
 
-    meshprep::Hierarchy hierarchy;
-    CHECK(meshprep::build_hierarchy(device.view(), {}, workspace, hierarchy).ok());
+    parallel_mater::Hierarchy hierarchy;
+    CHECK(parallel_mater::build_hierarchy(device.view(), {}, workspace, hierarchy).ok());
     const auto nodes = download(hierarchy.nodes(), hierarchy.statistics().node_count);
     const auto permutation = download(hierarchy.primitive_indices(), triangle_count);
     validate_hierarchy(host, nodes, permutation, 8);

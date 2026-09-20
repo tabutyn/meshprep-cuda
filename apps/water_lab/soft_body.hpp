@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
-#include <meshprep/simulation.hpp>
+#include <parallel_mater/physics.hpp>
 #include "obstacle_course.hpp"
 
 #include <cuda_runtime_api.h>
@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -25,7 +26,7 @@ inline constexpr std::uint32_t soft_body_asset_free_body = 1U << 2U;
 
 // An edge is stored once. The CSR adjacency below refers back to this stable
 // edge ID so a connection can be broken without changing the graph topology.
-using SoftBodyEdge = meshprep::sim::LatticeBond;
+using SoftBodyEdge = parallel_mater::physics::Bond;
 
 struct SoftBodyNeighbor {
     std::uint32_t vertex{};
@@ -70,6 +71,8 @@ struct SoftBodyAsset {
 // The compact .msb format is deliberately independent of Blender and CUDA
 // struct padding. It is versioned and validated before any GPU allocation.
 [[nodiscard]] SoftBodyAsset load_soft_body_asset(const std::string& path);
+[[nodiscard]] SoftBodyAsset load_soft_body_asset(
+    std::span<const std::byte> bytes);
 void save_soft_body_asset(const SoftBodyAsset& asset, const std::string& path);
 void validate_soft_body_asset(const SoftBodyAsset& asset);
 
@@ -178,14 +181,14 @@ struct SoftBodyRenderView {
     const std::uint8_t* triangle_active{};
     std::uint32_t vertex_count{};
     std::uint32_t triangle_count{};
-    const meshprep::HierarchyNode* nodes{};
+    const parallel_mater::HierarchyNode* nodes{};
     const std::uint32_t* primitive_indices{};
     std::uint32_t node_count{};
     std::uint32_t max_depth{};
     const float3* member_positions{};
     const SoftBodyEdge* member_edges{};
     const std::uint8_t* member_active{};
-    const meshprep::HierarchyNode* member_nodes{};
+    const parallel_mater::HierarchyNode* member_nodes{};
     const std::uint32_t* member_indices{};
     std::uint32_t member_count{};
     std::uint32_t member_voxels_per_instance{};
@@ -349,8 +352,8 @@ public:
     [[nodiscard]] SoftBodyVoxelView voxel_view() const noexcept;
     [[nodiscard]] SoftBodyRenderView render_view() const noexcept;
     [[nodiscard]] SoftBodyLatticeView lattice_view() const noexcept;
-    [[nodiscard]] meshprep::DeviceMeshView render_mesh() const noexcept;
-    [[nodiscard]] const meshprep::Hierarchy& render_hierarchy() const noexcept;
+    [[nodiscard]] parallel_mater::DeviceMeshView render_mesh() const noexcept;
+    [[nodiscard]] const parallel_mater::Hierarchy& render_hierarchy() const noexcept;
     [[nodiscard]] SoftBodyStatistics statistics() const noexcept;
     [[nodiscard]] std::size_t allocated_bytes() const noexcept;
 

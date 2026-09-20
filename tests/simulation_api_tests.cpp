@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-#include <meshprep/simulation.hpp>
+#include "gallery.hpp"
 
 #include <array>
 #include <cstdint>
@@ -10,8 +10,8 @@
 
 namespace {
 
-using meshprep::sim::Component;
-using meshprep::sim::SimulationRecipe;
+using parallel_mater::examples::Component;
+using parallel_mater::examples::SimulationRecipe;
 
 constexpr std::uint32_t bits(Component value) noexcept
 {
@@ -70,62 +70,62 @@ void expect(bool condition, const char* message)
 
 void test_recipe_catalog()
 {
-    expect(meshprep::sim::simulation_recipes.size() == expected_recipes.size(),
+    expect(parallel_mater::examples::simulation_recipes.size() == expected_recipes.size(),
         "catalog must contain component, pair, and smoke recipes");
 
     for (std::size_t index = 0; index < expected_recipes.size(); ++index) {
         const auto& expected = expected_recipes[index];
-        const auto& actual = meshprep::sim::simulation_recipes[index];
+        const auto& actual = parallel_mater::examples::simulation_recipes[index];
         expect(actual.recipe == expected.recipe, "recipe identity/order changed");
         expect(actual.slug == expected.slug, "recipe slug changed");
         expect(actual.title == expected.title, "recipe title changed");
         expect(bits(actual.components) == bits(expected.components),
             "context component set changed or gained an unexpected component");
-        expect(meshprep::sim::find_simulation_recipe(expected.slug) == &actual,
+        expect(parallel_mater::examples::find_simulation_recipe(expected.slug) == &actual,
             "lookup must return the catalog entry, not a copy");
     }
 
-    const auto* softbody_rope = meshprep::sim::find_simulation_recipe("softbody-rope");
+    const auto* softbody_rope = parallel_mater::examples::find_simulation_recipe("softbody-rope");
     expect(softbody_rope != nullptr &&
             softbody_rope->recipe == SimulationRecipe::soft_body_rope,
         "catalog must expose Softbody-Rope by slug");
-    const auto* bridge = meshprep::sim::find_simulation_recipe("cloth-rope");
+    const auto* bridge = parallel_mater::examples::find_simulation_recipe("cloth-rope");
     expect(bridge != nullptr && bridge->recipe == SimulationRecipe::cloth_rope,
         "catalog must expose Cloth-Rope by slug");
-    expect(meshprep::sim::find_simulation_recipe("unknown") == nullptr,
+    expect(parallel_mater::examples::find_simulation_recipe("unknown") == nullptr,
         "unknown recipe slug must be rejected");
-    const auto* smoke = meshprep::sim::find_simulation_recipe("smoke");
+    const auto* smoke = parallel_mater::examples::find_simulation_recipe("smoke");
     expect(smoke != nullptr && smoke->recipe == SimulationRecipe::smoke &&
-            meshprep::sim::has_component(smoke->components, Component::smoke),
+            parallel_mater::examples::has_component(smoke->components, Component::smoke),
         "smoke recipe must expose the smoke component");
-    expect(!meshprep::sim::has_component(Component::none, Component::cloth),
+    expect(!parallel_mater::examples::has_component(Component::none, Component::cloth),
         "empty component set must not report cloth");
-    expect(meshprep::sim::has_component(
+    expect(parallel_mater::examples::has_component(
                Component::cloth | Component::soft_body, Component::cloth),
         "component composition must retain the left component");
-    expect(meshprep::sim::has_component(
+    expect(parallel_mater::examples::has_component(
                Component::cloth | Component::soft_body, Component::soft_body),
         "component composition must retain the right component");
 }
 
 void test_fixed_step_contract()
 {
-    constexpr meshprep::sim::FixedStepOptions defaults{};
+    constexpr parallel_mater::examples::FixedStepOptions defaults{};
     static_assert(defaults.timestep == 1.0F / 60.0F);
-    static_assert(meshprep::sim::valid(defaults));
-    static_assert(meshprep::sim::valid({1.0F / 120.0F}));
-    static_assert(!meshprep::sim::valid({0.0F}));
-    static_assert(!meshprep::sim::valid({-1.0F / 60.0F}));
+    static_assert(parallel_mater::examples::valid(defaults));
+    static_assert(parallel_mater::examples::valid({1.0F / 120.0F}));
+    static_assert(!parallel_mater::examples::valid({0.0F}));
+    static_assert(!parallel_mater::examples::valid({-1.0F / 60.0F}));
 
-    expect(meshprep::sim::valid(defaults), "default fixed step must be valid");
-    expect(!meshprep::sim::valid(
+    expect(parallel_mater::examples::valid(defaults), "default fixed step must be valid");
+    expect(!parallel_mater::examples::valid(
                {std::numeric_limits<float>::quiet_NaN()}),
         "non-finite fixed timestep must be rejected by a solver boundary");
-    expect(!meshprep::sim::valid(
+    expect(!parallel_mater::examples::valid(
                {std::numeric_limits<float>::infinity()}),
         "infinite fixed timestep must be rejected by a solver boundary");
 
-    meshprep::sim::GallerySimulationOptions options;
+    parallel_mater::examples::GallerySimulationOptions options;
     expect(!options.gravity_override.has_value() &&
             !options.solver_iterations_override.has_value(),
         "gallery defaults must select a recipe without implicit overrides");
@@ -138,41 +138,41 @@ void test_fixed_step_contract()
 
 void test_recipe_config_contract()
 {
-    auto config = meshprep::sim::RecipeConfig::for_recipe(
+    auto config = parallel_mater::examples::RecipeConfig::for_recipe(
         SimulationRecipe::water_rope);
     config.timestep(1.0F / 120.0F).iterations(8U).particles(12'000U)
         .cloth_resolution(4U);
-    expect(meshprep::sim::validate_recipe_config(config) ==
-            meshprep::sim::RecipeConfigError::none,
+    expect(parallel_mater::examples::validate_recipe_config(config) ==
+            parallel_mater::examples::RecipeConfigError::none,
         "fluent portable configuration must validate");
     config.cloth_resolution(0U);
-    expect(meshprep::sim::validate_recipe_config(config) ==
-            meshprep::sim::RecipeConfigError::invalid_cloth_detail,
+    expect(parallel_mater::examples::validate_recipe_config(config) ==
+            parallel_mater::examples::RecipeConfigError::invalid_cloth_detail,
         "portable configuration must reject zero cloth detail");
 }
 
 void test_owning_simulation_contract()
 {
-    static_assert(std::is_default_constructible_v<meshprep::sim::GallerySimulation>);
-    static_assert(std::is_move_constructible_v<meshprep::sim::GallerySimulation>);
-    static_assert(std::is_move_assignable_v<meshprep::sim::GallerySimulation>);
-    static_assert(!std::is_copy_constructible_v<meshprep::sim::GallerySimulation>);
-    static_assert(!std::is_copy_assignable_v<meshprep::sim::GallerySimulation>);
+    static_assert(std::is_default_constructible_v<parallel_mater::examples::GallerySimulation>);
+    static_assert(std::is_move_constructible_v<parallel_mater::examples::GallerySimulation>);
+    static_assert(std::is_move_assignable_v<parallel_mater::examples::GallerySimulation>);
+    static_assert(!std::is_copy_constructible_v<parallel_mater::examples::GallerySimulation>);
+    static_assert(!std::is_copy_assignable_v<parallel_mater::examples::GallerySimulation>);
 
-    expect(!meshprep::sim::requires_soft_body_asset(SimulationRecipe::water),
+    expect(!parallel_mater::examples::requires_soft_body_asset(SimulationRecipe::water),
         "procedural particle bowl must not require an asset");
-    expect(!meshprep::sim::requires_soft_body_asset(SimulationRecipe::cloth),
+    expect(!parallel_mater::examples::requires_soft_body_asset(SimulationRecipe::cloth),
         "procedural cloth must not require an asset");
-    expect(!meshprep::sim::requires_soft_body_asset(SimulationRecipe::water_cloth),
+    expect(!parallel_mater::examples::requires_soft_body_asset(SimulationRecipe::water_cloth),
         "rigid water course must not request a soft-body asset");
-    expect(meshprep::sim::requires_soft_body_asset(SimulationRecipe::soft_body),
+    expect(parallel_mater::examples::requires_soft_body_asset(SimulationRecipe::soft_body),
         "soft-body context must request its authored cylinder asset");
-    expect(!meshprep::sim::requires_soft_body_asset(SimulationRecipe::water_soft_body),
+    expect(!parallel_mater::examples::requires_soft_body_asset(SimulationRecipe::water_soft_body),
         "procedural water-wheel cross must not request the retired cylinder asset");
-    expect(!meshprep::sim::requires_soft_body_asset(SimulationRecipe::rope),
+    expect(!parallel_mater::examples::requires_soft_body_asset(SimulationRecipe::rope),
         "procedural rope must not request an external asset");
 
-    meshprep::sim::GallerySimulation empty;
+    parallel_mater::examples::GallerySimulation empty;
     expect(!empty.initialized(), "default simulation must not allocate CUDA state");
     expect(!empty.step().ok(), "uninitialized simulation step must return an error");
     expect(empty.render_view().particle_system_count == 0U,
@@ -181,12 +181,12 @@ void test_owning_simulation_contract()
 
 void test_borrowed_render_views()
 {
-    static_assert(std::is_trivially_copyable_v<meshprep::sim::ParticleRenderView>);
-    static_assert(std::is_trivially_copyable_v<meshprep::sim::SurfaceRenderView>);
-    static_assert(std::is_trivially_copyable_v<meshprep::sim::RigidBodyRenderView>);
-    static_assert(std::is_trivially_copyable_v<meshprep::sim::LatticeBond>);
-    static_assert(std::is_trivially_copyable_v<meshprep::sim::LatticeRenderView>);
-    static_assert(std::is_trivially_copyable_v<meshprep::sim::FrameRenderView>);
+    static_assert(std::is_trivially_copyable_v<parallel_mater::examples::ParticleRenderView>);
+    static_assert(std::is_trivially_copyable_v<parallel_mater::examples::SurfaceRenderView>);
+    static_assert(std::is_trivially_copyable_v<parallel_mater::examples::RigidBodyRenderView>);
+    static_assert(std::is_trivially_copyable_v<parallel_mater::examples::LatticeBond>);
+    static_assert(std::is_trivially_copyable_v<parallel_mater::examples::LatticeRenderView>);
+    static_assert(std::is_trivially_copyable_v<parallel_mater::examples::FrameRenderView>);
 
     float3 positions[3]{};
     float3 velocities[3]{};
@@ -195,14 +195,14 @@ void test_borrowed_render_views()
     float2 texcoords[3]{};
     std::uint8_t triangle_active[1]{1U};
     std::uint32_t flags[3]{};
-    meshprep::sim::LatticeBond bonds[1]{{{0U, 1U}, 0.05F}};
+    parallel_mater::examples::LatticeBond bonds[1]{{{0U, 1U}, 0.05F}};
     std::uint8_t bond_active[1]{1U};
 
-    const meshprep::sim::ParticleRenderView particles{
+    const parallel_mater::examples::ParticleRenderView particles{
         positions, velocities, 3U, 0.025F};
-    const meshprep::sim::SurfaceRenderView surface{
+    const parallel_mater::examples::SurfaceRenderView surface{
         {positions, 3U, triangles, 1U}, normals, texcoords, triangle_active};
-    const meshprep::sim::RigidBodyRenderView rigid{
+    const parallel_mater::examples::RigidBodyRenderView rigid{
         {positions, 3U, triangles, 1U},
         {1.0F, 2.0F, 3.0F},
         {0.0F, 0.0F, 0.0F, 1.0F},
@@ -211,9 +211,9 @@ void test_borrowed_render_views()
     const std::array particle_systems{particles};
     const std::array surfaces{surface};
     const std::array rigid_bodies{rigid};
-    const std::array lattices{meshprep::sim::LatticeRenderView{
+    const std::array lattices{parallel_mater::examples::LatticeRenderView{
         positions, flags, bonds, bond_active, 3U, 3U, 1U, 1U, 0.025F}};
-    const meshprep::sim::FrameRenderView frame{
+    const parallel_mater::examples::FrameRenderView frame{
         particle_systems.data(), 1U,
         surfaces.data(), 1U,
         rigid_bodies.data(), 1U,
@@ -246,7 +246,7 @@ void test_borrowed_render_views()
             frame.rigid_bodies[0].orientation.w == 1.0F,
         "rigid view must preserve its transform");
 
-    constexpr meshprep::sim::FrameRenderView empty{};
+    constexpr parallel_mater::examples::FrameRenderView empty{};
     static_assert(empty.particle_systems == nullptr && empty.particle_system_count == 0U);
     static_assert(empty.surfaces == nullptr && empty.surface_count == 0U);
     static_assert(empty.rigid_bodies == nullptr && empty.rigid_body_count == 0U);

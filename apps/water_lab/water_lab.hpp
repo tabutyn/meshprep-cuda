@@ -5,7 +5,7 @@
 #include "soft_body.hpp"
 #include "obstacle_course.hpp"
 
-#include <meshprep/meshprep.hpp>
+#include <parallel_mater/geometry.hpp>
 
 #include <cuda_runtime_api.h>
 #include <vector_functions.h>
@@ -90,12 +90,12 @@ public:
         cudaStream_t stream = nullptr);
 
     [[nodiscard]] float render_hybrid(
-        meshprep::DeviceMeshView skin,
-        const meshprep::NormalOutput& normals,
-        const meshprep::Hierarchy& skin_hierarchy,
+        parallel_mater::DeviceMeshView skin,
+        const parallel_mater::NormalOutput& normals,
+        const parallel_mater::Hierarchy& skin_hierarchy,
         const float3* particle_positions,
         float particle_radius,
-        const meshprep::Hierarchy& particle_hierarchy,
+        const parallel_mater::Hierarchy& particle_hierarchy,
         bool show_particles,
         const OrientedBox& collider,
         const Camera& camera,

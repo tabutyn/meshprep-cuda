@@ -3,7 +3,7 @@
 
 #include "particle_cells.hpp"
 
-#include <meshprep/meshprep.hpp>
+#include <parallel_mater/geometry.hpp>
 #include <cuda_runtime_api.h>
 #include <vector_types.h>
 #include <cstddef>
@@ -31,7 +31,7 @@ public:
     FluidSurface(const FluidSurface&) = delete;
     FluidSurface& operator=(const FluidSurface&) = delete;
     [[nodiscard]] float update(const float3* positions, std::uint32_t particle_count,
-        const meshprep::Hierarchy& hierarchy, float support_radius,
+        const parallel_mater::Hierarchy& hierarchy, float support_radius,
         cudaStream_t stream = nullptr, ParticleCellView cells = {});
     [[nodiscard]] FluidSurfaceView view() const noexcept { return {values_, grid_}; }
     [[nodiscard]] std::size_t allocated_bytes() const noexcept {

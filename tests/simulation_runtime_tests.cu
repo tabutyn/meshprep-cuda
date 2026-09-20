@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-#include <meshprep/simulation.hpp>
+#include "gallery.hpp"
 
 #include "../apps/water_lab/simulation_gallery.hpp"
 
@@ -41,8 +41,8 @@ std::vector<T> download(const T* source, std::size_t count)
 }
 
 void require_recipe_parity(
-    const meshprep::sim::GallerySimulation& simulation,
-    const meshprep::sim::GallerySimulationOptions& requested)
+    const parallel_mater::examples::GallerySimulation& simulation,
+    const parallel_mater::examples::GallerySimulationOptions& requested)
 {
     waterlab::gallery::RecipePhysicsOverrides overrides;
     overrides.fixed_dt = requested.fixed_step.timestep;
@@ -50,7 +50,7 @@ void require_recipe_parity(
     overrides.gravity = requested.gravity_override;
     const waterlab::HybridOptions native =
         waterlab::gallery::make_recipe_physics(requested.recipe, overrides);
-    const meshprep::sim::ResolvedPhysicsOptions installed =
+    const parallel_mater::examples::ResolvedPhysicsOptions installed =
         simulation.resolved_physics();
     require(installed.fixed_step.timestep == native.fixed_dt &&
             installed.solver_iterations == native.physics_iterations &&
@@ -61,15 +61,15 @@ void require_recipe_parity(
 
 void test_particle_tub_without_asset()
 {
-    meshprep::sim::GallerySimulation simulation;
-    meshprep::sim::GallerySimulationOptions options;
-    options.recipe = meshprep::sim::SimulationRecipe::water;
+    parallel_mater::examples::GallerySimulation simulation;
+    parallel_mater::examples::GallerySimulationOptions options;
+    options.recipe = parallel_mater::examples::SimulationRecipe::water;
     require(options.soft_body_asset_path.empty(),
         "particle tub test accidentally supplied an asset");
     require(simulation.initialize(options).ok(),
         "particle tub must initialize without an asset");
     require(simulation.initialized() &&
-            simulation.recipe() == meshprep::sim::SimulationRecipe::water,
+            simulation.recipe() == parallel_mater::examples::SimulationRecipe::water,
         "particle tub identity was not retained");
     require_recipe_parity(simulation, options);
 
@@ -117,10 +117,10 @@ void test_particle_tub_without_asset()
 
 void test_live_particle_resize()
 {
-    meshprep::sim::GallerySimulationOptions options;
-    options.recipe = meshprep::sim::SimulationRecipe::water;
+    parallel_mater::examples::GallerySimulationOptions options;
+    options.recipe = parallel_mater::examples::SimulationRecipe::water;
     options.particle_count_override = 512U;
-    meshprep::sim::GallerySimulation simulation;
+    parallel_mater::examples::GallerySimulation simulation;
     require(simulation.initialize(options).ok(), "small active particle prefix failed");
     for (const std::uint32_t count : {2'048U, 256U, 20'000U, 3'000U}) {
         require(simulation.resize_particles(count).ok(),
@@ -139,14 +139,14 @@ void test_live_particle_resize()
 
 void test_procedural_soft_body_fluid()
 {
-    meshprep::sim::GallerySimulationOptions options;
-    options.recipe = meshprep::sim::SimulationRecipe::water_soft_body;
-    meshprep::sim::GallerySimulation simulation;
-    require(meshprep::sim::GallerySimulation::create(options, simulation).ok(),
+    parallel_mater::examples::GallerySimulationOptions options;
+    options.recipe = parallel_mater::examples::SimulationRecipe::water_soft_body;
+    parallel_mater::examples::GallerySimulation simulation;
+    require(parallel_mater::examples::GallerySimulation::create(options, simulation).ok(),
         "procedural water-wheel context failed to initialize without an asset");
     require_recipe_parity(simulation, options);
     const auto configured = simulation.options();
-    require(configured.recipe == meshprep::sim::SimulationRecipe::water_soft_body &&
+    require(configured.recipe == parallel_mater::examples::SimulationRecipe::water_soft_body &&
             configured.soft_body_asset_path.empty(),
         "procedural water-wheel context invented an asset dependency");
 
@@ -193,7 +193,7 @@ void test_procedural_soft_body_fluid()
         "public soft-body lattice omitted volume nodes or topology");
     const auto flags = download(lattice.flags, lattice.node_count);
     require(std::count_if(flags.begin(), flags.end(), [](std::uint32_t flag) {
-                return (flag & meshprep::sim::lattice_node_surface) == 0U;
+                return (flag & parallel_mater::examples::lattice_node_surface) == 0U;
             }) > 0U,
         "public axle cross lattice omitted its interior volume nodes");
     const auto bonds = download(lattice.bonds, lattice.bonds_per_instance);
@@ -216,7 +216,7 @@ void test_procedural_soft_body_fluid()
             stats.finite_failure_count == 0U,
         "procedural water-wheel context statistics are inconsistent");
 
-    meshprep::sim::GallerySimulation moved = std::move(simulation);
+    parallel_mater::examples::GallerySimulation moved = std::move(simulation);
     require(moved.initialized() && !simulation.initialized(),
         "GallerySimulation move did not transfer ownership");
     require(moved.reset().ok(), "moved GallerySimulation could not reset");
@@ -224,13 +224,13 @@ void test_procedural_soft_body_fluid()
 
 void test_every_public_recipe_steps_declared_components()
 {
-    for (const auto& recipe : meshprep::sim::simulation_recipes) {
-        meshprep::sim::GallerySimulationOptions options;
+    for (const auto& recipe : parallel_mater::examples::simulation_recipes) {
+        parallel_mater::examples::GallerySimulationOptions options;
         options.recipe = recipe.recipe;
-        if (meshprep::sim::requires_soft_body_asset(recipe.recipe)) {
+        if (parallel_mater::examples::requires_soft_body_asset(recipe.recipe)) {
             options.soft_body_asset_path = MESHPREP_SIMULATION_TEST_ASSET;
         }
-        meshprep::sim::GallerySimulation simulation;
+        parallel_mater::examples::GallerySimulation simulation;
         require(simulation.initialize(options).ok(),
             "public gallery recipe failed to initialize");
         require_recipe_parity(simulation, options);
@@ -239,24 +239,24 @@ void test_every_public_recipe_steps_declared_components()
                 "public gallery recipe failed a multi-step smoke test");
         }
 
-        const bool particles = meshprep::sim::has_component(
-                recipe.components, meshprep::sim::Component::fluid_particles) ||
-            meshprep::sim::has_component(
-                recipe.components, meshprep::sim::Component::hand_particles);
-        const bool smoke = meshprep::sim::has_component(
-            recipe.components,meshprep::sim::Component::smoke);
-        const bool deformable = meshprep::sim::has_component(
-                recipe.components, meshprep::sim::Component::cloth) ||
-            meshprep::sim::has_component(
-                recipe.components, meshprep::sim::Component::soft_body) ||
-            meshprep::sim::has_component(
-                recipe.components, meshprep::sim::Component::rope);
+        const bool particles = parallel_mater::examples::has_component(
+                recipe.components, parallel_mater::examples::Component::fluid_particles) ||
+            parallel_mater::examples::has_component(
+                recipe.components, parallel_mater::examples::Component::hand_particles);
+        const bool smoke = parallel_mater::examples::has_component(
+            recipe.components,parallel_mater::examples::Component::smoke);
+        const bool deformable = parallel_mater::examples::has_component(
+                recipe.components, parallel_mater::examples::Component::cloth) ||
+            parallel_mater::examples::has_component(
+                recipe.components, parallel_mater::examples::Component::soft_body) ||
+            parallel_mater::examples::has_component(
+                recipe.components, parallel_mater::examples::Component::rope);
         const bool separate_deformable = deformable &&
-            recipe.recipe != meshprep::sim::SimulationRecipe::water_cloth;
-        const bool water_skin = meshprep::sim::has_component(
-            recipe.components, meshprep::sim::Component::water_skin);
-        const bool rigid = meshprep::sim::has_component(
-            recipe.components, meshprep::sim::Component::rigid_bodies);
+            recipe.recipe != parallel_mater::examples::SimulationRecipe::water_cloth;
+        const bool water_skin = parallel_mater::examples::has_component(
+            recipe.components, parallel_mater::examples::Component::water_skin);
+        const bool rigid = parallel_mater::examples::has_component(
+            recipe.components, parallel_mater::examples::Component::rigid_bodies);
         const auto frame = simulation.render_view();
         const auto stats = simulation.statistics();
         require(frame.particle_system_count ==
@@ -264,27 +264,27 @@ void test_every_public_recipe_steps_declared_components()
                     static_cast<std::uint32_t>(smoke) &&
                 frame.surface_count == static_cast<std::uint32_t>(water_skin) +
                     static_cast<std::uint32_t>(separate_deformable &&
-                        recipe.recipe != meshprep::sim::SimulationRecipe::rope) &&
+                        recipe.recipe != parallel_mater::examples::SimulationRecipe::rope) &&
                 frame.rigid_body_count == ([&] {
                     if (!rigid) return 0U;
-                    if (recipe.recipe == meshprep::sim::SimulationRecipe::water_cloth)
+                    if (recipe.recipe == parallel_mater::examples::SimulationRecipe::water_cloth)
                         return 5U + waterlab::course_peg_count;
-                    if (recipe.recipe == meshprep::sim::SimulationRecipe::water)
+                    if (recipe.recipe == parallel_mater::examples::SimulationRecipe::water)
                         return 2U + waterlab::bowl_peg_count;
-                    if (recipe.recipe == meshprep::sim::SimulationRecipe::water_soft_body)
+                    if (recipe.recipe == parallel_mater::examples::SimulationRecipe::water_soft_body)
                         return 12U + waterlab::water_wheel_fin_count +
                             waterlab::water_wheel_outer_rung_count;
-                    if (recipe.recipe == meshprep::sim::SimulationRecipe::water_rope)
+                    if (recipe.recipe == parallel_mater::examples::SimulationRecipe::water_rope)
                         return 7U;
-                    if (recipe.recipe == meshprep::sim::SimulationRecipe::cloth_soft_body)
+                    if (recipe.recipe == parallel_mater::examples::SimulationRecipe::cloth_soft_body)
                         return 6U;
-                    if (recipe.recipe == meshprep::sim::SimulationRecipe::rope)
+                    if (recipe.recipe == parallel_mater::examples::SimulationRecipe::rope)
                         return 4U;
-                    if (recipe.recipe == meshprep::sim::SimulationRecipe::cloth_rope)
+                    if (recipe.recipe == parallel_mater::examples::SimulationRecipe::cloth_rope)
                         return 3U;
-                    if (recipe.recipe == meshprep::sim::SimulationRecipe::soft_body_rope)
+                    if (recipe.recipe == parallel_mater::examples::SimulationRecipe::soft_body_rope)
                         return 3U;
-                    if (recipe.recipe == meshprep::sim::SimulationRecipe::rope_smoke)
+                    if (recipe.recipe == parallel_mater::examples::SimulationRecipe::rope_smoke)
                         return 3U;
                     if (smoke) return 2U;
                     return 7U;
@@ -295,9 +295,9 @@ void test_every_public_recipe_steps_declared_components()
             const auto& smoke_view=frame.particle_systems[
                 particles ? 1U : 0U];
             require(smoke_view.material==
-                    (recipe.recipe==meshprep::sim::SimulationRecipe::fluid_smoke
-                        ? meshprep::sim::ParticleMaterial::steam
-                        : meshprep::sim::ParticleMaterial::smoke) &&
+                    (recipe.recipe==parallel_mater::examples::SimulationRecipe::fluid_smoke
+                        ? parallel_mater::examples::ParticleMaterial::steam
+                        : parallel_mater::examples::ParticleMaterial::smoke) &&
                     smoke_view.count>=4'096U,
                 "smoke recipe omitted its typed tracer view");
         }
@@ -313,7 +313,7 @@ void test_every_public_recipe_steps_declared_components()
                         triangle.z < body.mesh.vertex_count;
                 }), "public rigid-body view contains non-local triangle indices");
         }
-        if (recipe.recipe==meshprep::sim::SimulationRecipe::rope) {
+        if (recipe.recipe==parallel_mater::examples::SimulationRecipe::rope) {
             const auto& primary=frame.rigid_bodies[0];
             const auto& glass=frame.rigid_bodies[1];
             require(primary.scale.x==glass.scale.x &&
@@ -322,7 +322,7 @@ void test_every_public_recipe_steps_declared_components()
                     primary.translation.z!=glass.translation.z,
                 "rope cage must expose a second equal-sized rigid sphere");
         }
-        if (recipe.recipe == meshprep::sim::SimulationRecipe::water_cloth) {
+        if (recipe.recipe == parallel_mater::examples::SimulationRecipe::water_cloth) {
             require(frame.lattice_count == 0U && frame.rigid_body_count == 13U,
                 "water course retained a soft lattice or omitted rigid posts");
             for (std::uint32_t peg = 0U; peg < waterlab::course_peg_count; ++peg) {
@@ -385,10 +385,10 @@ void test_lattice_masks_keep_instance_identity()
 
 void test_smoke_context_dynamics()
 {
-    using meshprep::sim::SimulationRecipe;
+    using parallel_mater::examples::SimulationRecipe;
 
-    meshprep::sim::GallerySimulation rolling;
-    meshprep::sim::GallerySimulationOptions rolling_options;
+    parallel_mater::examples::GallerySimulation rolling;
+    parallel_mater::examples::GallerySimulationOptions rolling_options;
     rolling_options.recipe=SimulationRecipe::smoke;
     require(rolling.initialize(rolling_options).ok(),
         "rolling-smoke context failed to initialize");
@@ -405,8 +405,8 @@ void test_smoke_context_dynamics()
             orientation_change>0.02F,
         "smoke sphere slid without the advertised rolling friction");
 
-    meshprep::sim::GallerySimulation boiling;
-    meshprep::sim::GallerySimulationOptions boiling_options;
+    parallel_mater::examples::GallerySimulation boiling;
+    parallel_mater::examples::GallerySimulationOptions boiling_options;
     boiling_options.recipe=SimulationRecipe::fluid_smoke;
     require(boiling.initialize(boiling_options).ok(),
         "fluid-smoke context failed to initialize");
@@ -417,8 +417,8 @@ void test_smoke_context_dynamics()
     require(boiling.render_view().particle_systems[0].count<initial_water,
         "heated fluid did not convert any water prefix into steam");
 
-    meshprep::sim::GallerySimulation windmill;
-    meshprep::sim::GallerySimulationOptions windmill_options;
+    parallel_mater::examples::GallerySimulation windmill;
+    parallel_mater::examples::GallerySimulationOptions windmill_options;
     windmill_options.recipe=SimulationRecipe::cloth_smoke;
     require(windmill.initialize(windmill_options).ok(),
         "cloth-smoke context failed to initialize");
@@ -433,7 +433,7 @@ void test_smoke_context_dynamics()
         final_lattice.positions,final_lattice.node_count);
     float maximum_hub_motion{};
     for (std::size_t node=0U;node<flags.size();++node) {
-        if ((flags[node]&meshprep::sim::lattice_node_pinned)==0U) continue;
+        if ((flags[node]&parallel_mater::examples::lattice_node_pinned)==0U) continue;
         const float3 delta{final_positions[node].x-initial_positions[node].x,
             final_positions[node].y-initial_positions[node].y,
             final_positions[node].z-initial_positions[node].z};
@@ -445,10 +445,10 @@ void test_smoke_context_dynamics()
 
     for (const SimulationRecipe context :
             {SimulationRecipe::soft_body_smoke,SimulationRecipe::rope_smoke}) {
-        meshprep::sim::GallerySimulation composition;
-        meshprep::sim::GallerySimulationOptions options;
+        parallel_mater::examples::GallerySimulation composition;
+        parallel_mater::examples::GallerySimulationOptions options;
         options.recipe=context;
-        if (meshprep::sim::requires_soft_body_asset(context))
+        if (parallel_mater::examples::requires_soft_body_asset(context))
             options.soft_body_asset_path=MESHPREP_SIMULATION_TEST_ASSET;
         require(composition.initialize(options).ok(),
             "smoke/deformable composition failed to initialize");
@@ -462,7 +462,7 @@ void test_smoke_context_dynamics()
             initial.node_count);
         float maximum_free_motion{};
         for (std::size_t node=0U;node<positions.size();++node) {
-            if ((node_flags[node]&meshprep::sim::lattice_node_pinned)!=0U) continue;
+            if ((node_flags[node]&parallel_mater::examples::lattice_node_pinned)!=0U) continue;
             const float3 delta{final[node].x-positions[node].x,
                 final[node].y-positions[node].y,final[node].z-positions[node].z};
             maximum_free_motion=std::max(maximum_free_motion,
@@ -475,14 +475,14 @@ void test_smoke_context_dynamics()
 
 void test_explicit_physics_overrides()
 {
-    meshprep::sim::GallerySimulationOptions options;
-    options.recipe = meshprep::sim::SimulationRecipe::cloth;
+    parallel_mater::examples::GallerySimulationOptions options;
+    options.recipe = parallel_mater::examples::SimulationRecipe::cloth;
     options.fixed_step.timestep = 1.0F / 120.0F;
     options.solver_iterations_override = 2U;
     options.gravity_override = make_float3(0.25F, -1.5F, 0.5F);
     options.cloth_detail_override = 3U;
 
-    meshprep::sim::GallerySimulation simulation;
+    parallel_mater::examples::GallerySimulation simulation;
     require(simulation.initialize(options).ok(),
         "valid explicit gallery physics overrides were rejected");
     require_recipe_parity(simulation, options);
@@ -515,10 +515,10 @@ void test_explicit_physics_overrides()
     require(!simulation.initialize(options).ok(),
         "non-finite gravity override was accepted");
 
-    meshprep::sim::GallerySimulationOptions hanging_options;
-    hanging_options.recipe = meshprep::sim::SimulationRecipe::cloth;
+    parallel_mater::examples::GallerySimulationOptions hanging_options;
+    hanging_options.recipe = parallel_mater::examples::SimulationRecipe::cloth;
     hanging_options.cloth_detail_override = 2U;
-    meshprep::sim::GallerySimulation hanging_cloth;
+    parallel_mater::examples::GallerySimulation hanging_cloth;
     require(hanging_cloth.initialize(hanging_options).ok(),
         "context-3 cloth-detail override was rejected");
     const auto hanging_lattice = hanging_cloth.render_view().lattices[0];
@@ -526,12 +526,12 @@ void test_explicit_physics_overrides()
             (29U * 2U + 1U),
         "context-3 cloth-detail override did not retessellate the cloth");
 
-    meshprep::sim::GallerySimulationOptions cylinder_options;
-    cylinder_options.recipe=meshprep::sim::SimulationRecipe::soft_body;
+    parallel_mater::examples::GallerySimulationOptions cylinder_options;
+    cylinder_options.recipe=parallel_mater::examples::SimulationRecipe::soft_body;
     cylinder_options.soft_body_asset_path=MESHPREP_SIMULATION_TEST_ASSET;
     cylinder_options.cylinder_columns_override=6U;
     cylinder_options.cylinder_rows_override=3U;
-    meshprep::sim::GallerySimulation cylinders;
+    parallel_mater::examples::GallerySimulation cylinders;
     require(cylinders.initialize(cylinder_options).ok(),
         "configurable Softbody cylinder grid was rejected");
     const auto cylinder_lattice=cylinders.render_view().lattices[0];
@@ -540,15 +540,15 @@ void test_explicit_physics_overrides()
         "Softbody N x M override did not create exactly N*M cylinders");
 }
 
-meshprep::Status invoke_during_stream_capture(
-    meshprep::sim::GallerySimulation& simulation, bool reset)
+parallel_mater::Status invoke_during_stream_capture(
+    parallel_mater::examples::GallerySimulation& simulation, bool reset)
 {
     cudaStream_t stream{};
     require(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking) == cudaSuccess,
         "could not create capture-stream status fixture");
     require(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal) == cudaSuccess,
         "could not begin capture-stream status fixture");
-    const meshprep::Status status =
+    const parallel_mater::Status status =
         reset ? simulation.reset(stream) : simulation.step(stream);
 
     cudaGraph_t graph{};
@@ -568,21 +568,21 @@ meshprep::Status invoke_during_stream_capture(
 
 void test_cuda_failures_retain_the_runtime_error()
 {
-    meshprep::sim::GallerySimulationOptions options;
-    options.recipe = meshprep::sim::SimulationRecipe::water;
+    parallel_mater::examples::GallerySimulationOptions options;
+    options.recipe = parallel_mater::examples::SimulationRecipe::water;
 
-    meshprep::sim::GallerySimulation simulation;
+    parallel_mater::examples::GallerySimulation simulation;
     require(simulation.initialize(options).ok(),
         "status fixture simulation failed to initialize");
-    const meshprep::Status step = invoke_during_stream_capture(simulation, false);
-    require(step.code == meshprep::StatusCode::cuda_failure &&
+    const parallel_mater::Status step = invoke_during_stream_capture(simulation, false);
+    require(step.code == parallel_mater::StatusCode::cuda_failure &&
             step.cuda_error != cudaSuccess,
         "lower-layer step exception erased the concrete CUDA failure");
     require(simulation.reset().ok(),
         "simulation did not recover after a rejected captured step");
 
-    const meshprep::Status reset = invoke_during_stream_capture(simulation, true);
-    require(reset.code == meshprep::StatusCode::cuda_failure &&
+    const parallel_mater::Status reset = invoke_during_stream_capture(simulation, true);
+    require(reset.code == parallel_mater::StatusCode::cuda_failure &&
             reset.cuda_error != cudaSuccess,
         "lower-layer reset exception erased the concrete CUDA failure");
 

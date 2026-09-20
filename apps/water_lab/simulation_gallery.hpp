@@ -5,7 +5,7 @@
 #include "hybrid_lab.hpp"
 #include "soft_body.hpp"
 
-#include <meshprep/simulation.hpp>
+#include "gallery.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -55,20 +55,20 @@ inline constexpr float rope_length = 4.0F;
 }
 
 [[nodiscard]] constexpr float gravity_tilt_degrees(
-    meshprep::sim::SimulationRecipe context) noexcept
+    parallel_mater::examples::SimulationRecipe context) noexcept
 {
-    return context == meshprep::sim::SimulationRecipe::cloth_soft_body ? 38.0F : 20.0F;
+    return context == parallel_mater::examples::SimulationRecipe::cloth_soft_body ? 38.0F : 20.0F;
 }
 
-[[nodiscard]] const meshprep::sim::SimulationRecipeInfo& recipe_info(
-    meshprep::sim::SimulationRecipe context) noexcept;
+[[nodiscard]] const parallel_mater::examples::SimulationRecipeInfo& recipe_info(
+    parallel_mater::examples::SimulationRecipe context) noexcept;
 
 [[nodiscard]] bool recipe_has(
-    meshprep::sim::SimulationRecipe context,
-    meshprep::sim::Component component) noexcept;
+    parallel_mater::examples::SimulationRecipe context,
+    parallel_mater::examples::Component component) noexcept;
 
 [[nodiscard]] constexpr std::uint32_t default_cloth_detail(
-    meshprep::sim::SimulationRecipe context) noexcept
+    parallel_mater::examples::SimulationRecipe context) noexcept
 {
     (void)context;
     return default_hanging_cloth_detail;
@@ -86,7 +86,7 @@ struct RecipePhysicsOverrides {
 };
 
 [[nodiscard]] HybridOptions make_recipe_physics(
-    meshprep::sim::SimulationRecipe context,
+    parallel_mater::examples::SimulationRecipe context,
     const RecipePhysicsOverrides& overrides = {}) noexcept;
 
 // Builds the deformable fixture used by a recipe. Water and Water-Cloth use
@@ -94,7 +94,7 @@ struct RecipePhysicsOverrides {
 // The asset path remains a caller choice so this sample layer has no
 // build-system macro or install-layout dependency.
 [[nodiscard]] std::unique_ptr<SoftBodyCourse> make_recipe_deformable(
-    meshprep::sim::SimulationRecipe context,
+    parallel_mater::examples::SimulationRecipe context,
     const HybridOptions& physics,
     std::string_view soft_body_asset_path,
     std::uint32_t rope_node_count = default_rope_nodes,
@@ -105,13 +105,13 @@ struct RecipePhysicsOverrides {
     std::uint32_t cylinder_rows = 4U);
 
 [[nodiscard]] FluidDisplay default_recipe_display(
-    meshprep::sim::SimulationRecipe context) noexcept;
+    parallel_mater::examples::SimulationRecipe context) noexcept;
 
 [[nodiscard]] RigidSphereState initial_rigid_sphere(
-    meshprep::sim::SimulationRecipe context,
+    parallel_mater::examples::SimulationRecipe context,
     std::uint32_t rope_node_count = default_rope_nodes) noexcept;
 
 void initialize_recipe_motion(
-    meshprep::sim::SimulationRecipe context, SoftBodyCourse& body);
+    parallel_mater::examples::SimulationRecipe context, SoftBodyCourse& body);
 
 } // namespace waterlab::gallery

@@ -119,7 +119,7 @@ struct Hit {
 
 __device__ bool intersect_bounds(
     const Ray& ray,
-    const meshprep::HierarchyNode& node,
+    const parallel_mater::HierarchyNode& node,
     float maximum_distance,
     float& near_distance,
     float padding = 0.0F)
@@ -189,7 +189,7 @@ __device__ Hit trace_closest(
     const float3* vertex_normals,
     const std::uint32_t* corner_normal_indices,
     const uint3* triangles,
-    const meshprep::HierarchyNode* nodes,
+    const parallel_mater::HierarchyNode* nodes,
     const std::uint32_t* primitive_indices,
     std::uint32_t node_count)
 {
@@ -201,7 +201,7 @@ __device__ Hit trace_closest(
     while (stack_size > 0) {
         const std::uint32_t node_index = stack[--stack_size];
         if (node_index >= node_count) continue;
-        const meshprep::HierarchyNode node = nodes[node_index];
+        const parallel_mater::HierarchyNode node = nodes[node_index];
         float node_near = 0.0F;
         if (!intersect_bounds(ray, node, hit.distance, node_near)) continue;
         if (node.is_leaf()) {
@@ -327,7 +327,7 @@ __device__ Hit trace_particle_spheres(
     const Ray& ray,
     const float3* positions,
     float radius,
-    const meshprep::HierarchyNode* nodes,
+    const parallel_mater::HierarchyNode* nodes,
     const std::uint32_t* primitive_indices,
     std::uint32_t node_count)
 {
@@ -339,7 +339,7 @@ __device__ Hit trace_particle_spheres(
     while (stack_size > 0) {
         const std::uint32_t node_index = stack[--stack_size];
         if (node_index >= node_count) continue;
-        const meshprep::HierarchyNode node = nodes[node_index];
+        const parallel_mater::HierarchyNode node = nodes[node_index];
         float node_near = 0.0F;
         if (!intersect_bounds(ray, node, hit.distance, node_near)) continue;
         if (node.is_leaf()) {
@@ -696,7 +696,7 @@ __device__ SoftBodyHit trace_soft_body(
     while (stack_size > 0) {
         const std::uint32_t node_index = stack[--stack_size];
         if (node_index >= soft_body.node_count) continue;
-        const meshprep::HierarchyNode node = soft_body.nodes[node_index];
+        const parallel_mater::HierarchyNode node = soft_body.nodes[node_index];
         float node_near = 0.0F;
         if (!intersect_bounds(ray, node, hit.distance, node_near)) continue;
         if (node.is_leaf()) {
@@ -832,7 +832,7 @@ __device__ SoftBodyHit trace_soft_members(
     while (stack_size > 0) {
         const std::uint32_t node_index = stack[--stack_size];
         if (node_index >= body.member_node_count) continue;
-        const meshprep::HierarchyNode node = body.member_nodes[node_index];
+        const parallel_mater::HierarchyNode node = body.member_nodes[node_index];
         float near_value{};
         if (!intersect_bounds(ray, node, hit.distance, near_value)) continue;
         if (node.is_leaf()) {
@@ -2166,7 +2166,7 @@ __device__ float3 shade_water(
     const float3* vertex_normals,
     const std::uint32_t* corner_normal_indices,
     const uint3* triangles,
-    const meshprep::HierarchyNode* nodes,
+    const parallel_mater::HierarchyNode* nodes,
     const std::uint32_t* primitive_indices,
     std::uint32_t node_count,
     OrientedBox collider,
@@ -2580,7 +2580,7 @@ __device__ FoamHit trace_foam(const Ray& ray, FluidVisualView visuals)
     while (stack_size > 0) {
         const std::uint32_t node_index = stack[--stack_size];
         if (node_index >= visuals.foam_node_count) continue;
-        const meshprep::HierarchyNode node = visuals.foam_nodes[node_index];
+        const parallel_mater::HierarchyNode node = visuals.foam_nodes[node_index];
         float node_near = 0.0F;
         const float3 extent = subtract(node.bounds_max, node.bounds_min);
         // Each source bound is a sphere AABB. Expanding by 0.82 of the
@@ -2639,10 +2639,10 @@ __global__ void render_fluid_kernel(
     uchar4* pixels, std::uint32_t width, std::uint32_t height, Camera camera,
     const float3* positions, const float3* vertex_normals,
     const std::uint32_t* corner_normal_indices, const uint3* triangles,
-    const meshprep::HierarchyNode* nodes, const std::uint32_t* primitive_indices,
+    const parallel_mater::HierarchyNode* nodes, const std::uint32_t* primitive_indices,
     std::uint32_t node_count, OrientedBox collider,
     const float3* particle_positions, float particle_radius,
-    const meshprep::HierarchyNode* particle_nodes,
+    const parallel_mater::HierarchyNode* particle_nodes,
     const std::uint32_t* particle_indices, std::uint32_t particle_node_count,
     FluidVisualView visuals,
     SoftBodyRenderView soft_body)
@@ -3073,12 +3073,12 @@ void RayTracer::reserve(std::uint32_t width, std::uint32_t height)
 }
 
 float RayTracer::render_hybrid(
-    meshprep::DeviceMeshView skin,
-    const meshprep::NormalOutput& normals,
-    const meshprep::Hierarchy& skin_hierarchy,
+    parallel_mater::DeviceMeshView skin,
+    const parallel_mater::NormalOutput& normals,
+    const parallel_mater::Hierarchy& skin_hierarchy,
     const float3* particle_positions,
     float particle_radius,
-    const meshprep::Hierarchy& particle_hierarchy,
+    const parallel_mater::Hierarchy& particle_hierarchy,
     bool show_particles,
     const OrientedBox& collider,
     const Camera& camera,

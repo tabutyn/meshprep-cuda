@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-#include <meshprep/meshprep.hpp>
+#include <parallel_mater/geometry.hpp>
 
 #include <cub/cub.cuh>
 #if MESHPREP_ENABLE_NVTX
@@ -15,7 +15,7 @@
 #include <utility>
 #include <vector>
 
-namespace meshprep {
+namespace parallel_mater {
 namespace {
 
 constexpr std::uint32_t block_size = 256;
@@ -1012,7 +1012,7 @@ Status compute_normals(
     cudaStream_t stream)
 {
 #if MESHPREP_ENABLE_NVTX
-    nvtx3::scoped_range function_range{"meshprep::compute_normals"};
+    nvtx3::scoped_range function_range{"parallel_mater::compute_normals"};
 #endif
     output.statistics_ = {};
     Status status = validate_arguments_host(mesh, sharp_edges);
@@ -1276,7 +1276,7 @@ Status build_hierarchy(
     cudaStream_t stream)
 {
 #if MESHPREP_ENABLE_NVTX
-    nvtx3::scoped_range function_range{"meshprep::build_hierarchy"};
+    nvtx3::scoped_range function_range{"parallel_mater::build_hierarchy"};
 #endif
     output.statistics_ = {};
     Status status = validate_arguments_host(mesh, {});
@@ -1723,7 +1723,7 @@ Status refit_hierarchy(
     cudaStream_t stream)
 {
 #if MESHPREP_ENABLE_NVTX
-    nvtx3::scoped_range function_range{"meshprep::refit_hierarchy"};
+    nvtx3::scoped_range function_range{"parallel_mater::refit_hierarchy"};
 #endif
     if (primitives.bounds == nullptr || primitives.primitive_count == 0U) {
         return invalid("refit AABB view must contain bounds");
@@ -1780,7 +1780,7 @@ Status refit_hierarchy_unchecked_async(
     cudaStream_t stream)
 {
 #if MESHPREP_ENABLE_NVTX
-    nvtx3::scoped_range function_range{"meshprep::refit_hierarchy_async"};
+    nvtx3::scoped_range function_range{"parallel_mater::refit_hierarchy_async"};
 #endif
     if (primitives.bounds == nullptr || primitives.primitive_count == 0U) {
         return invalid("refit AABB view must contain bounds");
@@ -1817,7 +1817,7 @@ Status build_hierarchy(
     cudaStream_t stream)
 {
 #if MESHPREP_ENABLE_NVTX
-    nvtx3::scoped_range function_range{"meshprep::build_aabb_hierarchy"};
+    nvtx3::scoped_range function_range{"parallel_mater::build_aabb_hierarchy"};
 #endif
     if (primitives.bounds == nullptr || primitives.primitive_count == 0) {
         return invalid("AABB view must contain bounds");
@@ -1875,4 +1875,4 @@ Status build_hierarchy(
         stream);
 }
 
-} // namespace meshprep
+} // namespace parallel_mater

@@ -6,12 +6,13 @@ gallery application.
 ## Layers
 
 1. `ParallelMater::geometry` builds normals and deterministic hierarchies.
-2. `ParallelMater::physics` owns general fixed-topology lattice state and
-   exposes borrowed CUDA node/bond views.
-3. `ParallelMater::recipes` is CUDA-free: component flags, fifteen recipes, and
-   portable recipe validation.
-4. `ParallelMater::gallery` adapts the production solvers behind
-   `GallerySimulation` and borrowed render views.
+2. `ParallelMater::physics` installs independent owning `Fluid`, `Cloth`,
+   `Rope`, `SoftBody`, `RigidBody`, and `Smoke` solvers plus the shared frame
+   protocol and completion token.
+3. `parallel-mater-example-recipes` is a build-tree-only catalog of fifteen
+   demonstrations.
+4. `parallel-mater-example-gallery` adapts those recipes behind example-only
+   aggregate render views.
 5. `parallel-mater-lab` supplies GLFW input, OpenGL/CUDA rendering, HUD,
    capture/playback, authored objectives, progression, and minigame controls.
 
@@ -40,7 +41,13 @@ cloth, soft-body, and rope pairs:
 
 ## Ownership and stepping
 
-`GallerySimulation` owns all device memory and is movable, not copyable.
+The installed solver owners each own their state and are movable, not copyable.
+They share an ordered prepare/couple/finish substep protocol; applications
+exchange impulses through borrowed views without selecting a gallery recipe.
+`Completion` provides the asynchronous boundary, while `advance()` waits.
+
+The example-only `GallerySimulation` owns all device memory required by one
+authored composition and is movable, not copyable.
 `step()` advances exactly one fixed timestep and returns only after the current
 public synchronous contract is satisfied. Render views borrow that memory and
 must be reacquired after every step or reset.
@@ -81,10 +88,11 @@ until reset.
 ## Error boundary
 
 Construction validates counts, ranges, finite values, and required assets.
-`initialize`, `step`, `reset`, and resizing return `Status`; implementation
+Installed initialization, stepping, reset, and resizing return `Status`; implementation
 exceptions do not cross the public boundary. CUDA failures retain their CUDA
-error code. The native gallery and installed adapter call the same recipe
-factory so their default physics values remain identical.
+error code. The native and headless example galleries call the same recipe
+factory so their default physics values remain identical, but that factory is
+not installed with the library.
 
 See `examples/simulation_contexts.cu` for a renderer-independent client and
 `apps/water_lab/README.md` for the interactive catalog and controls.

@@ -5,7 +5,7 @@
 #include "particle_cells.hpp"
 #include "obstacle_course.hpp"
 
-#include <meshprep/meshprep.hpp>
+#include <parallel_mater/geometry.hpp>
 
 #include <cuda_runtime_api.h>
 #include <vector_types.h>
@@ -264,17 +264,17 @@ public:
     void capture_state(HybridState& output, cudaStream_t stream = nullptr) const;
     void restore_state(const HybridState& state, cudaStream_t stream = nullptr);
 
-    [[nodiscard]] meshprep::DeviceMeshView skin_mesh() const noexcept;
-    [[nodiscard]] const meshprep::NormalOutput& skin_normals() const noexcept {
+    [[nodiscard]] parallel_mater::DeviceMeshView skin_mesh() const noexcept;
+    [[nodiscard]] const parallel_mater::NormalOutput& skin_normals() const noexcept {
         return render_normals_;
     }
-    [[nodiscard]] const meshprep::Hierarchy& skin_hierarchy() const noexcept {
+    [[nodiscard]] const parallel_mater::Hierarchy& skin_hierarchy() const noexcept {
         return render_hierarchy_;
     }
-    [[nodiscard]] const meshprep::Hierarchy& particle_hierarchy() const noexcept {
+    [[nodiscard]] const parallel_mater::Hierarchy& particle_hierarchy() const noexcept {
         return particle_hierarchy_;
     }
-    [[nodiscard]] const meshprep::Hierarchy& physical_skin_hierarchy() const noexcept {
+    [[nodiscard]] const parallel_mater::Hierarchy& physical_skin_hierarchy() const noexcept {
         return skin_vertex_hierarchy_;
     }
     [[nodiscard]] const float3* particle_positions() const noexcept {
@@ -335,7 +335,7 @@ private:
     float3* particle_velocities_{};
     float3* particle_forces_{};
     std::uint32_t* particle_skin_owners_{};
-    meshprep::Aabb* particle_bounds_{};
+    parallel_mater::Aabb* particle_bounds_{};
     std::uint64_t* particle_cell_keys_a_{};
     std::uint64_t* particle_cell_keys_b_{};
     std::uint32_t* particle_cell_indices_a_{};
@@ -359,7 +359,7 @@ private:
     std::uint32_t* skin_neighbor_offsets_{};
     std::uint32_t* skin_neighbors_{};
     float* skin_rest_lengths_{};
-    meshprep::Aabb* skin_vertex_bounds_{};
+    parallel_mater::Aabb* skin_vertex_bounds_{};
 
     float3* render_positions_{};
     float3* render_rest_positions_{};
@@ -391,16 +391,16 @@ private:
     std::uint32_t reaction_record_capacity_{};
     float particle_cell_size_{};
 
-    meshprep::Workspace particle_workspace_;
-    meshprep::Workspace skin_workspace_;
-    meshprep::Workspace physics_normal_workspace_;
-    meshprep::Workspace render_workspace_;
-    meshprep::Workspace render_normal_workspace_;
-    meshprep::Hierarchy particle_hierarchy_;
-    meshprep::Hierarchy skin_vertex_hierarchy_;
-    meshprep::Hierarchy render_hierarchy_;
-    meshprep::NormalOutput physics_normals_;
-    meshprep::NormalOutput render_normals_;
+    parallel_mater::Workspace particle_workspace_;
+    parallel_mater::Workspace skin_workspace_;
+    parallel_mater::Workspace physics_normal_workspace_;
+    parallel_mater::Workspace render_workspace_;
+    parallel_mater::Workspace render_normal_workspace_;
+    parallel_mater::Hierarchy particle_hierarchy_;
+    parallel_mater::Hierarchy skin_vertex_hierarchy_;
+    parallel_mater::Hierarchy render_hierarchy_;
+    parallel_mater::NormalOutput physics_normals_;
+    parallel_mater::NormalOutput render_normals_;
     cudaEvent_t stage_begin_[event_count_]{};
     cudaEvent_t stage_end_[event_count_]{};
 

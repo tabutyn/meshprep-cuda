@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
-#include <meshprep/recipes.hpp>
-#include <meshprep/meshprep.hpp>
+#include "recipes.hpp"
+#include <parallel_mater/geometry.hpp>
+#include <parallel_mater/physics.hpp>
 
 #include <vector_types.h>
 
@@ -14,7 +15,7 @@
 #include <string>
 #include <string_view>
 
-namespace meshprep::sim {
+namespace parallel_mater::examples {
 
 enum class ParticleMaterial : std::uint8_t {
     fluid,
@@ -51,10 +52,7 @@ struct RigidBodyRenderView {
 inline constexpr std::uint32_t lattice_node_surface = 1U << 0U;
 inline constexpr std::uint32_t lattice_node_pinned = 1U << 1U;
 
-struct LatticeBond {
-    uint2 vertices{};
-    float rest_length{};
-};
+using LatticeBond = physics::Bond;
 
 // Read-only CUDA arrays include every node, including the solid interior.
 // Bonds are shared local topology: instance i uses positions at
@@ -229,4 +227,4 @@ private:
     std::string asset_path_{};
 };
 
-} // namespace meshprep::sim
+} // namespace parallel_mater::examples

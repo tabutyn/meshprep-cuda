@@ -7,10 +7,37 @@ Installed-package consumers must enable CUDA as a CMake project language so CUDA
 
 ## General physics
 
-`<parallel_mater/physics.hpp>` exposes the gallery-independent
-`parallel_mater::physics::SoftBody` class. Link `ParallelMater::physics`. The class loads a
-versioned `.msb` fixed-topology volumetric lattice, owns all CUDA allocations,
-and supports up to 32 translated instances sharing one asset topology.
+Link `ParallelMater::physics` and include `<parallel_mater/physics.hpp>` or one
+of the focused solver headers. `Fluid`, `Cloth`, `Rope`, `SoftBody`,
+`RigidBody`, and `Smoke` independently own their state; none selects scenes,
+objectives, controls, or rendering policy.
+
+`FrameOptions` divides one fixed physical interval into equal substeps.
+Each owner follows `begin_frame`, `prepare_substep`, coupling work,
+`finish_substep`, and `finish_frame`. `advance()` is the synchronous
+convenience driver. `advance_async()` records a movable `Completion`; call
+`ready()` to poll or `wait()` to create a completion boundary and report
+deferred CUDA failures. The mature soft-body and smoke backends still perform
+internal timing/statistics readbacks, so those two may synchronize before
+recording the token; fluid completion is enqueue-only.
+Statistics downloaded by an async frame are stable after its token completes.
+`Fluid`, `Cloth`, `Rope`, and `SoftBody` expose the same
+`PointCouplingView`; its impulse buffer is writable only during a prepared
+substep. `RigidBody` gathers finite-mass reactions through `apply_force` and
+`apply_torque` in the same phase.
+
+`Fluid` owns a deterministic sorted-cell particle system and exposes one
+writable impulse per particle. `Cloth` and `Rope` generate dedicated spring
+graphs and expose the same node/bond/surface views as `SoftBody`. `RigidBody`
+integrates finite-mass translation and rotation and accepts forces and torques
+during its prepared coupling phase. `Smoke` keeps its analytic advection and
+one-way aerodynamic coupling model.
+
+`SoftBody` loads a versioned `.msb` fixed-topology volumetric lattice, owns all
+CUDA allocations, and supports up to 256 translated instances sharing one
+asset topology. It accepts either a filesystem path or `SoftBodyAssetView`;
+the memory overload parses and copies bytes before returning and performs no
+filesystem access.
 
 `SoftBodyOptions` controls the fixed timestep, substeps, deterministic Jacobi
 constraint iterations, mass, stiffness, damping, fracture threshold, speed and
@@ -18,7 +45,7 @@ projection bounds, hierarchy leaf size, optional non-bonded node collision,
 and per-instance origins. It does not contain a scene, camera, gameplay goal,
 or renderer.
 
-Initialization validates these public ranges: instances `[1,32]`, substeps
+Initialization validates these public ranges: instances `[1,256]`, substeps
 `[1,32]`, constraint iterations `[1,256]`, stiffness `[100,160000]`, spring
 damping ratio `[0,4]`, velocity damping `[0,30]`, maximum projection fraction
 `(0,1]`, velocity response `[0,1]`, fracture persistence `[1,64]`, maximum
@@ -46,8 +73,9 @@ normals, UVs, active triangle flags, and the refitted hierarchy. Reacquire all
 views after a step, reset, initialization, or move.
 
 All owning operations catch implementation exceptions and return `Status`.
-Calls are synchronous before return in this release. Asset loading occurs only
-during initialization; no file I/O or device allocation occurs in `step()`.
+Synchronous convenience calls wait before return; asynchronous calls leave the
+completion boundary with the token. Asset loading occurs only during
+initialization; no file I/O or device allocation occurs in a simulation frame.
 See `examples/soft_body.cu` for a minimal custom ground collider.
 
 The C++ API offers source compatibility within a tagged minor line; a stable C
@@ -56,52 +84,18 @@ release accepts version 1 little-endian assets and rejects unknown versions,
 truncated data, invalid graph indices, malformed CSR, and invalid render
 bindings rather than attempting forward-compatible interpretation.
 
-## Optional gallery simulation/render views
+## Example-only recipe gallery
 
-`<parallel_mater/recipes.hpp>` is the CUDA-free recipe configuration entry
-point. It provides fifteen `SimulationRecipeInfo` records, fluent
-`RecipeConfig`, and validation; gallery objectives and progression are private
-to the native application. The catalog
-is deliberately component-oriented: the five individual simulations come
-first, followed by fluid pairs, then the remaining cloth, soft-body, and rope
-pairs. Recipes are selected in the native browser or by stable textual slugs;
-they are not coupled to keyboard keys.
+The recipe catalog, `GallerySimulation`, builder, and render aggregation views
+live under `examples/gallery`. They are compiled only when
+`PARALLEL_MATER_BUILD_GALLERY=ON` and are deliberately absent from the install
+tree and `ParallelMaterTargets.cmake`. They demonstrate composition; they are
+not a second public simulation abstraction. Gameplay objectives and automatic
+progression remain in `apps/water_lab`.
 
-`<parallel_mater/gallery.hpp>` provides the owning CUDA adapter. Its movable
-`GallerySimulation` has `initialize`/`create`, fixed `step`, and `reset`
-operations returning `Status`; no exception crosses the public boundary.
-`ParticleRenderView`, `SurfaceRenderView`, `RigidBodyRenderView`,
-`LatticeRenderView`, and `FrameRenderView` borrow device allocations and must
-be reacquired after every step.
-
-```cpp
-parallel_mater::sim::GallerySimulation simulation;
-auto status = parallel_mater::sim::SimulationBuilder(
-        parallel_mater::sim::SimulationRecipe::water_rope)
-    .particles(40'000)
-    .rope_nodes(96)
-    .iterations(4)
-    .build(simulation);
-
-if (status) status = simulation.step();
-auto frame = simulation.render_view();
-```
-
-Omitted builder values retain the recipe preset. `bridge_grid(columns, rows)`
-and `cylinder_grid(columns, rows)` expose the two adjustable procedural fields;
-the lower-level `GallerySimulationOptions` exposes the same overrides.
-`resize_particles()` changes the deterministic active
-prefix without reallocating inside the reserved capacity. `resolved_physics()`
-reports the actual timestep, iterations, gravity, and course preset.
-
-`FrameRenderView::lattices` contains every simulated node plus shared local
-bond endpoints/rest lengths and per-instance activity. Offset a local endpoint
-by `instance * nodes_per_instance`, render only active bonds, and reacquire the
-view after stepping because solver buffers may swap. The gallery API performs
-no rendering and has no GLFW or OpenGL types.
-
-The complete first-pass public-symbol inventory is in
-[`API_INVENTORY.md`](API_INVENTORY.md).
+The complete installed-symbol inventory is in
+[`API_INVENTORY.md`](API_INVENTORY.md); the gallery reading order is in
+[`GALLERY_APP_STUDY.md`](GALLERY_APP_STUDY.md).
 
 ## Views and ownership
 
@@ -132,9 +126,3 @@ No public operation throws. `Status::code`, `Status::cuda_error`, and `Status::m
 ## Validation
 
 Calls reject null or empty mesh/AABB buffers, counts outside v0.1's 32-bit domain, non-finite coordinates, unordered AABB minima/maxima, out-of-range triangle indices, null sharp-edge storage with a nonzero count, self edges, out-of-range edge endpoints, and a hierarchy leaf capacity outside `[1, 32]`.
-
-## Compatibility names
-
-The former `<meshprep/...>` headers and `meshprep` namespace remain as a
-temporary source-compatibility layer. They refer to the same implementation;
-new applications should use the ParallelMater names above.

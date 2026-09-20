@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-#include <meshprep/smoke.hpp>
+#include <parallel_mater/smoke.hpp>
 
 #include <cuda_runtime.h>
 
@@ -10,7 +10,7 @@
 #include <new>
 #include <utility>
 
-namespace meshprep::physics {
+namespace parallel_mater::physics {
 namespace {
 
 constexpr std::uint32_t block_size=256U;
@@ -253,6 +253,11 @@ struct Smoke::Impl {
     cudaEvent_t begin{};
     cudaEvent_t end{};
     SmokeStatistics statistics{};
+    FrameOptions frame{};
+    std::uint32_t next_substep{};
+    bool frame_active{};
+    std::uint64_t tick_index{};
+    std::uint64_t frame_start_index{};
 
     explicit Impl(SmokeOptions selected):options(selected) {}
     ~Impl()
@@ -345,7 +350,7 @@ Status Smoke::step(
     integrate_smoke<<<(impl_->options.particle_count+block_size-1U)/block_size,
         block_size,0,stream>>>(impl_->positions,impl_->velocities,impl_->ages,
         impl_->temperatures,impl_->options,input,impl_->colliders,
-        impl_->statistics.frame_index+1U,impl_->respawns,impl_->counters);
+        impl_->tick_index+1U,impl_->respawns,impl_->counters);
     cudaError_t error=cudaGetLastError();
     if (error!=cudaSuccess) return cuda_status(error,"launch smoke integration");
     cudaEventRecord(impl_->end,stream);
@@ -358,11 +363,83 @@ Status Smoke::step(
     error=cudaStreamSynchronize(stream);
     if (error!=cudaSuccess) return cuda_status(error,"complete smoke integration");
     timings.integrate_ms=elapsed(impl_->begin,impl_->end);
-    impl_->statistics.frame_index++;
+    ++impl_->tick_index;
+    ++impl_->statistics.frame_index;
     impl_->statistics.respawn_count=respawns;
     impl_->statistics.finite_failure_count+=counters[0];
     impl_->statistics.maximum_speed=std::bit_cast<float>(counters[1]);
     return {};
+}
+
+Status Smoke::step_async(
+    SmokeStepInput input, Completion& completion, cudaStream_t stream) noexcept
+{
+    Status status = step(input, stream);
+    return status ? completion.record(stream) : status;
+}
+
+Status Smoke::begin_frame(FrameOptions frame, cudaStream_t) noexcept
+{
+    if (!impl_)
+        return {StatusCode::invalid_argument,cudaSuccess,"smoke is not initialized"};
+    if (!parallel_mater::physics::valid(frame))
+        return {StatusCode::invalid_argument,cudaSuccess,"invalid frame options"};
+    if (impl_->frame_active)
+        return {StatusCode::invalid_argument,cudaSuccess,"smoke frame is already active"};
+    impl_->frame=frame;
+    impl_->next_substep=0U;
+    impl_->frame_active=true;
+    impl_->frame_start_index=impl_->statistics.frame_index;
+    return {};
+}
+
+Status Smoke::prepare_substep(SubstepContext substep,cudaStream_t) noexcept
+{
+    if (!impl_ || !impl_->frame_active || substep.index!=impl_->next_substep ||
+        substep.count!=impl_->frame.substeps)
+        return {StatusCode::invalid_argument,cudaSuccess,"invalid smoke substep"};
+    return {};
+}
+
+Status Smoke::finish_substep(SubstepContext substep,cudaStream_t stream) noexcept
+{
+    if (!impl_ || !impl_->frame_active || substep.index!=impl_->next_substep ||
+        substep.count!=impl_->frame.substeps)
+        return {StatusCode::invalid_argument,cudaSuccess,"smoke substep is out of order"};
+    const float previous_timestep=impl_->options.timestep;
+    impl_->options.timestep=substep.timestep;
+    const Status status=step(SmokeStepInput{substep.acceleration,nullptr,0U},stream);
+    impl_->options.timestep=previous_timestep;
+    if (status) ++impl_->next_substep;
+    return status;
+}
+
+Status Smoke::finish_frame(Completion& completion,cudaStream_t stream) noexcept
+{
+    if (!impl_ || !impl_->frame_active ||
+        impl_->next_substep!=impl_->frame.substeps)
+        return {StatusCode::invalid_argument,cudaSuccess,
+            "smoke frame has incomplete substeps"};
+    if (completion.pending())
+        return {StatusCode::invalid_argument,cudaSuccess,
+            "completion token is already pending"};
+    Status status=completion.record(stream);
+    if (status) {
+        impl_->statistics.frame_index=impl_->frame_start_index+1U;
+        impl_->frame_active=false;
+    }
+    return status;
+}
+
+Status Smoke::advance_async(
+    FrameOptions frame,Completion& completion,cudaStream_t stream) noexcept
+{
+    return parallel_mater::physics::step_async(*this,frame,completion,stream);
+}
+
+Status Smoke::advance(FrameOptions frame,cudaStream_t stream) noexcept
+{
+    return parallel_mater::physics::step(*this,frame,stream);
 }
 
 Status Smoke::couple(SmokeCouplingView body,float drag,SmokeTimings& timings,
@@ -379,7 +456,7 @@ Status Smoke::couple(SmokeCouplingView body,float drag,SmokeTimings& timings,
         return {StatusCode::invalid_argument,cudaSuccess,"invalid smoke coupling view"};
     cudaEventRecord(impl_->begin,stream);
     couple_smoke<<<(body.count+block_size-1U)/block_size,block_size,0,stream>>>(
-        impl_->options,impl_->statistics.frame_index,body,drag);
+        impl_->options,impl_->tick_index,body,drag);
     cudaError_t error=cudaGetLastError();
     if (error!=cudaSuccess) return cuda_status(error,"launch smoke coupling");
     cudaEventRecord(impl_->end,stream);
@@ -387,6 +464,13 @@ Status Smoke::couple(SmokeCouplingView body,float drag,SmokeTimings& timings,
     if (error!=cudaSuccess) return cuda_status(error,"complete smoke coupling");
     timings.couple_ms+=elapsed(impl_->begin,impl_->end);
     return {};
+}
+
+Status Smoke::couple(PointCouplingView body,float timestep,float drag,
+    SmokeTimings& timings,cudaStream_t stream) noexcept
+{
+    return couple({body.positions,body.velocities,body.external_impulses,
+        body.count,body.inverse_mass,body.radius,timestep},drag,timings,stream);
 }
 
 Status Smoke::reset(cudaStream_t stream) noexcept
@@ -405,6 +489,7 @@ Status Smoke::reset(cudaStream_t stream) noexcept
     const std::size_t bytes=impl_->statistics.allocated_bytes;
     impl_->statistics={};
     impl_->statistics.allocated_bytes=bytes;
+    impl_->tick_index=0U;
     return {};
 }
 
@@ -424,4 +509,6 @@ SmokeStatistics Smoke::statistics() const noexcept
     return impl_ ? impl_->statistics : SmokeStatistics{};
 }
 
-} // namespace meshprep::physics
+static_assert(FrameSolver<Smoke>);
+
+} // namespace parallel_mater::physics

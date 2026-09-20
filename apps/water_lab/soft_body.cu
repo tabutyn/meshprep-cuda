@@ -18,6 +18,8 @@
 #include <cstring>
 #include <fstream>
 #include <limits>
+#include <sstream>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -91,7 +93,7 @@ void check(cudaError_t status, const char* operation)
     detail::throw_if_failed(status, operation);
 }
 
-void check(meshprep::Status status, const char* operation)
+void check(parallel_mater::Status status, const char* operation)
 {
     detail::throw_if_failed(status, operation);
 }
@@ -112,7 +114,7 @@ void upload(T* destination, const std::vector<T>& source)
 }
 
 template <typename T>
-void read_records(std::ifstream& input, std::vector<T>& records, const char* label)
+void read_records(std::istream& input, std::vector<T>& records, const char* label)
 {
     if (records.empty()) return;
     input.read(reinterpret_cast<char*>(records.data()),
@@ -1242,7 +1244,7 @@ __global__ void preserve_fractured_triangles(
 }
 
 __global__ void emit_triangle_bounds(const float3* positions, const uint3* triangles,
-    std::uint32_t count, meshprep::Aabb* bounds)
+    std::uint32_t count, parallel_mater::Aabb* bounds)
 {
     const std::uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index >= count) return;
@@ -1263,7 +1265,7 @@ __global__ void emit_triangle_bounds(const float3* positions, const uint3* trian
 __global__ void emit_member_bounds(const float3* positions,
     const SoftBodyEdge* edges, const std::uint8_t* active,
     std::uint32_t voxels_per_instance, std::uint32_t edges_per_instance,
-    std::uint32_t count, float half_width, meshprep::Aabb* bounds)
+    std::uint32_t count, float half_width, parallel_mater::Aabb* bounds)
 {
     const std::uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
     if (index >= count) return;
@@ -1469,19 +1471,23 @@ void validate_soft_body_asset(const SoftBodyAsset& asset)
     }
 }
 
-SoftBodyAsset load_soft_body_asset(const std::string& path)
+SoftBodyAsset load_soft_body_asset(std::span<const std::byte> bytes)
 {
     if constexpr (std::endian::native != std::endian::little) {
         throw std::runtime_error("soft-body .msb loading currently requires little-endian host");
     }
-    std::ifstream input(path, std::ios::binary);
-    if (!input) throw std::runtime_error("cannot open soft-body asset: " + path);
+    if (bytes.empty()) throw std::invalid_argument("soft-body asset bytes are empty");
+    const std::string storage(
+        reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    std::istringstream input(storage, std::ios::in | std::ios::binary);
+    constexpr const char* source = "memory buffer";
     FileHeader header{};
     input.read(reinterpret_cast<char*>(&header), sizeof(header));
     if (!input || !std::equal(file_magic.begin(), file_magic.end(), header.magic) ||
         header.version != file_version || header.endian != file_endian ||
         header.header_bytes != sizeof(FileHeader)) {
-        throw std::runtime_error("unsupported or corrupt soft-body asset header: " + path);
+        throw std::runtime_error(
+            std::string("unsupported or corrupt soft-body asset header: ") + source);
     }
     constexpr std::uint32_t maximum_records = 50'000'000U;
     if (header.voxel_count > maximum_records || header.edge_count > maximum_records ||
@@ -1504,7 +1510,8 @@ SoftBodyAsset load_soft_body_asset(const std::string& path)
     read_records(input, render_vertices, "render vertices");
     read_records(input, triangles, "render triangles");
     if (input.peek() != std::char_traits<char>::eof()) {
-        throw std::runtime_error("soft-body asset has unexpected trailing bytes: " + path);
+        throw std::runtime_error(
+            std::string("soft-body asset has unexpected trailing bytes: ") + source);
     }
 
     SoftBodyAsset asset;
@@ -1555,9 +1562,25 @@ SoftBodyAsset load_soft_body_asset(const std::string& path)
             return (flags & soft_body_voxel_pinned) != 0U;
         }));
     if (surface_count != header.surface_count || pinned_count != header.pinned_count) {
-        throw std::runtime_error("soft-body header flag counts do not match payload: " + path);
+        throw std::runtime_error(
+            std::string("soft-body header flag counts do not match payload: ") + source);
     }
     return asset;
+}
+
+SoftBodyAsset load_soft_body_asset(const std::string& path)
+{
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input) throw std::runtime_error("cannot open soft-body asset: " + path);
+    const std::streampos end = input.tellg();
+    if (end <= 0) throw std::runtime_error("soft-body asset is empty: " + path);
+    const auto size = static_cast<std::size_t>(end);
+    std::vector<std::byte> bytes(size);
+    input.seekg(0, std::ios::beg);
+    input.read(reinterpret_cast<char*>(bytes.data()),
+        static_cast<std::streamsize>(bytes.size()));
+    if (!input) throw std::runtime_error("could not read soft-body asset: " + path);
+    return load_soft_body_asset(bytes);
 }
 
 void save_soft_body_asset(const SoftBodyAsset& asset, const std::string& path)
@@ -1679,15 +1702,15 @@ struct SoftBodyCourse::Impl {
     uint2* local_render_frame_edges{};
     uint3* local_render_triangle_edges{};
     std::uint8_t* render_triangle_active{};
-    meshprep::Aabb* render_bounds{};
-    meshprep::Aabb* member_bounds{};
+    parallel_mater::Aabb* render_bounds{};
+    parallel_mater::Aabb* member_bounds{};
 
-    meshprep::Workspace render_workspace;
-    meshprep::Hierarchy render_hierarchy;
-    meshprep::Workspace render_normal_workspace;
-    meshprep::NormalOutput render_normals;
-    meshprep::Workspace member_workspace;
-    meshprep::Hierarchy member_hierarchy;
+    parallel_mater::Workspace render_workspace;
+    parallel_mater::Hierarchy render_hierarchy;
+    parallel_mater::Workspace render_normal_workspace;
+    parallel_mater::NormalOutput render_normals;
+    parallel_mater::Workspace member_workspace;
+    parallel_mater::Hierarchy member_hierarchy;
     static constexpr std::uint32_t maximum_substeps = 32U;
     static constexpr std::uint32_t markers_per_substep = 6U;
     cudaEvent_t substep_markers[maximum_substeps * markers_per_substep]{};
@@ -2075,12 +2098,12 @@ struct SoftBodyCourse::Impl {
         next_velocities = velocity_b;
         enqueue_render(nullptr);
         check(cudaDeviceSynchronize(), "initialize soft-body derived data");
-        check(meshprep::build_hierarchy({render_bounds, total_render_triangles},
+        check(parallel_mater::build_hierarchy({render_bounds, total_render_triangles},
             {options.hierarchy_leaf_size}, render_workspace, render_hierarchy),
             "build soft-body render hierarchy");
         update_render_normals(nullptr);
         if (options.render_internal_members) {
-            check(meshprep::build_hierarchy({member_bounds, total_members},
+            check(parallel_mater::build_hierarchy({member_bounds, total_members},
                 {options.hierarchy_leaf_size}, member_workspace, member_hierarchy),
                 "build soft-body member hierarchy");
         }
@@ -2139,7 +2162,7 @@ struct SoftBodyCourse::Impl {
 
     void update_render_normals(cudaStream_t stream)
     {
-        check(meshprep::compute_normals(
+        check(parallel_mater::compute_normals(
             {render_positions, total_render_vertices,
              render_triangles, total_render_triangles}, {},
             render_normal_workspace, render_normals, stream),
@@ -2149,7 +2172,7 @@ struct SoftBodyCourse::Impl {
     void refit_members(cudaStream_t stream)
     {
         if (!options.render_internal_members) return;
-        check(meshprep::refit_hierarchy_unchecked_async(
+        check(parallel_mater::refit_hierarchy_unchecked_async(
             {member_bounds, total_members}, member_hierarchy, stream),
             "refit soft-body member hierarchy");
     }
@@ -2230,7 +2253,7 @@ void SoftBodyCourse::prepare_substep(float dt, float3 gravity, cudaStream_t stre
     state.enqueue_render(stream);
     check(cudaEventRecord(state.substep_markers[marker + 2U], stream),
         "end soft-body substep render deformation");
-    check(meshprep::refit_hierarchy_unchecked_async(
+    check(parallel_mater::refit_hierarchy_unchecked_async(
         {state.render_bounds, state.total_render_triangles}, state.render_hierarchy, stream),
         "refit soft-body substep render hierarchy");
     state.refit_members(stream);
@@ -2431,7 +2454,7 @@ SoftBodyTimings SoftBodyCourse::finish_frame(cudaStream_t stream)
     state.update_render_normals(stream);
     check(cudaEventRecord(state.frame_markers[1], stream),
         "end final soft-body render deformation");
-    check(meshprep::refit_hierarchy_unchecked_async(
+    check(parallel_mater::refit_hierarchy_unchecked_async(
         {state.render_bounds, state.total_render_triangles}, state.render_hierarchy, stream),
         "refit final soft-body render hierarchy");
     state.refit_members(stream);
@@ -2857,7 +2880,7 @@ void SoftBodyCourse::reset(cudaStream_t stream)
     state.next_velocities = state.velocity_b;
     state.enqueue_render(stream);
     state.update_render_normals(stream);
-    check(meshprep::refit_hierarchy_unchecked_async(
+    check(parallel_mater::refit_hierarchy_unchecked_async(
         {state.render_bounds, state.total_render_triangles}, state.render_hierarchy, stream),
         "reset soft-body render hierarchy");
     state.refit_members(stream);
@@ -3168,7 +3191,7 @@ void SoftBodyCourse::restore_state(const SoftBodyState& input, cudaStream_t stre
         "clear restored soft-body corrections");
     state.enqueue_render(stream);
     state.update_render_normals(stream);
-    check(meshprep::refit_hierarchy_unchecked_async(
+    check(parallel_mater::refit_hierarchy_unchecked_async(
         {state.render_bounds, state.total_render_triangles}, state.render_hierarchy, stream),
         "restore soft-body render hierarchy");
     state.refit_members(stream);
@@ -3236,14 +3259,14 @@ SoftBodyRenderView SoftBodyCourse::render_view() const noexcept
         impl_->options.rope_bridge_nodes_per_tile};
 }
 
-meshprep::DeviceMeshView SoftBodyCourse::render_mesh() const noexcept
+parallel_mater::DeviceMeshView SoftBodyCourse::render_mesh() const noexcept
 {
     if (!impl_) return {};
     return {impl_->render_positions, impl_->total_render_vertices,
         impl_->render_triangles, impl_->total_render_triangles};
 }
 
-const meshprep::Hierarchy& SoftBodyCourse::render_hierarchy() const noexcept
+const parallel_mater::Hierarchy& SoftBodyCourse::render_hierarchy() const noexcept
 {
     return impl_->render_hierarchy;
 }
@@ -3271,9 +3294,9 @@ std::size_t SoftBodyCourse::allocated_bytes() const noexcept
         static_cast<std::size_t>(state.total_render_vertices) *
             (sizeof(float3) + sizeof(float2) + sizeof(SoftBodyBinding)) +
         static_cast<std::size_t>(state.total_render_triangles) *
-            (sizeof(uint3) + sizeof(meshprep::Aabb) + sizeof(std::uint8_t)) +
+            (sizeof(uint3) + sizeof(parallel_mater::Aabb) + sizeof(std::uint8_t)) +
         (state.options.render_internal_members
-            ? static_cast<std::size_t>(state.total_edges) * sizeof(meshprep::Aabb) : 0U) +
+            ? static_cast<std::size_t>(state.total_edges) * sizeof(parallel_mater::Aabb) : 0U) +
         static_cast<std::size_t>(state.options.cross_source_nodes) * 3U *
             (sizeof(std::uint32_t) + sizeof(float3)) +
         state.render_workspace.capacity_bytes() + state.render_hierarchy.allocated_bytes() +

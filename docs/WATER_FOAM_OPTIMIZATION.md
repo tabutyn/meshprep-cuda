@@ -37,7 +37,7 @@ standard deviation.
 
 The fluid-grid initializer previously used one CUDA thread to walk every
 hierarchy node and recount all leaf primitives. The hierarchy builder already
-retains this invariant. `meshprep::Hierarchy::primitive_count()` now exposes
+retains this invariant. `parallel_mater::Hierarchy::primitive_count()` now exposes
 that host metadata, and `FluidSurface::update` checks it before launching.
 Removing the redundant serial device walk reduced the foam median from 5.3049
 to 4.9117 ms: **0.3932 ms, or 7.4%**.

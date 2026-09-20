@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
-#include <meshprep/recipes.hpp>
+#include "recipes.hpp"
 
 #include <cmath>
 
-namespace meshprep::sim {
+namespace parallel_mater::examples {
 
 namespace {
 
@@ -55,4 +55,4 @@ std::string_view recipe_config_error_message(RecipeConfigError error) noexcept
     return "unknown configuration error";
 }
 
-} // namespace meshprep::sim
+} // namespace parallel_mater::examples

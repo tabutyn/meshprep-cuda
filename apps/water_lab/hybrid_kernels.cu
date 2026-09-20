@@ -42,7 +42,7 @@ void check(cudaError_t status, const char* operation)
     detail::throw_if_failed(status, operation);
 }
 
-void check(meshprep::Status status, const char* operation)
+void check(parallel_mater::Status status, const char* operation)
 {
     detail::throw_if_failed(status, operation);
 }
@@ -125,7 +125,7 @@ __device__ float smoothstep01(float value)
 }
 
 __device__ float bounds_distance_squared(
-    float3 point, const meshprep::HierarchyNode& node)
+    float3 point, const parallel_mater::HierarchyNode& node)
 {
     const float dx = fmaxf(fmaxf(node.bounds_min.x - point.x, 0.0F),
         point.x - node.bounds_max.x);
@@ -137,7 +137,7 @@ __device__ float bounds_distance_squared(
 }
 
 __device__ float bounds_xz_distance_squared(
-    float3 point, const meshprep::HierarchyNode& node)
+    float3 point, const parallel_mater::HierarchyNode& node)
 {
     const float dx = fmaxf(fmaxf(node.bounds_min.x - point.x, 0.0F),
         point.x - node.bounds_max.x);
@@ -215,7 +215,7 @@ struct AddFloat3 {
 
 __global__ void emit_bounds_kernel(
     const float3* positions,
-    meshprep::Aabb* bounds,
+    parallel_mater::Aabb* bounds,
     std::uint32_t count,
     float radius)
 {
@@ -306,7 +306,7 @@ __global__ void particle_forces_kernel(
     const uint3* skin_triangles,
     const std::uint32_t* skin_incident_offsets,
     const std::uint32_t* skin_incident_triangles,
-    const meshprep::HierarchyNode* skin_nodes,
+    const parallel_mater::HierarchyNode* skin_nodes,
     const std::uint32_t* skin_indices,
     std::uint32_t skin_node_count,
     HybridOptions options,
@@ -387,7 +387,7 @@ __global__ void particle_forces_kernel(
     std::uint32_t stack_size = 1U;
     stack[0] = 0U;
     while (stack_size != 0U && skin_node_count != 0U) {
-        const meshprep::HierarchyNode node = skin_nodes[stack[--stack_size]];
+        const parallel_mater::HierarchyNode node = skin_nodes[stack[--stack_size]];
         if (bounds_distance_squared(point, node) > closest_squared) continue;
         if (node.is_leaf()) {
             for (std::uint32_t item = 0U; item < node.primitive_count; ++item) {
@@ -1045,7 +1045,7 @@ __global__ void skin_soft_body_contact_kernel(
     while (stack_size != 0U) {
         const std::uint32_t node_index = stack[--stack_size];
         if (node_index >= render.node_count) continue;
-        const meshprep::HierarchyNode node = render.nodes[node_index];
+        const parallel_mater::HierarchyNode node = render.nodes[node_index];
         const float node_distance = one_sided_cloth
             ? bounds_xz_distance_squared(point, node)
             : bounds_distance_squared(point, node);
@@ -1594,7 +1594,7 @@ HybridDroplet::~HybridDroplet()
     cudaFree(particle_positions_);
 }
 
-meshprep::DeviceMeshView HybridDroplet::skin_mesh() const noexcept
+parallel_mater::DeviceMeshView HybridDroplet::skin_mesh() const noexcept
 {
     return {render_positions_, render_vertex_count_, render_triangles_, render_triangle_count_};
 }
@@ -2012,12 +2012,12 @@ HybridTimings HybridDroplet::step(
             options_.particle_radius);
         rebuild_particle_cells(stream);
         if (iteration + 1U == iterations) {
-            check(meshprep::build_hierarchy(
-                meshprep::DeviceAabbView{particle_bounds_, options_.particle_count}, {},
+            check(parallel_mater::build_hierarchy(
+                parallel_mater::DeviceAabbView{particle_bounds_, options_.particle_count}, {},
                 particle_workspace_, particle_hierarchy_, stream), "rebuild fluid hierarchy");
         } else {
-            check(meshprep::refit_hierarchy_unchecked_async(
-                meshprep::DeviceAabbView{particle_bounds_, options_.particle_count},
+            check(parallel_mater::refit_hierarchy_unchecked_async(
+                parallel_mater::DeviceAabbView{particle_bounds_, options_.particle_count},
                 particle_hierarchy_, stream), "refit fluid hierarchy");
         }
         check(cudaEventRecord(stage_end_[fluid_hierarchy_event], stream),
@@ -2030,13 +2030,13 @@ HybridTimings HybridDroplet::step(
         emit_bounds_kernel<<<skin_blocks, block_size, 0, stream>>>(
             skin_positions_, skin_vertex_bounds_, skin_vertex_count_, 1.0e-6F);
         if (iteration + 1U == iterations) {
-            check(meshprep::build_hierarchy(
-                meshprep::DeviceAabbView{skin_vertex_bounds_, skin_vertex_count_}, {},
+            check(parallel_mater::build_hierarchy(
+                parallel_mater::DeviceAabbView{skin_vertex_bounds_, skin_vertex_count_}, {},
                 skin_workspace_, skin_vertex_hierarchy_, stream),
                 "rebuild skin vertex hierarchy");
         } else {
-            check(meshprep::refit_hierarchy_unchecked_async(
-                meshprep::DeviceAabbView{skin_vertex_bounds_, skin_vertex_count_},
+            check(parallel_mater::refit_hierarchy_unchecked_async(
+                parallel_mater::DeviceAabbView{skin_vertex_bounds_, skin_vertex_count_},
                 skin_vertex_hierarchy_, stream), "refit skin vertex hierarchy");
         }
         }
@@ -2047,9 +2047,9 @@ HybridTimings HybridDroplet::step(
         check(cudaEventRecord(stage_begin_[normal_event], stream),
             "record physical surface normals begin");
         if (options_.particle_skin_coupling) {
-        const meshprep::DeviceMeshView physical_mesh{
+        const parallel_mater::DeviceMeshView physical_mesh{
             skin_positions_, skin_vertex_count_, skin_triangles_, skin_triangle_count_};
-        check(meshprep::compute_normals(
+        check(parallel_mater::compute_normals(
             physical_mesh, {}, physics_normal_workspace_, physics_normals_, stream),
             "update physical surface normals");
         }
@@ -2069,10 +2069,10 @@ HybridTimings HybridDroplet::step(
         block_size, 0, stream>>>(
         skin_positions_, skin_rest_positions_, render_rest_positions_, render_embedding_,
         render_positions_, render_vertex_count_);
-    check(meshprep::compute_normals(
+    check(parallel_mater::compute_normals(
         skin_mesh(), {}, render_normal_workspace_, render_normals_, stream),
         "update render normals");
-    check(meshprep::build_hierarchy(
+    check(parallel_mater::build_hierarchy(
         skin_mesh(), {}, render_workspace_, render_hierarchy_, stream),
         "update render hierarchy");
     }
@@ -2212,8 +2212,8 @@ void HybridDroplet::rebuild_particle_broadphase(cudaStream_t stream)
         particle_positions_, particle_bounds_, options_.particle_count,
         options_.particle_radius);
     check(cudaGetLastError(), "emit active particle bounds");
-    check(meshprep::build_hierarchy(
-        meshprep::DeviceAabbView{particle_bounds_, options_.particle_count}, {},
+    check(parallel_mater::build_hierarchy(
+        parallel_mater::DeviceAabbView{particle_bounds_, options_.particle_count}, {},
         particle_workspace_, particle_hierarchy_, stream), "rebuild active fluid hierarchy");
     rebuild_particle_cells(stream);
 }
@@ -2225,12 +2225,12 @@ void HybridDroplet::rebuild_derived_state(cudaStream_t stream)
     rebuild_particle_broadphase(stream);
     emit_bounds_kernel<<<skin_blocks, block_size, 0, stream>>>(
         skin_positions_, skin_vertex_bounds_, skin_vertex_count_, 1.0e-6F);
-    check(meshprep::build_hierarchy(
-        meshprep::DeviceAabbView{skin_vertex_bounds_, skin_vertex_count_}, {},
+    check(parallel_mater::build_hierarchy(
+        parallel_mater::DeviceAabbView{skin_vertex_bounds_, skin_vertex_count_}, {},
         skin_workspace_, skin_vertex_hierarchy_, stream), "rebuild captured skin hierarchy");
-    const meshprep::DeviceMeshView physical_mesh{
+    const parallel_mater::DeviceMeshView physical_mesh{
         skin_positions_, skin_vertex_count_, skin_triangles_, skin_triangle_count_};
-    check(meshprep::compute_normals(
+    check(parallel_mater::compute_normals(
         physical_mesh, {}, physics_normal_workspace_, physics_normals_, stream),
         "rebuild captured physical normals");
     embed_render_surface_kernel<<<
@@ -2238,10 +2238,10 @@ void HybridDroplet::rebuild_derived_state(cudaStream_t stream)
         block_size, 0, stream>>>(
         skin_positions_, skin_rest_positions_, render_rest_positions_, render_embedding_,
         render_positions_, render_vertex_count_);
-    check(meshprep::compute_normals(
+    check(parallel_mater::compute_normals(
         skin_mesh(), {}, render_normal_workspace_, render_normals_, stream),
         "rebuild captured render normals");
-    check(meshprep::build_hierarchy(
+    check(parallel_mater::build_hierarchy(
         skin_mesh(), {}, render_workspace_, render_hierarchy_, stream),
         "rebuild captured render hierarchy");
     check(cudaStreamSynchronize(stream), "finish rebuilding captured state");
@@ -2349,9 +2349,9 @@ std::size_t HybridDroplet::allocated_bytes() const noexcept
     const std::size_t skin = skin_vertex_count_;
     const std::size_t render = render_vertex_count_;
     std::size_t bytes =
-        particles * (4U * sizeof(float3) + sizeof(meshprep::Aabb) +
+        particles * (4U * sizeof(float3) + sizeof(parallel_mater::Aabb) +
             3U * sizeof(std::uint32_t) + 2U * sizeof(std::uint64_t)) +
-        skin * (9U * sizeof(float3) + sizeof(float) + sizeof(meshprep::Aabb)) +
+        skin * (9U * sizeof(float3) + sizeof(float) + sizeof(parallel_mater::Aabb)) +
         sizeof(float3) + sizeof(float4) +
         skin_triangle_count_ * sizeof(uint3) +
         (skin_vertex_count_ + 1U) * sizeof(std::uint32_t) +

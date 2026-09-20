@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-#include <meshprep/simulation.hpp>
-#include <meshprep/smoke.hpp>
+#include "gallery.hpp"
+#include <parallel_mater/smoke.hpp>
 
 #include "hybrid_lab.hpp"
 #include "obstacle_course.hpp"
@@ -22,7 +22,7 @@
 #include <utility>
 #include <vector>
 
-namespace meshprep::sim {
+namespace parallel_mater::examples {
 namespace {
 
 constexpr Status success() noexcept
@@ -67,7 +67,7 @@ void check_cuda(cudaError_t status, const char* operation)
 
 [[nodiscard]] bool valid(const GallerySimulationOptions& options) noexcept
 {
-    return meshprep::sim::valid(options.fixed_step) &&
+    return parallel_mater::examples::valid(options.fixed_step) &&
         (!options.solver_iterations_override.has_value() ||
             (*options.solver_iterations_override >= 1U &&
              *options.solver_iterations_override <=
@@ -1390,4 +1390,4 @@ Status SimulationBuilder::build(
     return output.initialize(options, stream);
 }
 
-} // namespace meshprep::sim
+} // namespace parallel_mater::examples

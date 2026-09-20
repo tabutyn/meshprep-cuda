@@ -3,7 +3,7 @@
 
 #include "fluid_surface.hpp"
 
-#include <meshprep/meshprep.hpp>
+#include <parallel_mater/geometry.hpp>
 #include <cuda_runtime_api.h>
 #include <vector_types.h>
 #include <cstdint>
@@ -41,7 +41,7 @@ struct FluidVisualView {
     FluidSurfaceView surface{};
     const FoamParticle* foam_particles{};
     std::uint32_t foam_capacity{};
-    const meshprep::HierarchyNode* foam_nodes{};
+    const parallel_mater::HierarchyNode* foam_nodes{};
     const std::uint32_t* foam_indices{};
     std::uint32_t foam_node_count{};
 };
@@ -65,7 +65,7 @@ public:
     FluidVisuals& operator=(const FluidVisuals&) = delete;
 
     [[nodiscard]] float update(const float3* positions, const float3* velocities,
-        const meshprep::Hierarchy& hierarchy, float support_radius, float3 gravity,
+        const parallel_mater::Hierarchy& hierarchy, float support_radius, float3 gravity,
         float dt, cudaStream_t stream = nullptr, bool obstacle_course = false,
         ParticleCellView cells = {});
     void reset(cudaStream_t stream = nullptr);
@@ -86,7 +86,7 @@ public:
     }
     [[nodiscard]] std::size_t allocated_bytes() const noexcept {
         return static_cast<std::size_t>(capacity_) * sizeof(float4) +
-            foam_capacity * (sizeof(FoamParticle) + sizeof(meshprep::Aabb)) +
+            foam_capacity * (sizeof(FoamParticle) + sizeof(parallel_mater::Aabb)) +
             sizeof(float3) + sizeof(std::uint32_t) + surface_.allocated_bytes() +
             foam_workspace_.capacity_bytes() + foam_hierarchy_.allocated_bytes();
     }
@@ -94,15 +94,15 @@ private:
     FluidSurface surface_;
     float4* normal_foam_{};
     FoamParticle* foam_particles_{};
-    meshprep::Aabb* foam_bounds_{};
+    parallel_mater::Aabb* foam_bounds_{};
     float3* foam_anchor_{};
     std::uint32_t* errors_{};
     std::uint32_t count_{};
     std::uint32_t capacity_{};
     std::uint64_t tick_{};
     FoamSettings foam_settings_{};
-    meshprep::Workspace foam_workspace_;
-    meshprep::Hierarchy foam_hierarchy_;
+    parallel_mater::Workspace foam_workspace_;
+    parallel_mater::Hierarchy foam_hierarchy_;
     cudaEvent_t begin_{}, end_{};
 };
 
